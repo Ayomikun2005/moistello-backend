@@ -39,7 +39,7 @@ func scanCommunity(row interface{ Scan(...interface{}) error }) (*Community, err
 	var avatarURL, bannerURL sql.NullString
 	err := row.Scan(
 		&c.ID, &c.Name, &c.Slug, &c.Description, &c.Category,
-		pq.Array(&c.Tags), &avatarURL, &bannerURL, &c.OwnerID,
+		&c.Tags, &avatarURL, &bannerURL, &c.OwnerID,
 		&c.MemberCount, &c.TotalSaved, &c.IsFeatured,
 		&c.CreatedAt, &c.UpdatedAt,
 	)

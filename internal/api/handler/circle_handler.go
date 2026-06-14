@@ -2,6 +2,7 @@ package handler
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/moistello/backend/internal/api/middleware"
 	"github.com/moistello/backend/internal/domain/circle"
 	"github.com/moistello/backend/internal/domain/contribution"
@@ -47,6 +48,16 @@ func (h *CircleHandler) ListCircles(c *gin.Context) {
 		Type:   circle.CircleType(c.Query("type")),
 		Page:   page,
 		Limit:  limit,
+	}
+	if communityID := c.Query("communityId"); communityID != "" {
+		if id, err := uuid.Parse(communityID); err == nil {
+			filter.CommunityID = &id
+		}
+	}
+	if organizerID := c.Query("organizerId"); organizerID != "" {
+		if id, err := uuid.Parse(organizerID); err == nil {
+			filter.OrganizerID = &id
+		}
 	}
 	circles, total, err := h.circleService.List(c.Request.Context(), filter)
 	if err != nil {
@@ -123,6 +134,16 @@ func (h *CircleHandler) UpdateCircle(c *gin.Context) {
 	response.OK(c, gin.H{"circle": cir})
 }
 
+func (h *CircleHandler) StartCircle(c *gin.Context) {
+	id := c.Param("id")
+	userID := middleware.GetUserID(c)
+	if err := h.circleService.Start(c.Request.Context(), id, userID); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	response.OK(c, gin.H{"success": true})
+}
+
 func (h *CircleHandler) CancelCircle(c *gin.Context) {
 	id := c.Param("id")
 	userID := middleware.GetUserID(c)
@@ -151,8 +172,7 @@ func (h *CircleHandler) JoinCircle(c *gin.Context) {
 		InviteCode string `json:"inviteCode"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
-		return
+		req.InviteCode = ""
 	}
 	if req.InviteCode != "" {
 		if _, err := h.inviteService.Validate(c.Request.Context(), req.InviteCode); err != nil {

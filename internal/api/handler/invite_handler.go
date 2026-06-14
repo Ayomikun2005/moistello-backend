@@ -38,7 +38,7 @@ func (h *InviteHandler) CreateInvite(c *gin.Context) {
 	input.UserID = userID
 	inv, err := h.inviteService.Generate(c.Request.Context(), input)
 	if err != nil {
-		response.InternalError(c, "failed to create invite")
+		response.InternalError(c, "failed to create invite: "+err.Error())
 		return
 	}
 	response.Created(c, gin.H{"invite": inv})

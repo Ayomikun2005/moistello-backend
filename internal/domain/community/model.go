@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 type Community struct {
@@ -12,7 +13,7 @@ type Community struct {
 	Slug        string    `json:"slug" db:"slug"`
 	Description string    `json:"description" db:"description"`
 	Category    string    `json:"category" db:"category"`
-	Tags        []string  `json:"tags" db:"tags"`
+	Tags        pq.StringArray `json:"tags" db:"tags"`
 	AvatarURL   *string   `json:"avatarUrl,omitempty" db:"avatar_url"`
 	BannerURL   *string   `json:"bannerUrl,omitempty" db:"banner_url"`
 	OwnerID     uuid.UUID `json:"ownerId" db:"owner_id"`

@@ -18,6 +18,7 @@ type Service interface {
 	List(ctx context.Context, filter CircleFilter) ([]Circle, int, error)
 	Create(ctx context.Context, organizerID string, input CreateCircleInput) (*Circle, error)
 	Update(ctx context.Context, id, userID string, input UpdateCircleInput) (*Circle, error)
+	Start(ctx context.Context, id, userID string) error
 	Cancel(ctx context.Context, id, userID string) error
 	Join(ctx context.Context, circleID, userID string, inviteCode string) error
 	Exit(ctx context.Context, circleID, userID string) error
@@ -31,6 +32,7 @@ type Transactor interface {
 type CreateCircleInput struct {
 	Name               string          `json:"name" validate:"required,min=3,max=100"`
 	Description        string          `json:"description"`
+	CommunityID        string          `json:"communityId"`
 	CircleType         CircleType      `json:"circleType" validate:"required,oneof=public private org community premium"`
 	PayoutType         PayoutType      `json:"payoutType" validate:"required,oneof=random fixed auction vote"`
 	ContributionAmount float64         `json:"contributionAmount" validate:"required,gt=0"`
@@ -93,6 +95,17 @@ func (t *circleTransactor) WithTransaction(ctx context.Context, fn func(repo Rep
 	return tx.Commit()
 }
 
+func parseCommunityID(id string) *uuid.UUID {
+	if id == "" {
+		return nil
+	}
+	parsed, err := uuid.Parse(id)
+	if err != nil {
+		return nil
+	}
+	return &parsed
+}
+
 func parseUUID(id string) (uuid.UUID, error) {
 	parsed, err := uuid.Parse(id)
 	if err != nil {
@@ -143,6 +156,7 @@ func (s *circleService) Create(ctx context.Context, organizerID string, input Cr
 	buildCircle := func() *Circle {
 		c := &Circle{
 			ID:                 uuid.New(),
+			CommunityID:        parseCommunityID(input.CommunityID),
 			Name:               input.Name,
 			CircleType:         input.CircleType,
 			PayoutType:         input.PayoutType,
@@ -282,6 +296,46 @@ func (s *circleService) Update(ctx context.Context, id, userID string, input Upd
 		return nil, fmt.Errorf("updating circle: %w", err)
 	}
 	return c, nil
+}
+
+func (s *circleService) Start(ctx context.Context, id, userID string) error {
+	cid, err := parseUUID(id)
+	if err != nil {
+		return err
+	}
+	usrID, err := parseUUID(userID)
+	if err != nil {
+		return err
+	}
+
+	c, err := s.repo.FindByID(ctx, cid)
+	if err != nil {
+		return fmt.Errorf("finding circle for start: %w", err)
+	}
+
+	if c.OrganizerID != usrID {
+		return ErrNotOrganizer
+	}
+	if c.Status != CircleStatusPending {
+		return ErrCircleNotActive
+	}
+
+	count, err := s.repo.GetMemberCount(ctx, cid)
+	if err != nil {
+		return fmt.Errorf("checking member count: %w", err)
+	}
+	if count < 2 {
+		return fmt.Errorf("need at least 2 members to start")
+	}
+
+	c.Status = CircleStatusActive
+	c.CurrentRound = 1
+	c.UpdatedAt = time.Now().UTC()
+
+	if err := s.repo.Update(ctx, c); err != nil {
+		return fmt.Errorf("activating circle: %w", err)
+	}
+	return nil
 }
 
 func (s *circleService) Cancel(ctx context.Context, id, userID string) error {

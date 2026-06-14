@@ -60,41 +60,60 @@ var adjectives = []string{
 }
 
 var animals = []string{
-	"Eel", "Fox", "Hawk", "Wolf", "Bear", "Lion", "Deer", "Owl", "Tiger", "Hawk",
+	"Eel", "Fox", "Hawk", "Wolf", "Bear", "Lion", "Deer", "Owl", "Tiger", "Vole",
 	"Ant", "Bat", "Cat", "Dog", "Elk", "Fawn", "Gnu", "Hare", "Ibex", "Jay",
 	"Koala", "Lynx", "Mole", "Newt", "Oryx", "Pig", "Quail", "Roach", "Seal", "Toad",
-	"Urchin", "Vole", "Wren", "Yak", "Zebra", "Anole", "Badger", "Camel", "Dove", "Emu",
+	"Urchin", "Viper", "Wren", "Yak", "Zebra", "Anole", "Badger", "Camel", "Dove", "Emu",
 	"Finch", "Gecko", "Heron", "Iguana", "Jackal", "Kite", "Lemur", "Manta", "Narwhal", "Okapi",
-	"Panther", "Raven", "Salmon", "Turtle", "Viper", "Whale", "Xerus", "Alpaca", "Beaver", "Coyote",
-	"Dingo", "Ermine", "Ferret", "Gopher", "Hyena", "Impala", "Jaguar", "Koala", "Llama", "Mink",
+	"Panther", "Raven", "Salmon", "Turtle", "Whale", "Xerus", "Alpaca", "Beaver", "Coyote",
+	"Dingo", "Ermine", "Ferret", "Gopher", "Hyena", "Impala", "Jaguar", "Llama", "Mink",
 	"Numbat", "Otter", "Panda", "Quokka", "Raccoon", "Skunk", "Tapir", "Urial", "Vicuna", "Wallaby",
 	"Xenops", "Yapok", "Zorilla", "Aardvark", "Buffalo", "Cheetah", "Dolphin", "Elephant", "Flamingo", "Gazelle",
-	"Hamster", "Ibis", "Jellyfish", "Kangaroo", "Lobster", "Monkey", "Nightingale", "Octopus", "Penguin", "Rhinoceros",
-	"Squirrel", "Tiger", "Umbrellabird", "Vulture", "Walrus", "Yak", "Anglerfish", "Barracuda", "Chameleon", "Dragonfly",
-	"Earthworm", "Falcon", "Gorilla", "Hedgehog", "Jackrabbit", "Kingfisher", "Ladybug", "Manatee", "Newt", "Ocelot",
-	"Parrot", "Rattlesnake", "Salamander", "Tarantula", "Vampirebat", "Wolverine", "Axolotl", "Bison", "Caribou", "Duckbill",
-	"Echidna", "Frog", "Giraffe", "Hippo", "Jaguarundi", "Kookaburra", "Loris", "Moose", "Nutria", "Orangutan",
-	"Peacock", "Rhea", "Sloth", "Toucan", "Uakari", "Viperfish", "Wombat", "Xrayfish", "Zebu", "Ape",
-	"Bobcat", "Cobra", "Dikdik", "Eagle", "Fossa", "Gavial", "Hornet", "Insect", "Jaguar", "Keelbill",
-	"Lizard", "Marmot", "Nautilus", "Oyster", "Porpoise", "Rabbit", "Scorpion", "Tuna", "Urutu", "Viper",
-	"Wasp", "Yabby", "Zander", "Anaconda", "Boa", "Condor", "Dartfrog", "Eft", "Firefly", "Grasshopper",
-	"Hornedowl", "Irukandji", "Jabiru", "Kestrel", "Leech", "Mantis", "Nudibranch", "Opossum", "Puffin", "Rattler",
-	"Sawfish", "Tern", "Umbrette", "Vervet", "Weasel", "Xenops", "Yaffle", "Zebra", "Addax", "Bongo",
-	"Civet", "Dugong", "Eland", "Fennec", "Gaur", "Hartebeest", "Indri", "Jaco", "Kiang", "Langur",
-	"Margay", "Nyala", "Oribi", "Puku", "Quoll", "Ratel", "Sable", "Tamarind", "Uinta", "Visacha",
-	"Wildebeest", "Xerus", "Yellowjacket", "Agouti", "Bushbaby", "Capybara", "Dikdik", "Echidna", "Fossa", "Gelada",
-	"Hierofalcon", "Ivorybill", "Jaguarondi", "Kinkajou", "Linsang", "Macaque", "Nilgai", "Ouessant", "Pademelon", "Quetzal",
-	"Rosella", "Siamang", "Tamarin", "Udzungwa", "Vanga", "Wagtail", "Xanthic", "Yellowthroat", "Zebrawood", "Aardwolf",
-	"Bandedpalm", "Cacomistle", "Dibbler", "Earedseal", "Falsegharial", "Grysbok", "Humpback", "Isabelline", "Javan", "Korrigum",
-	"Lechwe", "Muntjac", "Neddicky", "Oliveback", "Pronghorn", "Quelea", "Rorqual", "Screamer", "Tinamou", "Uguisu",
-	"Viscacha", "Waterbuck", "Xiphias", "Yellowlegs", "Zebra", "Albatross", "Bettong", "Cuscus", "Dunnart", "Echymipera",
-	"Falanouc", "Gundi", "Hutia", "Igel", "Jerdon", "Kowari", "Luatung", "Monito", "Nabarlek", "Olingo",
-	"Potoroo", "Quokka", "Rufous", "Solenodon", "Tenrec", "Ualabee", "Vombat", "Wallaroo", "Xenotrich", "Yapok",
-	"Zino", "Anchovy", "Blenny", "Clownfish", "Damselfish", "Eel", "Flounder", "Goby", "Haddock", "Icefish",
-	"Jackfish", "Killifish", "Lamprey", "Mackerel", "Needlefish", "Opah", "Parrotfish", "Rays", "Sardine", "Tetra",
-	"Uhu", "Vendace", "Wrasse", "Yellowtail", "Zebrafish", "Arowana", "Betta", "Catfish", "Dogfish", "Escolar",
-	"Flounder", "Grouper", "Halibut", "Inanga", "JohnDory", "Koi", "Lungfish", "MahiMahi", "Neontetra", "Oscar",
-	"Pufferfish", "Rasbora", "Siamese", "Triggerfish", "Umbrella", "Volitans", "Whiting", "XRay", "Yellowfin", "Angelfish",
+	"Hamster", "Ibis", "Jellyfish", "Kangaroo", "Lobster", "Monkey", "Octopus", "Penguin", "Rhinoceros",
+	"Squirrel", "Umbrellabird", "Vulture", "Walrus", "Anglerfish", "Barracuda", "Chameleon", "Dragonfly",
+	"Earthworm", "Falcon", "Gorilla", "Hedgehog", "Jackrabbit", "Kingfisher", "Ladybug", "Manatee",
+	"Parrot", "Rattlesnake", "Salamander", "Tarantula", "Wolverine", "Axolotl", "Bison", "Caribou",
+	"Echidna", "Frog", "Giraffe", "Hippo", "Kookaburra", "Loris", "Moose", "Nutria", "Orangutan",
+	"Peacock", "Rhea", "Sloth", "Toucan", "Viperfish", "Wombat", "Zebu", "Ape",
+	"Bobcat", "Cobra", "Eagle", "Fossa", "Gavial", "Hornet", "Insect",
+	"Lizard", "Marmot", "Nautilus", "Oyster", "Porpoise", "Rabbit", "Scorpion", "Tuna",
+	"Wasp", "Yabby", "Zander", "Anaconda", "Boa", "Condor", "Firefly", "Grasshopper",
+	"Kestrel", "Leech", "Mantis", "Opossum", "Puffin",
+	"Tern", "Vervet", "Weasel", "Addax", "Bongo",
+	"Civet", "Dugong", "Eland", "Fennec", "Gaur", "Indri",
+	"Kiang", "Langur", "Margay", "Nyala", "Oribi", "Puku", "Quoll", "Ratel", "Sable",
+	"Wildebeest", "Agouti", "Capybara", "Gelada",
+	"Macaque", "Nilgai", "Pademelon", "Quetzal",
+	"Rosella", "Siamang", "Tamarin", "Vanga", "Wagtail",
+	"Aardwolf", "Grysbok", "Humpback", "Lechwe", "Muntjac",
+	"Pronghorn", "Quelea", "Screamer", "Waterbuck",
+	"Albatross", "Bettong", "Cuscus", "Dunnart",
+	"Gundi", "Hutia", "Kowari", "Monito", "Nabarlek", "Olingo",
+	"Potoroo", "Quokka", "Solenodon", "Tenrec", "Vombat", "Wallaroo",
+	"Anchovy", "Blenny", "Clownfish", "Damselfish", "Eel", "Flounder", "Goby", "Haddock",
+	"Jackfish", "Killifish", "Lamprey", "Mackerel", "Needlefish", "Opah", "Parrotfish",
+	"Sardine", "Tetra", "Vendace", "Wrasse", "Yellowtail", "Zebrafish",
+	"Arowana", "Betta", "Catfish", "Dogfish",
+	"Grouper", "Halibut", "Koi", "Lungfish", "MahiMahi", "Oscar",
+	"Pufferfish", "Rasbora", "Triggerfish", "Whiting", "Yellowfin", "Angelfish",
+	"Barracuda", "Cod", "Eel", "Flounder", "Gar", "Herring", "Icefish",
+	"Loach", "Minnow", "Perch", "Roach", "Smelt", "Trout", "Wrasse",
+	"Anemone", "Barnacle", "Coral", "Limpet", "Mussel",
+	"Nudibranch", "Oyster", "Sponge", "Tunicate", "Urchin",
+	"Beetle", "Cricket", "Damselfly", "Earwig", "Flea",
+	"Grub", "Horsefly", "Ladybug", "Moth", "Silverfish",
+	"Termite", "Weevil", "Caterpillar", "Dragonfly", "Firefly",
+	"Grasshopper", "Hornet", "Locust", "Mosquito", "Scorpion",
+	"Tarantula", "Wasp", "Crab", "Lobster", "Prawn", "Shrimp",
+	"Crayfish", "Krill", "Barnacle", "Squid", "Octopus",
+	"Jellyfish", "Starfish", "Dolphin", "Porpoise", "Whale",
+	"Orca", "Beluga", "Narwhal", "Spermwhale", "Humpback",
+	"Bluewhale", "Rightwhale", "Finwhale", "Minkewhale", "Seiwhale",
+	"Bryde", "Graywhale", "Pilotwhale", "Killerwhale", "Falsekiller",
+	"Melonhead", "Pygmykiller", "Frasers", "Rissos", "Spotted",
+	"Spinner", "Bottlenose", "Common", "Striped", "Clymene",
+	"Rough", "Hector", "Chilean", "Peruvian", "Commerson",
+	"Peale", "Austral", "Hourglass", "Fitzroy", "Dusky",
 }
 
 func generateName(counter int64) string {
@@ -102,9 +121,10 @@ func generateName(counter int64) string {
 	animLen := int64(len(animals))
 	suffixLen := int64(90)
 
-	adjIdx := counter % adjLen
-	animIdx := (counter / adjLen) % animLen
-	numSuffix := 10 + (counter / (adjLen * animLen)) % suffixLen
+	// Cycle animals fast (each user gets a unique animal)
+	animIdx := counter % animLen
+	adjIdx := (counter / animLen) % adjLen
+	numSuffix := 10 + (counter / (animLen * adjLen)) % suffixLen
 
 	return fmt.Sprintf("%s-%s-%d", adjectives[adjIdx], animals[animIdx], numSuffix)
 }

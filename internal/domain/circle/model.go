@@ -59,6 +59,7 @@ const (
 type Circle struct {
 	ID                 uuid.UUID       `json:"id" db:"id"`
 	ContractID         sql.NullString  `json:"contractId,omitempty" db:"contract_id"`
+	CommunityID        *uuid.UUID      `json:"communityId,omitempty" db:"community_id"`
 	Name               string          `json:"name" db:"name"`
 	Description        sql.NullString  `json:"description,omitempty" db:"description"`
 	CircleType         CircleType      `json:"circleType" db:"circle_type"`

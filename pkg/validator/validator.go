@@ -2,6 +2,7 @@ package validator
 
 import (
 	"reflect"
+	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin/binding"
@@ -18,6 +19,9 @@ func Init() {
 			return ""
 		}
 		return name
+	})
+	Validate.RegisterValidation("slug", func(fl validator.FieldLevel) bool {
+		return regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`).MatchString(fl.Field().String())
 	})
 	if v, ok := binding.Validator.Engine().(*validator.Validate); ok {
 		*v = *Validate
@@ -49,6 +53,8 @@ func formatMessage(e validator.FieldError) string {
 		return "Must be a valid email"
 	case "oneof":
 		return "Must be one of: " + e.Param()
+	case "slug":
+		return "Must be a valid slug (lowercase letters, numbers, hyphens)"
 	case "gt":
 		return "Must be greater than " + e.Param()
 	case "gte":

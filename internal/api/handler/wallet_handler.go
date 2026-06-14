@@ -56,6 +56,43 @@ func (h *WalletHandler) ListWallets(c *gin.Context) {
 	response.OK(c, gin.H{"wallets": wallets})
 }
 
+// Withdraw sends crypto from the user's wallet to a destination address
+// POST /v1/wallets/withdraw
+func (h *WalletHandler) Withdraw(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	var req struct {
+		Destination  string  `json:"destination" binding:"required"`
+		Asset        string  `json:"asset" binding:"required,oneof=XLM USDC"`
+		Amount       float64 `json:"amount" binding:"required,gt=0"`
+		PasskeySeed  string  `json:"passkeySeed" binding:"required"`
+		Memo         string  `json:"memo"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	ipAddress := c.ClientIP()
+	userAgent := c.GetHeader("User-Agent")
+	txHash, err := h.walletSvc.SendPayment(c.Request.Context(), userID, []byte(req.PasskeySeed), req.Destination, req.Asset, req.Amount, req.Memo, ipAddress, userAgent)
+	if err != nil {
+		response.InternalError(c, "withdrawal failed: "+err.Error())
+		return
+	}
+	response.OK(c, gin.H{"txHash": txHash})
+}
+
+// GetBalance returns the XLM and USDC balance for the user's primary wallet
+// GET /v1/wallets/balance
+func (h *WalletHandler) GetBalance(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	bal, err := h.walletSvc.GetBalance(c.Request.Context(), userID)
+	if err != nil {
+		response.InternalError(c, "failed to get balance")
+		return
+	}
+	response.OK(c, gin.H{"balance": bal})
+}
+
 // DeleteWallet deletes a wallet by ID
 // DELETE /v1/wallets/:id
 func (h *WalletHandler) DeleteWallet(c *gin.Context) {

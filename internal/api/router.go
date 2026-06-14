@@ -73,6 +73,8 @@ func NewRouter(
 			// Wallet routes
 			authenticated.POST("/wallets", walletHandler.CreateWallet)
 			authenticated.GET("/wallets", walletHandler.ListWallets)
+			authenticated.GET("/wallets/balance", walletHandler.GetBalance)
+			authenticated.POST("/wallets/withdraw", walletHandler.Withdraw)
 			authenticated.DELETE("/wallets/:id", walletHandler.DeleteWallet)
 
 			// Deposit / Withdraw routes
@@ -85,6 +87,7 @@ func NewRouter(
 			authenticated.POST("/circles", circleHandler.CreateCircle)
 			authenticated.GET("/circles/:id", circleHandler.GetCircle)
 			authenticated.PATCH("/circles/:id", circleHandler.UpdateCircle)
+			authenticated.POST("/circles/:id/start", circleHandler.StartCircle)
 			authenticated.DELETE("/circles/:id", circleHandler.CancelCircle)
 			authenticated.POST("/circles/:id/join", circleHandler.JoinCircle)
 			authenticated.POST("/circles/:id/contribute", circleHandler.Contribute)

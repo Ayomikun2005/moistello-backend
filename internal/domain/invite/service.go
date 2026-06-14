@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,10 +22,10 @@ type Service interface {
 }
 
 type GenerateInput struct {
-	CircleID string `json:"circleId" validate:"required"`
-	UserID   string `json:"userId" validate:"required"`
+	CircleID string `json:"circleId"`
+	UserID   string `json:"userId"`
 	MaxUses  int    `json:"maxUses" validate:"gte=1,lte=100"`
-	TTLHours int    `json:"ttlHours" validate:"gte=1,lte=720"`
+	TTLHours int    `json:"ttlHours" validate:"omitempty,gte=1,lte=720"`
 }
 
 type inviteService struct {
@@ -44,7 +45,7 @@ func parseUUID(s string) (uuid.UUID, error) {
 }
 
 func generateCode() (string, error) {
-	b := make([]byte, 16)
+	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
 		return "", fmt.Errorf("generating invite code: %w", err)
 	}
@@ -82,8 +83,10 @@ func (s *inviteService) Generate(ctx context.Context, input GenerateInput) (*Inv
 	}
 
 	if err := s.repo.Create(ctx, inv); err != nil {
+		log.Printf("[invite] ERROR creating invite for circle %s: %v", input.CircleID, err)
 		return nil, fmt.Errorf("generating invite: %w", err)
 	}
+	log.Printf("[invite] created invite %s for circle %s", code, input.CircleID)
 	return inv, nil
 }
 

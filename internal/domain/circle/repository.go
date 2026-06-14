@@ -7,12 +7,14 @@ import (
 )
 
 type CircleFilter struct {
-	Search     string
-	Status     CircleStatus
-	Type       CircleType
-	Page       int
-	Limit      int
-	ExcludeIDs []uuid.UUID
+	Search      string
+	Status      CircleStatus
+	Type        CircleType
+	Page        int
+	Limit       int
+	ExcludeIDs  []uuid.UUID
+	CommunityID *uuid.UUID
+	OrganizerID *uuid.UUID
 }
 
 type Repository interface {

@@ -35,10 +35,12 @@ func NewRepositoryFromTx(tx *sqlx.Tx) Repository {
 func scanCircle(row interface{ Scan(...interface{}) error }) (*Circle, error) {
 	var c Circle
 	var contractID, description sql.NullString
+	var communityID *uuid.UUID
 	var startDate, endDate sql.NullTime
 	err := row.Scan(
 		&c.ID,
 		&contractID,
+		&communityID,
 		&c.Name,
 		&description,
 		&c.CircleType,
@@ -68,6 +70,7 @@ func scanCircle(row interface{ Scan(...interface{}) error }) (*Circle, error) {
 		return nil, fmt.Errorf("scanning circle row: %w", err)
 	}
 	c.ContractID = contractID
+	c.CommunityID = communityID
 	c.Description = description
 	c.StartDate = startDate
 	c.EndDate = endDate
@@ -87,7 +90,7 @@ func scanCircleMember(row interface{ Scan(...interface{}) error }) (*CircleMembe
 }
 
 func (r *pgRepo) FindByID(ctx context.Context, id uuid.UUID) (*Circle, error) {
-	query := `SELECT id, contract_id, name, description, circle_type, payout_type,
+	query := `SELECT id, contract_id, community_id, name, description, circle_type, payout_type,
 		contribution_amount, currency, frequency, max_members, min_moi_score,
 		collateral_percent, late_fee_percent, grace_period_hours, max_strikes,
 		start_date, end_date, status, current_round, total_contributions,
@@ -96,7 +99,7 @@ func (r *pgRepo) FindByID(ctx context.Context, id uuid.UUID) (*Circle, error) {
 }
 
 func (r *pgRepo) FindByContractID(ctx context.Context, contractID string) (*Circle, error) {
-	query := `SELECT id, contract_id, name, description, circle_type, payout_type,
+	query := `SELECT id, contract_id, community_id, name, description, circle_type, payout_type,
 		contribution_amount, currency, frequency, max_members, min_moi_score,
 		collateral_percent, late_fee_percent, grace_period_hours, max_strikes,
 		start_date, end_date, status, current_round, total_contributions,
@@ -134,6 +137,16 @@ func (r *pgRepo) List(ctx context.Context, filter CircleFilter) ([]Circle, error
 		args = append(args, filter.Type)
 		argIdx++
 	}
+	if filter.CommunityID != nil {
+		conditions = append(conditions, fmt.Sprintf("community_id = $%d", argIdx))
+		args = append(args, *filter.CommunityID)
+		argIdx++
+	}
+	if filter.OrganizerID != nil {
+		conditions = append(conditions, fmt.Sprintf("organizer_id = $%d", argIdx))
+		args = append(args, *filter.OrganizerID)
+		argIdx++
+	}
 	if len(filter.ExcludeIDs) > 0 {
 		placeholders := make([]string, len(filter.ExcludeIDs))
 		for i, id := range filter.ExcludeIDs {
@@ -149,7 +162,7 @@ func (r *pgRepo) List(ctx context.Context, filter CircleFilter) ([]Circle, error
 		whereClause = "WHERE " + strings.Join(conditions, " AND ")
 	}
 
-	query := fmt.Sprintf(`SELECT id, contract_id, name, description, circle_type, payout_type,
+	query := fmt.Sprintf(`SELECT id, contract_id, community_id, name, description, circle_type, payout_type,
 		contribution_amount, currency, frequency, max_members, min_moi_score,
 		collateral_percent, late_fee_percent, grace_period_hours, max_strikes,
 		start_date, end_date, status, current_round, total_contributions,
@@ -198,6 +211,16 @@ func (r *pgRepo) Count(ctx context.Context, filter CircleFilter) (int, error) {
 		args = append(args, filter.Type)
 		argIdx++
 	}
+	if filter.CommunityID != nil {
+		conditions = append(conditions, fmt.Sprintf("community_id = $%d", argIdx))
+		args = append(args, *filter.CommunityID)
+		argIdx++
+	}
+	if filter.OrganizerID != nil {
+		conditions = append(conditions, fmt.Sprintf("organizer_id = $%d", argIdx))
+		args = append(args, *filter.OrganizerID)
+		argIdx++
+	}
 
 	whereClause := ""
 	if len(conditions) > 0 {
@@ -214,12 +237,12 @@ func (r *pgRepo) Count(ctx context.Context, filter CircleFilter) (int, error) {
 }
 
 func (r *pgRepo) Create(ctx context.Context, c *Circle) error {
-	query := `INSERT INTO circles (id, contract_id, name, description, circle_type, payout_type,
+	query := `INSERT INTO circles (id, contract_id, community_id, name, description, circle_type, payout_type,
 		contribution_amount, currency, frequency, max_members, min_moi_score,
 		collateral_percent, late_fee_percent, grace_period_hours, max_strikes,
 		start_date, end_date, status, current_round, total_contributions,
 		organizer_id, created_at, updated_at)
-		VALUES (:id, :contract_id, :name, :description, :circle_type, :payout_type,
+		VALUES (:id, :contract_id, :community_id, :name, :description, :circle_type, :payout_type,
 		:contribution_amount, :currency, :frequency, :max_members, :min_moi_score,
 		:collateral_percent, :late_fee_percent, :grace_period_hours, :max_strikes,
 		:start_date, :end_date, :status, :current_round, :total_contributions,
@@ -334,7 +357,7 @@ func (r *pgRepo) FindMemberByCircleAndUser(ctx context.Context, circleID, userID
 }
 
 func (r *pgRepo) FindCirclesByUserID(ctx context.Context, userID uuid.UUID) ([]Circle, error) {
-	query := `SELECT c.id, c.contract_id, c.name, c.description, c.circle_type, c.payout_type,
+	query := `SELECT c.id, c.contract_id, c.community_id, c.name, c.description, c.circle_type, c.payout_type,
 		c.contribution_amount, c.currency, c.frequency, c.max_members, c.min_moi_score,
 		c.collateral_percent, c.late_fee_percent, c.grace_period_hours, c.max_strikes,
 		c.start_date, c.end_date, c.status, c.current_round, c.total_contributions,

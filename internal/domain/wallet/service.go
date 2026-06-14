@@ -8,7 +8,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/stellar/go/keypair"
 	"github.com/stellar/go/txnbuild"
 	"github.com/stellar/go/clients/horizonclient"
@@ -18,6 +21,8 @@ type Service interface {
 	CreateWallet(ctx context.Context, userID string, passkeySeed []byte) (*Wallet, error)
 	SignTransaction(ctx context.Context, walletID string, passkeySeed []byte, txnXDR string) (string, error)
 	GetWallets(ctx context.Context, userID string) ([]Wallet, error)
+	GetBalance(ctx context.Context, userID string) (*Balance, error)
+	SendPayment(ctx context.Context, userID string, passkeySeed []byte, destination, asset string, amount float64, memo, ipAddress, userAgent string) (string, error)
 	DeleteWallet(ctx context.Context, userID, walletID string) error
 }
 
@@ -54,26 +59,18 @@ func (s *service) CreateWallet(ctx context.Context, userID string, passkeySeed [
 	// 1. Generate Stellar keypair
 	kp, err := keypair.Random()
 	if err != nil {
+		log.Printf("[wallet] ERROR generating keypair: %v", err)
 		return nil, fmt.Errorf("generating keypair: %w", err)
 	}
 
-	// 2. Fund account from master pool
-	if err := s.fundAccount(kp.Address()); err != nil {
-		return nil, fmt.Errorf("funding account: %w", err)
-	}
-
-	// 3. Set USDC trustline
-	if err := s.setTrustline(kp); err != nil {
-		return nil, fmt.Errorf("setting trustline: %w", err)
-	}
-
-	// 4. Encrypt secret key with passkey seed
+	// 2. Encrypt secret key with passkey seed
 	encKey, nonce, err := encryptSecret(kp.Seed(), passkeySeed)
 	if err != nil {
+		log.Printf("[wallet] ERROR encrypting key: %v", err)
 		return nil, fmt.Errorf("encrypting secret key: %w", err)
 	}
 
-	// 5. Store in database
+	// 3. Store in database FIRST (before slow Horizon ops) — use background context to avoid HTTP timeout
 	w := &Wallet{
 		UserID:             userID,
 		PublicKey:          kp.Address(),
@@ -82,59 +79,92 @@ func (s *service) CreateWallet(ctx context.Context, userID string, passkeySeed [
 		WalletType:         WalletTypeAuto,
 		IsPrimary:          true,
 	}
-	if err := s.repo.Create(ctx, w); err != nil {
+	if err := s.repo.Create(context.Background(), w); err != nil {
+		log.Printf("[wallet] ERROR storing wallet record for %s: %v", userID, err)
 		return nil, fmt.Errorf("creating wallet record: %w", err)
+	}
+	log.Printf("[wallet] created wallet record %s for user %s", kp.Address(), userID)
+
+	// 4. Fund account from master pool (best-effort)
+	if err := s.fundAccount(kp.Address()); err != nil {
+		log.Printf("[wallet] ERROR funding account %s: %v", kp.Address(), err)
+	} else {
+		log.Printf("[wallet] funded account %s with %.1f XLM", kp.Address(), s.cfg.MinBalanceXLM)
+	}
+
+	// 5. Set USDC trustline (best-effort)
+	if err := s.setTrustline(kp); err != nil {
+		log.Printf("[wallet] WARNING trustline failed for %s: %v", kp.Address(), err)
+	}
+
+	// 6. Send 1 test USDC from master (issuer) to new wallet (best-effort)
+	if err := s.sendTestUSDC(kp.Address()); err != nil {
+		log.Printf("[wallet] WARNING sending test USDC to %s: %v", kp.Address(), err)
 	}
 
 	return w, nil
 }
 
 func (s *service) fundAccount(destination string) error {
-	// Load master account
-	masterAcc, err := s.horizon.AccountDetail(horizonclient.AccountRequest{
-		AccountID: s.master.Address(),
-	})
-	if err != nil {
-		return fmt.Errorf("loading master account: %w", err)
-	}
+	// Load master account with retry (Horizon testnet can transiently 404)
+	var lastErr error
+	for i := 0; i < 3; i++ {
+		masterAcc, err := s.horizon.AccountDetail(horizonclient.AccountRequest{
+			AccountID: s.master.Address(),
+		})
+		if err != nil {
+			lastErr = err
+			log.Printf("[wallet] fundAccount attempt %d/3 failed: %v", i+1, err)
+			time.Sleep(time.Duration(i+1) * time.Second)
+			continue
+		}
 
-	// TODO: calculate proper stroop amount from s.cfg.MinBalanceXLM
-	tx, err := txnbuild.NewTransaction(
-		txnbuild.TransactionParams{
-			SourceAccount:        &masterAcc,
-			IncrementSequenceNum: true,
-			Operations: []txnbuild.Operation{
-				&txnbuild.CreateAccount{
-					Destination: destination,
-					Amount:      fmt.Sprintf("%.7f", s.cfg.MinBalanceXLM),
+		// Build and submit CreateAccount transaction
+		tx, buildErr := txnbuild.NewTransaction(
+			txnbuild.TransactionParams{
+				SourceAccount:        &masterAcc,
+				IncrementSequenceNum: true,
+				Operations: []txnbuild.Operation{
+					&txnbuild.CreateAccount{
+						Destination: destination,
+						Amount:      fmt.Sprintf("%.7f", s.cfg.MinBalanceXLM),
+					},
+				},
+				BaseFee: txnbuild.MinBaseFee,
+				Preconditions: txnbuild.Preconditions{
+					TimeBounds: txnbuild.NewInfiniteTimeout(),
 				},
 			},
-			BaseFee: txnbuild.MinBaseFee,
-			Preconditions: txnbuild.Preconditions{
-				TimeBounds: txnbuild.NewInfiniteTimeout(),
-			},
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("building fund tx: %w", err)
-	}
+		)
+		if buildErr != nil {
+			return fmt.Errorf("building fund tx: %w", buildErr)
+		}
 
-	tx, err = tx.Sign(s.cfg.NetworkPassphrase, s.master)
-	if err != nil {
-		return fmt.Errorf("signing fund tx: %w", err)
-	}
+		tx, signErr := tx.Sign(s.cfg.NetworkPassphrase, s.master)
+		if signErr != nil {
+			return fmt.Errorf("signing fund tx: %w", signErr)
+		}
 
-	txe, err := tx.Base64()
-	if err != nil {
-		return fmt.Errorf("encoding fund tx: %w", err)
-	}
+		txe, encErr := tx.Base64()
+		if encErr != nil {
+			return fmt.Errorf("encoding fund tx: %w", encErr)
+		}
 
-	_, err = s.horizon.SubmitTransactionXDR(txe)
-	if err != nil {
-		return fmt.Errorf("submitting fund tx: %w", err)
-	}
+		_, subErr := s.horizon.SubmitTransactionXDR(txe)
+		if subErr != nil {
+			if hErr, ok := subErr.(*horizonclient.Error); ok {
+				log.Printf("[wallet] Horizon error detail: %s | result_xdr: %s", hErr.Problem.Detail, hErr.Problem.Extras["result_xdr"])
+			}
+			// If tx fails, retry from account load
+			lastErr = subErr
+			log.Printf("[wallet] fundAccount submit attempt %d/3 failed: %v", i+1, subErr)
+			time.Sleep(time.Duration(i+1) * time.Second)
+			continue
+		}
 
-	return nil
+		return nil
+	}
+	return fmt.Errorf("fundAccount failed after 3 retries: %w", lastErr)
 }
 
 func (s *service) setTrustline(kp *keypair.Full) error {
@@ -187,6 +217,57 @@ func (s *service) setTrustline(kp *keypair.Full) error {
 	return nil
 }
 
+func (s *service) sendTestUSDC(destination string) error {
+	masterAcc, err := s.horizon.AccountDetail(horizonclient.AccountRequest{
+		AccountID: s.master.Address(),
+	})
+	if err != nil {
+		return fmt.Errorf("loading master account: %w", err)
+	}
+
+	tx, err := txnbuild.NewTransaction(
+		txnbuild.TransactionParams{
+			SourceAccount:        &masterAcc,
+			IncrementSequenceNum: true,
+			Operations: []txnbuild.Operation{
+				&txnbuild.Payment{
+					Destination: destination,
+					Amount:      "1.0000000",
+					Asset: txnbuild.CreditAsset{
+						Code:   "USDC",
+						Issuer: s.cfg.USDCIssuer,
+					},
+				},
+			},
+			BaseFee: txnbuild.MinBaseFee,
+			Preconditions: txnbuild.Preconditions{
+				TimeBounds: txnbuild.NewInfiniteTimeout(),
+			},
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("building USDC payment tx: %w", err)
+	}
+
+	tx, err = tx.Sign(s.cfg.NetworkPassphrase, s.master)
+	if err != nil {
+		return fmt.Errorf("signing USDC payment tx: %w", err)
+	}
+
+	txe, err := tx.Base64()
+	if err != nil {
+		return fmt.Errorf("encoding USDC payment tx: %w", err)
+	}
+
+	_, err = s.horizon.SubmitTransactionXDR(txe)
+	if err != nil {
+		return fmt.Errorf("submitting USDC payment tx: %w", err)
+	}
+
+	log.Printf("[wallet] sent 1.0 USDC to %s", destination)
+	return nil
+}
+
 func (s *service) SignTransaction(ctx context.Context, walletID string, passkeySeed []byte, txnXDR string) (string, error) {
 	wallet, err := s.repo.FindByID(ctx, walletID)
 	if err != nil {
@@ -227,6 +308,168 @@ func (s *service) SignTransaction(ctx context.Context, walletID string, passkeyS
 	}
 
 	return signedXDR, nil
+}
+
+type Balance struct {
+	XLM  string `json:"xlm"`
+	USDC string `json:"usdc"`
+}
+
+func (s *service) GetBalance(ctx context.Context, userID string) (*Balance, error) {
+	wallets, err := s.repo.FindByUserID(ctx, userID)
+	if err != nil || len(wallets) == 0 {
+		return nil, fmt.Errorf("no wallet found")
+	}
+	pk := wallets[0].PublicKey
+
+	account, err := s.horizon.AccountDetail(horizonclient.AccountRequest{AccountID: pk})
+	if err != nil {
+		return nil, fmt.Errorf("fetching account from horizon: %w", err)
+	}
+
+	bal := &Balance{XLM: "0.0000", USDC: "0.0000"}
+	for _, b := range account.Balances {
+		if b.Asset.Type == "native" {
+			bal.XLM = b.Balance
+		} else if b.Asset.Code == "USDC" && b.Asset.Issuer == s.cfg.USDCIssuer {
+			bal.USDC = b.Balance
+		}
+	}
+	return bal, nil
+}
+
+func (s *service) SendPayment(ctx context.Context, userID string, passkeySeed []byte, destination, asset string, amount float64, memo, ipAddress, userAgent string) (string, error) {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return "", fmt.Errorf("invalid user ID: %w", err)
+	}
+
+	// ── Security Check 1: Self-send ──
+	wallets, err := s.repo.FindByUserID(ctx, userID)
+	if err != nil || len(wallets) == 0 {
+		return "", fmt.Errorf("no wallet found")
+	}
+	w := &wallets[0]
+	if w.PublicKey == destination {
+		auditErr := s.repo.RecordWithdrawalAudit(ctx, &WithdrawalRecord{
+			ID: uuid.New(), UserID: uid, Destination: destination, Asset: asset, Amount: amount,
+			Status: "blocked_self_send", IPAddress: ipAddress, UserAgent: userAgent, CreatedAt: time.Now().UTC(),
+		})
+		if auditErr != nil { _ = auditErr }
+		return "", fmt.Errorf("cannot send to your own wallet address")
+	}
+
+	// ── Security Check 2: Rate limit ──
+	allowed, err := s.repo.CheckRateLimit(ctx, uid)
+	if err != nil || !allowed {
+		auditErr := s.repo.RecordWithdrawalAudit(ctx, &WithdrawalRecord{
+			ID: uuid.New(), UserID: uid, Destination: destination, Asset: asset, Amount: amount,
+			Status: "blocked_rate_limit", IPAddress: ipAddress, UserAgent: userAgent, CreatedAt: time.Now().UTC(),
+		})
+		if auditErr != nil { _ = auditErr }
+		return "", fmt.Errorf("rate limit exceeded: max 3 withdrawals per hour")
+	}
+
+	// ── Security Check 3: Daily spending limit ──
+	spentToday, err := s.repo.GetDailySpending(ctx, uid)
+	if err != nil {
+		spentToday = 0
+	}
+	const dailyLimit = 1000.0
+	if spentToday+amount > dailyLimit {
+		auditErr := s.repo.RecordWithdrawalAudit(ctx, &WithdrawalRecord{
+			ID: uuid.New(), UserID: uid, Destination: destination, Asset: asset, Amount: amount,
+			Status: "blocked_daily_limit", IPAddress: ipAddress, UserAgent: userAgent, CreatedAt: time.Now().UTC(),
+		})
+		if auditErr != nil { _ = auditErr }
+		return "", fmt.Errorf("daily spending limit of $%.2f exceeded", dailyLimit)
+	}
+
+	// ── Security Check 4: Stellar address validation ──
+	if _, err := keypair.ParseAddress(destination); err != nil {
+		return "", fmt.Errorf("invalid Stellar address: %w", err)
+	}
+
+	// ── Record pending audit ──
+	auditID := uuid.New()
+	_ = s.repo.RecordWithdrawalAudit(ctx, &WithdrawalRecord{
+		ID: auditID, UserID: uid, Destination: destination, Asset: asset, Amount: amount,
+		Status: "pending", IPAddress: ipAddress, UserAgent: userAgent, CreatedAt: time.Now().UTC(),
+	})
+
+	// ── Decrypt key and build transaction ──
+	secretKey, err := decryptSecret(w.EncryptedSecretKey, w.EncryptionNonce, passkeySeed)
+	if err != nil {
+		return "", fmt.Errorf("decrypting secret key: %w", err)
+	}
+
+	kp, err := keypair.ParseFull(secretKey)
+	if err != nil {
+		return "", fmt.Errorf("parsing keypair: %w", err)
+	}
+
+	account, err := s.horizon.AccountDetail(horizonclient.AccountRequest{AccountID: kp.Address()})
+	if err != nil {
+		return "", fmt.Errorf("loading account: %w", err)
+	}
+
+	var op txnbuild.Operation
+	if asset == "XLM" {
+		op = &txnbuild.Payment{
+			Destination: destination,
+			Amount:      fmt.Sprintf("%.7f", amount),
+			Asset:       txnbuild.NativeAsset{},
+		}
+	} else {
+		op = &txnbuild.Payment{
+			Destination: destination,
+			Amount:      fmt.Sprintf("%.7f", amount),
+			Asset:       txnbuild.CreditAsset{Code: "USDC", Issuer: s.cfg.USDCIssuer},
+		}
+	}
+
+	params := txnbuild.TransactionParams{
+		SourceAccount:        &account,
+		IncrementSequenceNum: true,
+		Operations:           []txnbuild.Operation{op},
+		BaseFee:              txnbuild.MinBaseFee,
+		Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewInfiniteTimeout()},
+	}
+	if memo != "" {
+		params.Memo = txnbuild.MemoText(memo)
+	}
+
+	tx, err := txnbuild.NewTransaction(params)
+	if err != nil {
+		return "", fmt.Errorf("building tx: %w", err)
+	}
+
+	tx, err = tx.Sign(s.cfg.NetworkPassphrase, kp)
+	if err != nil {
+		return "", fmt.Errorf("signing tx: %w", err)
+	}
+
+	txe, err := tx.Base64()
+	if err != nil {
+		return "", fmt.Errorf("encoding tx: %w", err)
+	}
+
+	resp, err := s.horizon.SubmitTransactionXDR(txe)
+	if err != nil {
+		_ = s.repo.RecordWithdrawalAudit(ctx, &WithdrawalRecord{
+			ID: auditID, UserID: uid, Destination: destination, Asset: asset, Amount: amount,
+			Status: "failed_horizon", Failure: err.Error(), IPAddress: ipAddress, UserAgent: userAgent, CreatedAt: time.Now().UTC(),
+		})
+		return "", fmt.Errorf("submitting tx: %w", err)
+	}
+
+	_ = s.repo.RecordWithdrawalAudit(ctx, &WithdrawalRecord{
+		ID: auditID, UserID: uid, Destination: destination, Asset: asset, Amount: amount,
+		Status: "completed", TxHash: resp.Hash, IPAddress: ipAddress, UserAgent: userAgent, CreatedAt: time.Now().UTC(),
+	})
+	_ = s.repo.IncrementRateLimit(ctx, uid)
+
+	return resp.Hash, nil
 }
 
 func (s *service) GetWallets(ctx context.Context, userID string) ([]Wallet, error) {
