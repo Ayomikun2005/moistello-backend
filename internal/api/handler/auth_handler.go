@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -87,7 +88,11 @@ func (h *AuthHandler) Verify(c *gin.Context) {
 		response.InternalError(c, "failed to create session")
 		return
 	}
-	response.OK(c, gin.H{"token": tokenPair.AccessToken, "refreshToken": tokenPair.RefreshToken, "user": u})
+	pepper := getPasskeyPepper()
+	response.OK(c, gin.H{
+		"token": tokenPair.AccessToken, "refreshToken": tokenPair.RefreshToken,
+		"user": u, "pepper": pepper,
+	})
 }
 
 // @Summary Register new user with profile
@@ -142,7 +147,8 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		response.InternalError(c, "failed to create session")
 		return
 	}
-	response.OK(c, gin.H{"token": tokenPair.AccessToken, "refreshToken": tokenPair.RefreshToken, "user": u})
+	pepper := getPasskeyPepper()
+	response.OK(c, gin.H{"token": tokenPair.AccessToken, "refreshToken": tokenPair.RefreshToken, "user": u, "pepper": pepper})
 }
 
 // @Summary Refresh JWT tokens
@@ -242,6 +248,16 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	}
 
 	response.OK(c, gin.H{"success": true})
+}
+
+// getPasskeyPepper returns the passkey pepper used for wallet seed derivation.
+// In production, set MOISTELLO_PASSKEY_PEPPER environment variable.
+func getPasskeyPepper() string {
+	p := os.Getenv("MOISTELLO_PASSKEY_PEPPER")
+	if p != "" {
+		return p
+	}
+	return "moistello-local-dev"
 }
 
 // sha256HashForLogout computes SHA-256 for refresh token session lookup.

@@ -81,6 +81,51 @@ func BlocklistUserRefreshTokens(ctx context.Context, redisClient *redis.Client, 
 	}
 }
 
+// RefreshTokenBlocklistMiddleware checks if the refresh token in the request
+// body has been blocklisted. Applied specifically to /auth/refresh.
+func RefreshTokenBlocklistMiddleware(redisClient *redis.Client) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req struct {
+			RefreshToken string `json:"refreshToken"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil || req.RefreshToken == "" {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"error":   "refresh token is required",
+			})
+			return
+		}
+
+		tokenHash := sha256Hex(req.RefreshToken)
+		blocklistKey := fmt.Sprintf("token:blocklist:%s", tokenHash)
+		exists, err := redisClient.Exists(c.Request.Context(), blocklistKey).Result()
+		if err != nil {
+			log.Error().Err(err).Msg("Redis blocklist check failed for refresh token")
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
+				"success": false,
+				"error":   "Authentication service unavailable",
+			})
+			return
+		}
+
+		if exists > 0 {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"error":   "Refresh token has been revoked",
+			})
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// sha256Hex returns the hex-encoded SHA-256 hash of a string.
+func sha256Hex(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return fmt.Sprintf("%x", h)
+}
+
 func ExtractTokenExpiry(token string) (time.Time, error) {
 	parsed, _, err := new(jwt.Parser).ParseUnverified(token, jwt.MapClaims{})
 	if err != nil {

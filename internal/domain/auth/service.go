@@ -15,6 +15,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"github.com/rs/zerolog/log"
 
 	"github.com/moistello/backend/pkg/apperrors"
 )
@@ -119,11 +120,20 @@ func (s *authService) CreateSession(ctx context.Context, userID uuid.UUID) (*Tok
 	refreshToken := hex.EncodeToString(refreshBytes)
 	tokenHash := sha256Hash(refreshToken)
 
-	key := fmt.Sprintf("session:%s", tokenHash)
-	sessionData := userID.String()
-	if err := s.redis.Set(ctx, key, sessionData, s.refreshTTL).Err(); err != nil {
+	userIDStr := userID.String()
+
+	// Store session
+	sessionKey := fmt.Sprintf("session:%s", tokenHash)
+	if err := s.redis.Set(ctx, sessionKey, userIDStr, s.refreshTTL).Err(); err != nil {
 		return nil, fmt.Errorf("storing session in redis: %w", err)
 	}
+
+	// Index session by user for bulk operations (logout, force-invalidate)
+	userSessionsKey := fmt.Sprintf("user:sessions:%s", userIDStr)
+	if err := s.redis.SAdd(ctx, userSessionsKey, tokenHash).Err(); err != nil {
+		log.Warn().Err(err).Msg("failed to index user session — non-fatal")
+	}
+	s.redis.Expire(ctx, userSessionsKey, s.refreshTTL)
 
 	return &TokenPair{
 		AccessToken:  accessToken,
@@ -141,6 +151,19 @@ func (s *authService) ValidateSession(ctx context.Context, refreshToken string) 
 			return nil, apperrors.ErrTokenExpired
 		}
 		return nil, fmt.Errorf("retrieving session from redis: %w", err)
+	}
+
+	// Check if the user's refresh tokens have been blocklisted
+	blocklistKey := fmt.Sprintf("refresh:blocklist:%s", userIDStr)
+	blocklisted, err := s.redis.Exists(ctx, blocklistKey).Result()
+	if err != nil {
+		log.Warn().Err(err).Str("userID", userIDStr).Msg("failed to check refresh blocklist")
+		return nil, fmt.Errorf("session validation error")
+	}
+	if blocklisted > 0 {
+		// Session revoked — delete it immediately
+		s.redis.Del(ctx, key)
+		return nil, fmt.Errorf("session revoked")
 	}
 
 	uid, err := uuid.Parse(userIDStr)
@@ -229,11 +252,22 @@ func (s *authService) RefreshToken(ctx context.Context, refreshToken string) (*T
 		return nil, err
 	}
 
-	tokenHash := sha256Hash(refreshToken)
-	key := fmt.Sprintf("session:%s", tokenHash)
-	s.redis.Del(ctx, key)
+	// Create the NEW session first so that if this fails, the old one remains valid
+	newPair, err := s.CreateSession(ctx, *uid)
+	if err != nil {
+		return nil, fmt.Errorf("creating new session: %w", err)
+	}
 
-	return s.CreateSession(ctx, *uid)
+	// Grace period: keep the old session alive for 60 seconds so that
+	// in-flight requests using the old refresh token can still complete.
+	oldTokenHash := sha256Hash(refreshToken)
+	oldKey := fmt.Sprintf("session:%s", oldTokenHash)
+	graceTTL := 60 * time.Second
+	if err := s.redis.Expire(ctx, oldKey, graceTTL).Err(); err != nil {
+		log.Warn().Err(err).Msg("failed to set old session grace period — non-fatal")
+	}
+
+	return newPair, nil
 }
 
 // stellarBase32Alphabet is the RFC 4648 Base32 alphabet used by Stellar StrKey.

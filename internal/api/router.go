@@ -56,7 +56,7 @@ func NewRouter(
 			auth.POST("/nonce", authHandler.Nonce)
 			auth.POST("/verify", authHandler.Verify)
 			auth.POST("/register", authHandler.Register)
-			auth.POST("/refresh", authHandler.Refresh)
+			auth.POST("/refresh", middleware.RefreshTokenBlocklistMiddleware(redisClient), authHandler.Refresh)
 		}
 
 		authenticated := api.Group("")
