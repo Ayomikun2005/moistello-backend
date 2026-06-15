@@ -10,6 +10,8 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -65,8 +67,14 @@ func (s *authService) GenerateNonce(ctx context.Context, walletAddress string) (
 	}
 	nonceStr := hex.EncodeToString(b)
 
+	// Store nonce with creation timestamp for clock skew tolerance
+	now := time.Now().Unix()
+	storedValue := fmt.Sprintf("%s:%d", nonceStr, now)
 	key := fmt.Sprintf("nonce:%s", walletAddress)
-	if err := s.redis.Set(ctx, key, nonceStr, s.nonceTTL).Err(); err != nil {
+
+	// Add 30s clock skew tolerance to the TTL
+	ttl := s.nonceTTL + 30*time.Second
+	if err := s.redis.Set(ctx, key, storedValue, ttl).Err(); err != nil {
 		return nil, fmt.Errorf("storing nonce in redis: %w", err)
 	}
 
@@ -79,12 +87,36 @@ func (s *authService) GenerateNonce(ctx context.Context, walletAddress string) (
 
 func (s *authService) VerifySignature(ctx context.Context, walletAddress, signature string) (bool, error) {
 	key := fmt.Sprintf("nonce:%s", walletAddress)
-	storedNonce, err := s.redis.Get(ctx, key).Result()
+	stored, err := s.redis.Get(ctx, key).Result()
 	if err != nil {
 		if err == redis.Nil {
 			return false, apperrors.ErrNonceExpired
 		}
 		return false, fmt.Errorf("retrieving nonce from redis: %w", err)
+	}
+
+	// Delete nonce immediately to prevent any replay
+	s.redis.Del(ctx, key)
+
+	// Parse nonce value and creation timestamp
+	parts := strings.SplitN(stored, ":", 2)
+	if len(parts) != 2 {
+		return false, fmt.Errorf("invalid nonce format")
+	}
+	nonceStr := parts[0]
+	createdAt, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return false, fmt.Errorf("invalid nonce timestamp: %w", err)
+	}
+
+	// Check expiry with 30-second clock skew tolerance
+	now := time.Now().Unix()
+	skewTolerance := int64(30)
+	if now > createdAt+int64(s.nonceTTL.Seconds())+skewTolerance {
+		return false, apperrors.ErrNonceExpired
+	}
+	if now < createdAt-skewTolerance {
+		return false, fmt.Errorf("nonce from the future — clock skew detected")
 	}
 
 	sigBytes, err := hex.DecodeString(signature)
@@ -97,12 +129,8 @@ func (s *authService) VerifySignature(ctx context.Context, walletAddress, signat
 		return false, fmt.Errorf("decoding public key: %w", err)
 	}
 
-	message := sha256.Sum256([]byte(storedNonce))
+	message := sha256.Sum256([]byte(nonceStr))
 	valid := ed25519.Verify(publicKey, message[:], sigBytes)
-
-	if valid {
-		s.redis.Del(ctx, key)
-	}
 
 	return valid, nil
 }

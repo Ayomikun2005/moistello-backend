@@ -14,6 +14,7 @@ import (
 	"github.com/moistello/backend/internal/domain/auth"
 	"github.com/moistello/backend/internal/domain/user"
 	"github.com/moistello/backend/pkg/response"
+	"github.com/moistello/backend/pkg/stellar"
 )
 
 type AuthHandler struct {
@@ -46,6 +47,12 @@ func (h *AuthHandler) Nonce(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+
+	if err := stellar.ValidateAddress(req.WalletAddress); err != nil {
+		response.BadRequest(c, "invalid wallet address: "+err.Error())
+		return
+	}
+
 	nonce, err := h.authService.GenerateNonce(c.Request.Context(), req.WalletAddress)
 	if err != nil {
 		response.InternalError(c, "failed to generate nonce")
@@ -54,8 +61,8 @@ func (h *AuthHandler) Nonce(c *gin.Context) {
 	response.OK(c, gin.H{"nonce": nonce})
 }
 
-// @Summary Verify wallet signature and login
-// @Description Verifies a signed nonce to prove wallet ownership. Creates a user account if one doesn't exist. Returns JWT tokens.
+// @Summary Login with existing wallet
+// @Description Verifies a signed nonce to prove wallet ownership. Requires the user to already exist (register first).
 // @Tags Authentication
 // @Accept json
 // @Produce json
@@ -63,8 +70,9 @@ func (h *AuthHandler) Nonce(c *gin.Context) {
 // @Success 200 {object} response.Envelope{data=object{token=string,refreshToken=string,user=object}}
 // @Failure 400 {object} response.Envelope
 // @Failure 401 {object} response.Envelope
+// @Failure 404 {object} response.Envelope
 // @Router /auth/verify [post]
-func (h *AuthHandler) Verify(c *gin.Context) {
+func (h *AuthHandler) Login(c *gin.Context) {
 	var req struct {
 		WalletAddress string `json:"walletAddress" binding:"required"`
 		Signature     string `json:"signature" binding:"required"`
@@ -73,14 +81,24 @@ func (h *AuthHandler) Verify(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+
+	if err := stellar.ValidateAddress(req.WalletAddress); err != nil {
+		response.BadRequest(c, "invalid wallet address: "+err.Error())
+		return
+	}
+
 	valid, err := h.authService.VerifySignature(c.Request.Context(), req.WalletAddress, req.Signature)
 	if err != nil || !valid {
 		response.Unauthorized(c, "signature verification failed")
 		return
 	}
-	u, err := h.userService.Create(c.Request.Context(), req.WalletAddress)
+	u, err := h.userService.GetByWallet(c.Request.Context(), req.WalletAddress)
 	if err != nil {
-		response.InternalError(c, "failed to create user")
+		if err == user.ErrUserNotFound {
+			response.NotFound(c, "account not found. please register first.")
+			return
+		}
+		response.InternalError(c, "failed to find user")
 		return
 	}
 	tokenPair, err := h.authService.CreateSession(c.Request.Context(), u.ID)
@@ -96,7 +114,7 @@ func (h *AuthHandler) Verify(c *gin.Context) {
 }
 
 // @Summary Register new user with profile
-// @Description Verifies wallet signature and creates a user account with optional profile fields (displayName, email, countryCode, language). Returns JWT tokens.
+// @Description Creates a new user account. Returns 409 if the wallet is already registered.
 // @Tags Authentication
 // @Accept json
 // @Produce json
@@ -104,6 +122,7 @@ func (h *AuthHandler) Verify(c *gin.Context) {
 // @Success 200 {object} response.Envelope{data=object{token=string,refreshToken=string,user=object}}
 // @Failure 400 {object} response.Envelope
 // @Failure 401 {object} response.Envelope
+// @Failure 409 {object} response.Envelope
 // @Router /auth/register [post]
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req struct {
@@ -119,9 +138,21 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
+	if err := stellar.ValidateAddress(req.WalletAddress); err != nil {
+		response.BadRequest(c, "invalid wallet address: "+err.Error())
+		return
+	}
+
 	valid, err := h.authService.VerifySignature(c.Request.Context(), req.WalletAddress, req.Signature)
 	if err != nil || !valid {
 		response.Unauthorized(c, "signature verification failed")
+		return
+	}
+
+	// Check for existing user before creating
+	existing, err := h.userService.GetByWallet(c.Request.Context(), req.WalletAddress)
+	if err == nil && existing != nil {
+		response.Conflict(c, "account already exists. please log in.")
 		return
 	}
 

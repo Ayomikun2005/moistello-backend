@@ -41,8 +41,9 @@ func NewRouter(
 	// WebSocket — real-time events
 	r.GET("/ws", wsHandler.HandleWebSocket)
 
-	// Passkey credential storage — public, called from Next.js API routes
+	// Passkey credential storage — authenticated
 	passkey := r.Group("/v1/passkey")
+	passkey.Use(middleware.AuthMiddleware(jwtPublicKey))
 	{
 		passkey.POST("/credentials", passkeyCredentialHandler.StoreCredential)
 		passkey.GET("/credentials/:id", passkeyCredentialHandler.GetCredential)
@@ -54,7 +55,7 @@ func NewRouter(
 		auth.Use(middleware.AuthRateLimitMiddleware(redisClient, cfg.RateLimit))
 		{
 			auth.POST("/nonce", authHandler.Nonce)
-			auth.POST("/verify", authHandler.Verify)
+			auth.POST("/login", authHandler.Login)
 			auth.POST("/register", authHandler.Register)
 			auth.POST("/refresh", middleware.RefreshTokenBlocklistMiddleware(redisClient), authHandler.Refresh)
 		}
