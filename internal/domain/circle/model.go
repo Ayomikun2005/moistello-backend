@@ -10,8 +10,9 @@ import (
 type CircleType string
 
 const (
-	CircleTypePublic  CircleType = "public"
-	CircleTypePrivate CircleType = "private"
+	CircleTypePublic    CircleType = "public"
+	CircleTypePrivate   CircleType = "private"
+	CircleTypePremium   CircleType = "premium"
 )
 
 type PayoutType string

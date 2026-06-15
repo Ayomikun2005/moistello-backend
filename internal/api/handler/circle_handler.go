@@ -200,6 +200,22 @@ func (h *CircleHandler) Contribute(c *gin.Context) {
 		return
 	}
 
+	cir, err := h.circleService.Get(c.Request.Context(), circleID)
+	if err != nil {
+		response.NotFound(c, "circle not found")
+		return
+	}
+	if cir.CircleType == circle.CircleTypePremium {
+		if cir.Currency == circle.CurrencyUSDC && req.Amount < 50 {
+			response.BadRequest(c, "premium circles require minimum 50 USDC contribution")
+			return
+		}
+		if cir.Currency == circle.CurrencyXLM && req.Amount < 100 {
+			response.BadRequest(c, "premium circles require minimum 100 XLM contribution")
+			return
+		}
+	}
+
 	contrib, err := h.contribService.Record(c.Request.Context(), contribution.RecordInput{
 		CircleID:    circleID,
 		UserID:      userID,

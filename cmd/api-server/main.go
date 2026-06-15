@@ -17,8 +17,10 @@
 package main
 
 import (
+	"context"
 	"os"
 
+	"github.com/google/uuid"
 	"github.com/moistello/backend/config"
 	"github.com/moistello/backend/internal/api"
 	"github.com/moistello/backend/internal/api/handler"
@@ -40,6 +42,18 @@ import (
 	"github.com/moistello/backend/pkg/validator"
 	"github.com/rs/zerolog/log"
 )
+
+type moiAdapter struct {
+	repo user.Repository
+}
+
+func (a *moiAdapter) FindByID(ctx context.Context, id uuid.UUID) (*circle.UserMOIData, error) {
+	u, err := a.repo.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return &circle.UserMOIData{MoiScore: u.MoiScore}, nil
+}
 
 func main() {
 	cfg, err := config.Load(".")
@@ -73,7 +87,7 @@ func main() {
 	auditRepo := audit.NewRepository(db)
 
 	userSvc := user.NewService(userRepo, circleRepo)
-	circleSvc := circle.NewService(circleRepo, circle.NewTransactor(db))
+	circleSvc := circle.NewService(circleRepo, &moiAdapter{repo: userRepo}, circle.NewTransactor(db))
 	contribSvc := contribution.NewService(contribRepo, contribution.NewTransactor(db))
 	payoutSvc := payout.NewService(payoutRepo)
 	reputationSvc := reputation.NewService(reputationRepo)

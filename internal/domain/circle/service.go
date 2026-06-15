@@ -25,6 +25,14 @@ type Service interface {
 	GetMembers(ctx context.Context, circleID string) ([]CircleMember, error)
 }
 
+type UserMOIFetcher interface {
+	FindByID(ctx context.Context, id uuid.UUID) (*UserMOIData, error)
+}
+
+type UserMOIData struct {
+	MoiScore int
+}
+
 type Transactor interface {
 	WithTransaction(ctx context.Context, fn func(repo Repository) error) error
 }
@@ -33,7 +41,7 @@ type CreateCircleInput struct {
 	Name               string          `json:"name" validate:"required,min=3,max=100"`
 	Description        string          `json:"description"`
 	CommunityID        string          `json:"communityId"`
-	CircleType         CircleType      `json:"circleType" validate:"required,oneof=public private org community premium"`
+	CircleType         CircleType      `json:"circleType" validate:"required,oneof=public private community premium"`
 	PayoutType         PayoutType      `json:"payoutType" validate:"required,oneof=random fixed auction vote"`
 	ContributionAmount float64         `json:"contributionAmount" validate:"required,gt=0"`
 	Currency           CircleCurrency  `json:"currency" validate:"required,oneof=USDC XLM"`
@@ -61,12 +69,13 @@ type UpdateCircleInput struct {
 }
 
 type circleService struct {
-	repo Repository
-	tx   Transactor
+	repo     Repository
+	userRepo UserMOIFetcher
+	tx       Transactor
 }
 
-func NewService(repo Repository, tx Transactor) Service {
-	return &circleService{repo: repo, tx: tx}
+func NewService(repo Repository, userRepo UserMOIFetcher, tx Transactor) Service {
+	return &circleService{repo: repo, userRepo: userRepo, tx: tx}
 }
 
 type circleTransactor struct {
@@ -149,6 +158,22 @@ func (s *circleService) Create(ctx context.Context, organizerID string, input Cr
 
 	if input.MaxMembers < 2 {
 		return nil, ErrParticipantLimit
+	}
+
+	if input.CircleType == CircleTypePremium {
+		org, err := s.userRepo.FindByID(ctx, orgID)
+		if err != nil {
+			return nil, fmt.Errorf("finding organizer for premium check: %w", err)
+		}
+		if org.MoiScore < 50 {
+			return nil, fmt.Errorf("premium circles require at least 50 MoiScore")
+		}
+		if input.Currency == CurrencyUSDC && input.ContributionAmount < 50 {
+			return nil, fmt.Errorf("premium circles require minimum 50 USDC contribution")
+		}
+		if input.Currency == CurrencyXLM && input.ContributionAmount < 100 {
+			return nil, fmt.Errorf("premium circles require minimum 100 XLM contribution")
+		}
 	}
 
 	now := time.Now().UTC()
@@ -407,6 +432,16 @@ func (s *circleService) Join(ctx context.Context, circleID, userID string, invit
 
 	if c.Status != CircleStatusPending && c.Status != CircleStatusActive {
 		return ErrCircleNotActive
+	}
+
+	if c.CircleType == CircleTypePremium {
+		joiner, err := s.userRepo.FindByID(ctx, uid)
+		if err != nil {
+			return fmt.Errorf("finding user for premium join check: %w", err)
+		}
+		if joiner.MoiScore < 50 {
+			return fmt.Errorf("joining premium circles requires at least 50 MoiScore")
+		}
 	}
 
 	if s.tx != nil {
