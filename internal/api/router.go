@@ -25,6 +25,7 @@ func NewRouter(
 	walletHandler *handler.WalletHandler,
 	depositHandler *handler.DepositHandler,
 	communityHandler *handler.CommunityHandler,
+	wsHandler *handler.WebSocketHandler,
 	jwtPublicKey []byte,
 ) *gin.Engine {
 	r := gin.New()
@@ -36,6 +37,9 @@ func NewRouter(
 
 	r.GET("/health", healthHandler.Health)
 	r.GET("/health/ready", healthHandler.Ready)
+
+	// WebSocket — real-time events
+	r.GET("/ws", wsHandler.HandleWebSocket)
 
 	// Passkey credential storage — public, called from Next.js API routes
 	passkey := r.Group("/v1/passkey")

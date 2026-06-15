@@ -27,13 +27,19 @@ type CreateInput struct {
 	Channel NotificationChannel `json:"channel" validate:"required,oneof=inapp email sms push"`
 }
 
+// Broadcaster defines the interface for real-time notification delivery.
+type Broadcaster interface {
+	NotificationCreated(ctx context.Context, userID, notificationID string)
+}
+
 type notificationService struct {
 	repo         Repository
 	rabbitClient *rabbitmq.Client
+	broadcaster  Broadcaster
 }
 
-func NewService(repo Repository, rabbitClient *rabbitmq.Client) Service {
-	return &notificationService{repo: repo, rabbitClient: rabbitClient}
+func NewService(repo Repository, rabbitClient *rabbitmq.Client, broadcaster Broadcaster) Service {
+	return &notificationService{repo: repo, rabbitClient: rabbitClient, broadcaster: broadcaster}
 }
 
 func parseUUID(s string) (uuid.UUID, error) {
@@ -74,6 +80,10 @@ func (s *notificationService) Create(ctx context.Context, input CreateInput) (*N
 		}
 		routingKey := fmt.Sprintf("notification.%s", input.Channel)
 		_ = s.rabbitClient.Publish("moistello.events", routingKey, payload)
+	}
+
+	if s.broadcaster != nil {
+		s.broadcaster.NotificationCreated(ctx, input.UserID, n.ID.String())
 	}
 
 	return n, nil

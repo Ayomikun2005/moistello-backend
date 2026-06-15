@@ -36,6 +36,7 @@ import (
 	"github.com/moistello/backend/internal/domain/user"
 	"github.com/moistello/backend/internal/domain/wallet"
 	"github.com/moistello/backend/internal/domain/yellowcard"
+	ws "github.com/moistello/backend/internal/websocket"
 	"github.com/moistello/backend/pkg/logger"
 	"github.com/moistello/backend/pkg/postgres"
 	"github.com/moistello/backend/pkg/redis"
@@ -96,12 +97,16 @@ func main() {
 
 	communityRepo := community.NewRepository(db)
 
+	wsHub := ws.NewHub()
+	wsBroadcaster := ws.NewBroadcaster(wsHub, redisClient)
+	_ = ws.NewRedisBridge(wsHub, redisClient)
+
 	userSvc := user.NewService(userRepo, circleRepo)
-	circleSvc := circle.NewService(circleRepo, &moiAdapter{repo: userRepo}, &communityAdapter{repo: communityRepo}, circle.NewTransactor(db))
-	contribSvc := contribution.NewService(contribRepo, contribution.NewTransactor(db))
+	circleSvc := circle.NewService(circleRepo, &moiAdapter{repo: userRepo}, &communityAdapter{repo: communityRepo}, wsBroadcaster, circle.NewTransactor(db))
+	contribSvc := contribution.NewService(contribRepo, wsBroadcaster, contribution.NewTransactor(db))
 	payoutSvc := payout.NewService(payoutRepo)
 	reputationSvc := reputation.NewService(reputationRepo)
-	notificationSvc := notification.NewService(notificationRepo, nil)
+	notificationSvc := notification.NewService(notificationRepo, nil, wsBroadcaster)
 	authSvc, err := auth.NewService(redisClient, cfg.Auth.NonceTTL, cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL, cfg.Auth.JWTPrivateKeyPath, cfg.Auth.JWTPublicKeyPath)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to initialize auth service")
@@ -115,6 +120,8 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to load JWT public key")
 	}
+
+	wsH := handler.NewWebSocketHandler(wsHub)
 
 	authH := handler.NewAuthHandler(authSvc, userSvc, redisClient)
 	userH := handler.NewUserHandler(userSvc)
@@ -144,14 +151,14 @@ func main() {
 	walletH := handler.NewWalletHandler(walletSvc)
 
 	// Community service
-	communitySvc := community.NewService(communityRepo)
+	communitySvc := community.NewService(communityRepo, wsBroadcaster)
 	communityH := handler.NewCommunityHandler(communitySvc)
 
 	// Yellow Card integration
 	ycClient := yellowcard.NewClient(cfg.YellowCard.APIKey, cfg.YellowCard.APISecret)
 	depositH := handler.NewDepositHandler(ycClient, walletSvc)
 
-	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, communityH, jwtPublicKey)
+	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, communityH, wsH, jwtPublicKey)
 
 	if err := api.RunServer(router, cfg.Server); err != nil {
 		log.Fatal().Err(err).Msg("server error")

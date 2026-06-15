@@ -37,12 +37,17 @@ type Service interface {
 	UpdateTotalSaved(ctx context.Context, communityID string) error
 }
 
-type communityService struct {
-	repo Repository
+type Broadcaster interface {
+	CommunityJoined(ctx context.Context, communityID, userID string)
 }
 
-func NewService(repo Repository) Service {
-	return &communityService{repo: repo}
+type communityService struct {
+	repo        Repository
+	broadcaster Broadcaster
+}
+
+func NewService(repo Repository, broadcaster Broadcaster) Service {
+	return &communityService{repo: repo, broadcaster: broadcaster}
 }
 
 func parseUUID(s string) (uuid.UUID, error) {
@@ -202,6 +207,9 @@ func (s *communityService) Join(ctx context.Context, communityID, userID string)
 	}
 	if err := s.repo.AddMember(ctx, member); err != nil {
 		return err
+	}
+	if s.broadcaster != nil {
+		s.broadcaster.CommunityJoined(ctx, communityID, userID)
 	}
 	return nil
 }

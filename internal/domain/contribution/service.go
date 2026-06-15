@@ -12,6 +12,13 @@ import (
 	"github.com/moistello/backend/pkg/apperrors"
 )
 
+// Broadcaster defines the interface for real-time event broadcasting
+// of contribution events to WebSocket clients.
+type Broadcaster interface {
+	ContributionRecorded(ctx context.Context, circleID, userID string, roundNumber int, amount float64)
+	PayoutExecuted(ctx context.Context, circleID, recipientID string, roundNumber int, amount float64)
+}
+
 type Service interface {
 	Record(ctx context.Context, input RecordInput) (*Contribution, error)
 	GetUserHistory(ctx context.Context, userID string, page, limit int) ([]Contribution, int, error)
@@ -31,12 +38,13 @@ type RecordInput struct {
 }
 
 type contributionService struct {
-	repo Repository
-	tx   Transactor
+	repo        Repository
+	broadcaster Broadcaster
+	tx          Transactor
 }
 
-func NewService(repo Repository, tx Transactor) Service {
-	return &contributionService{repo: repo, tx: tx}
+func NewService(repo Repository, broadcaster Broadcaster, tx Transactor) Service {
+	return &contributionService{repo: repo, broadcaster: broadcaster, tx: tx}
 }
 
 type contribTransactor struct {
@@ -109,6 +117,9 @@ func (s *contributionService) Record(ctx context.Context, input RecordInput) (*C
 			}
 			return nil
 		})
+		if err == nil && s.broadcaster != nil {
+			s.broadcaster.ContributionRecorded(ctx, input.CircleID, input.UserID, input.RoundNumber, input.Amount)
+		}
 		return c, err
 	}
 
@@ -117,6 +128,9 @@ func (s *contributionService) Record(ctx context.Context, input RecordInput) (*C
 			return nil, fmt.Errorf("duplicate contribution: %w", err)
 		}
 		return nil, fmt.Errorf("recording contribution: %w", err)
+	}
+	if s.broadcaster != nil {
+		s.broadcaster.ContributionRecorded(ctx, input.CircleID, input.UserID, input.RoundNumber, input.Amount)
 	}
 	return c, nil
 }

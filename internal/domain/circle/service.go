@@ -33,6 +33,14 @@ type UserMOIData struct {
 	MoiScore int
 }
 
+type Broadcaster interface {
+	CircleCreated(ctx context.Context, circleID, organizerID string)
+	CircleStatusChanged(ctx context.Context, circleID, status string)
+	MemberJoined(ctx context.Context, circleID, userID string)
+	MemberLeft(ctx context.Context, circleID, userID string)
+	ContributionRecorded(ctx context.Context, circleID, userID string, roundNumber int, amount float64)
+}
+
 type CommunityMembershipChecker interface {
 	IsMember(ctx context.Context, communityID, userID uuid.UUID) (bool, error)
 }
@@ -77,11 +85,12 @@ type circleService struct {
 	repo             Repository
 	userRepo         UserMOIFetcher
 	communityChecker CommunityMembershipChecker
+	broadcaster      Broadcaster
 	tx               Transactor
 }
 
-func NewService(repo Repository, userRepo UserMOIFetcher, communityChecker CommunityMembershipChecker, tx Transactor) Service {
-	return &circleService{repo: repo, userRepo: userRepo, communityChecker: communityChecker, tx: tx}
+func NewService(repo Repository, userRepo UserMOIFetcher, communityChecker CommunityMembershipChecker, broadcaster Broadcaster, tx Transactor) Service {
+	return &circleService{repo: repo, userRepo: userRepo, communityChecker: communityChecker, broadcaster: broadcaster, tx: tx}
 }
 
 type circleTransactor struct {
@@ -154,6 +163,73 @@ func (s *circleService) List(ctx context.Context, filter CircleFilter) ([]Circle
 		return nil, 0, fmt.Errorf("counting circles: %w", err)
 	}
 	return circles, total, nil
+}
+
+func (s *circleService) Update(ctx context.Context, id, userID string, input UpdateCircleInput) (*Circle, error) {
+	uid, err := parseUUID(id)
+	if err != nil {
+		return nil, err
+	}
+	usrID, err := parseUUID(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	c, err := s.repo.FindByID(ctx, uid)
+	if err != nil {
+		return nil, fmt.Errorf("finding circle for update: %w", err)
+	}
+
+	if c.OrganizerID != usrID {
+		return nil, ErrNotOrganizer
+	}
+	if c.Status != CircleStatusPending && c.Status != CircleStatusActive {
+		return nil, ErrCircleNotActive
+	}
+
+	if input.Name != nil {
+		c.Name = *input.Name
+	}
+	if input.Description != nil {
+		if *input.Description == "" {
+			c.Description = sql.NullString{}
+		} else {
+			c.Description = sql.NullString{String: *input.Description, Valid: true}
+		}
+	}
+	if input.ContributionAmount != nil {
+		c.ContributionAmount = *input.ContributionAmount
+	}
+	if input.Currency != nil {
+		c.Currency = *input.Currency
+	}
+	if input.Frequency != nil {
+		c.Frequency = *input.Frequency
+	}
+	if input.MaxMembers != nil {
+		c.MaxMembers = *input.MaxMembers
+	}
+	if input.MinMoiScore != nil {
+		c.MinMoiScore = *input.MinMoiScore
+	}
+	if input.CollateralPercent != nil {
+		c.CollateralPercent = *input.CollateralPercent
+	}
+	if input.LateFeePercent != nil {
+		c.LateFeePercent = *input.LateFeePercent
+	}
+	if input.GracePeriodHours != nil {
+		c.GracePeriodHours = *input.GracePeriodHours
+	}
+	if input.MaxStrikes != nil {
+		c.MaxStrikes = *input.MaxStrikes
+	}
+	c.UpdatedAt = time.Now().UTC()
+
+	if err := s.repo.Update(ctx, c); err != nil {
+		return nil, fmt.Errorf("updating circle: %w", err)
+	}
+	return c, nil
 }
 
 func (s *circleService) Create(ctx context.Context, organizerID string, input CreateCircleInput) (*Circle, error) {
@@ -237,6 +313,9 @@ func (s *circleService) Create(ctx context.Context, organizerID string, input Cr
 			circle = c
 			return nil
 		})
+		if err == nil && s.broadcaster != nil && circle != nil {
+			s.broadcaster.CircleCreated(ctx, circle.ID.String(), organizerID)
+		}
 		return circle, err
 	}
 
@@ -260,73 +339,10 @@ func (s *circleService) Create(ctx context.Context, organizerID string, input Cr
 		return nil, fmt.Errorf("adding organizer as member: %w", err)
 	}
 
-	return c, nil
-}
-
-func (s *circleService) Update(ctx context.Context, id, userID string, input UpdateCircleInput) (*Circle, error) {
-	uid, err := parseUUID(id)
-	if err != nil {
-		return nil, err
-	}
-	usrID, err := parseUUID(userID)
-	if err != nil {
-		return nil, err
+	if s.broadcaster != nil {
+		s.broadcaster.CircleCreated(ctx, c.ID.String(), organizerID)
 	}
 
-	c, err := s.repo.FindByID(ctx, uid)
-	if err != nil {
-		return nil, fmt.Errorf("finding circle for update: %w", err)
-	}
-
-	if c.OrganizerID != usrID {
-		return nil, ErrNotOrganizer
-	}
-	if c.Status != CircleStatusPending && c.Status != CircleStatusActive {
-		return nil, ErrCircleNotActive
-	}
-
-	if input.Name != nil {
-		c.Name = *input.Name
-	}
-	if input.Description != nil {
-		if *input.Description == "" {
-			c.Description = sql.NullString{}
-		} else {
-			c.Description = sql.NullString{String: *input.Description, Valid: true}
-		}
-	}
-	if input.ContributionAmount != nil {
-		c.ContributionAmount = *input.ContributionAmount
-	}
-	if input.Currency != nil {
-		c.Currency = *input.Currency
-	}
-	if input.Frequency != nil {
-		c.Frequency = *input.Frequency
-	}
-	if input.MaxMembers != nil {
-		c.MaxMembers = *input.MaxMembers
-	}
-	if input.MinMoiScore != nil {
-		c.MinMoiScore = *input.MinMoiScore
-	}
-	if input.CollateralPercent != nil {
-		c.CollateralPercent = *input.CollateralPercent
-	}
-	if input.LateFeePercent != nil {
-		c.LateFeePercent = *input.LateFeePercent
-	}
-	if input.GracePeriodHours != nil {
-		c.GracePeriodHours = *input.GracePeriodHours
-	}
-	if input.MaxStrikes != nil {
-		c.MaxStrikes = *input.MaxStrikes
-	}
-	c.UpdatedAt = time.Now().UTC()
-
-	if err := s.repo.Update(ctx, c); err != nil {
-		return nil, fmt.Errorf("updating circle: %w", err)
-	}
 	return c, nil
 }
 
@@ -366,6 +382,9 @@ func (s *circleService) Start(ctx context.Context, id, userID string) error {
 
 	if err := s.repo.Update(ctx, c); err != nil {
 		return fmt.Errorf("activating circle: %w", err)
+	}
+	if s.broadcaster != nil {
+		s.broadcaster.CircleStatusChanged(ctx, id, "active")
 	}
 	return nil
 }
@@ -418,6 +437,9 @@ func (s *circleService) Cancel(ctx context.Context, id, userID string) error {
 
 	if err := s.repo.Update(ctx, c); err != nil {
 		return fmt.Errorf("cancelling circle: %w", err)
+	}
+	if s.broadcaster != nil {
+		s.broadcaster.CircleStatusChanged(ctx, id, "cancelled")
 	}
 	return nil
 }
@@ -489,6 +511,10 @@ func (s *circleService) Join(ctx context.Context, circleID, userID string, invit
 			}
 			return nil
 		})
+		if err == nil && s.broadcaster != nil {
+			s.broadcaster.MemberJoined(ctx, circleID, userID)
+		}
+		return nil
 	}
 
 	count, err := s.repo.GetMemberCount(ctx, cid)
@@ -512,6 +538,10 @@ func (s *circleService) Join(ctx context.Context, circleID, userID string, invit
 		JoinedAt: time.Now().UTC(),
 	}); err != nil {
 		return fmt.Errorf("joining circle: %w", err)
+	}
+
+	if s.broadcaster != nil {
+		s.broadcaster.MemberJoined(ctx, circleID, userID)
 	}
 
 	return nil
@@ -555,6 +585,10 @@ func (s *circleService) Exit(ctx context.Context, circleID, userID string) error
 
 	if err := s.repo.UpdateMemberStatus(ctx, cid, uid, MemberStatusExited); err != nil {
 		return fmt.Errorf("exiting circle: %w", err)
+	}
+
+	if s.broadcaster != nil {
+		s.broadcaster.MemberLeft(ctx, circleID, userID)
 	}
 
 	return nil
