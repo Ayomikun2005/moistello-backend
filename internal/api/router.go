@@ -62,6 +62,7 @@ func NewRouter(
 		authenticated := api.Group("")
 		authenticated.Use(middleware.AuthMiddleware(jwtPublicKey))
 		authenticated.Use(middleware.TokenBlocklistMiddleware(redisClient))
+		authenticated.Use(middleware.CSRFTokenValidator())
 		{
 			authenticated.POST("/auth/me", authHandler.Me)
 			authenticated.POST("/auth/logout", authHandler.Logout)
