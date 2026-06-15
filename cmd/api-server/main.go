@@ -55,6 +55,14 @@ func (a *moiAdapter) FindByID(ctx context.Context, id uuid.UUID) (*circle.UserMO
 	return &circle.UserMOIData{MoiScore: u.MoiScore}, nil
 }
 
+type communityAdapter struct {
+	repo community.Repository
+}
+
+func (a *communityAdapter) IsMember(ctx context.Context, communityID, userID uuid.UUID) (bool, error) {
+	return a.repo.IsMember(ctx, communityID, userID)
+}
+
 func main() {
 	cfg, err := config.Load(".")
 	if err != nil {
@@ -86,8 +94,10 @@ func main() {
 	inviteRepo := invite.NewRepository(db)
 	auditRepo := audit.NewRepository(db)
 
+	communityRepo := community.NewRepository(db)
+
 	userSvc := user.NewService(userRepo, circleRepo)
-	circleSvc := circle.NewService(circleRepo, &moiAdapter{repo: userRepo}, circle.NewTransactor(db))
+	circleSvc := circle.NewService(circleRepo, &moiAdapter{repo: userRepo}, &communityAdapter{repo: communityRepo}, circle.NewTransactor(db))
 	contribSvc := contribution.NewService(contribRepo, contribution.NewTransactor(db))
 	payoutSvc := payout.NewService(payoutRepo)
 	reputationSvc := reputation.NewService(reputationRepo)
@@ -134,7 +144,6 @@ func main() {
 	walletH := handler.NewWalletHandler(walletSvc)
 
 	// Community service
-	communityRepo := community.NewRepository(db)
 	communitySvc := community.NewService(communityRepo)
 	communityH := handler.NewCommunityHandler(communitySvc)
 

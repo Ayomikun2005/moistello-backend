@@ -55,6 +55,7 @@ func scanCircle(row interface{ Scan(...interface{}) error }) (*Circle, error) {
 		&c.GracePeriodHours,
 		&c.MaxStrikes,
 		&c.MemberCount,
+		&c.RequiresInvite,
 		&startDate,
 		&endDate,
 		&c.Status,
@@ -95,6 +96,7 @@ func (r *pgRepo) FindByID(ctx context.Context, id uuid.UUID) (*Circle, error) {
 		contribution_amount, currency, frequency, max_members, min_moi_score,
 		collateral_percent, late_fee_percent, grace_period_hours, max_strikes,
 		(SELECT COUNT(*) FROM circle_members WHERE circle_id = circles.id AND status = 'active') as member_count,
+		requires_invite,
 		start_date, end_date, status, current_round, total_contributions,
 		organizer_id, created_at, updated_at FROM circles WHERE id = $1`
 	return scanCircle(r.db.QueryRowxContext(ctx, query, id))
@@ -105,6 +107,7 @@ func (r *pgRepo) FindByContractID(ctx context.Context, contractID string) (*Circ
 		contribution_amount, currency, frequency, max_members, min_moi_score,
 		collateral_percent, late_fee_percent, grace_period_hours, max_strikes,
 		(SELECT COUNT(*) FROM circle_members WHERE circle_id = circles.id AND status = 'active') as member_count,
+		requires_invite,
 		start_date, end_date, status, current_round, total_contributions,
 		organizer_id, created_at, updated_at FROM circles WHERE contract_id = $1`
 	return scanCircle(r.db.QueryRowxContext(ctx, query, contractID))
@@ -169,6 +172,7 @@ func (r *pgRepo) List(ctx context.Context, filter CircleFilter) ([]Circle, error
 		contribution_amount, currency, frequency, max_members, min_moi_score,
 		collateral_percent, late_fee_percent, grace_period_hours, max_strikes,
 		(SELECT COUNT(*) FROM circle_members WHERE circle_id = circles.id AND status = 'active') as member_count,
+		requires_invite,
 		start_date, end_date, status, current_round, total_contributions,
 		organizer_id, created_at, updated_at FROM circles %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d`,
 		whereClause, argIdx, argIdx+1)
@@ -244,11 +248,13 @@ func (r *pgRepo) Create(ctx context.Context, c *Circle) error {
 	query := `INSERT INTO circles (id, contract_id, community_id, name, description, circle_type, payout_type,
 		contribution_amount, currency, frequency, max_members, min_moi_score,
 		collateral_percent, late_fee_percent, grace_period_hours, max_strikes,
+		requires_invite,
 		start_date, end_date, status, current_round, total_contributions,
 		organizer_id, created_at, updated_at)
 		VALUES (:id, :contract_id, :community_id, :name, :description, :circle_type, :payout_type,
 		:contribution_amount, :currency, :frequency, :max_members, :min_moi_score,
 		:collateral_percent, :late_fee_percent, :grace_period_hours, :max_strikes,
+		:requires_invite,
 		:start_date, :end_date, :status, :current_round, :total_contributions,
 		:organizer_id, :created_at, :updated_at)`
 	_, err := r.db.NamedExecContext(ctx, query, c)
@@ -268,6 +274,7 @@ func (r *pgRepo) Update(ctx context.Context, c *Circle) error {
 		frequency = :frequency, max_members = :max_members, min_moi_score = :min_moi_score,
 		collateral_percent = :collateral_percent, late_fee_percent = :late_fee_percent,
 		grace_period_hours = :grace_period_hours, max_strikes = :max_strikes,
+		requires_invite = :requires_invite,
 		start_date = :start_date, end_date = :end_date, status = :status,
 		current_round = :current_round, total_contributions = :total_contributions,
 		updated_at = :updated_at WHERE id = :id`
@@ -365,6 +372,7 @@ func (r *pgRepo) FindCirclesByUserID(ctx context.Context, userID uuid.UUID) ([]C
 		c.contribution_amount, c.currency, c.frequency, c.max_members, c.min_moi_score,
 		c.collateral_percent, c.late_fee_percent, c.grace_period_hours, c.max_strikes,
 		(SELECT COUNT(*) FROM circle_members WHERE circle_id = c.id AND status = 'active') as member_count,
+		c.requires_invite,
 		c.start_date, c.end_date, c.status, c.current_round, c.total_contributions,
 		c.organizer_id, c.created_at, c.updated_at
 		FROM circles c

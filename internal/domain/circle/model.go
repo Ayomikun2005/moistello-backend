@@ -75,6 +75,7 @@ type Circle struct {
 	GracePeriodHours   int             `json:"gracePeriodHours" db:"grace_period_hours"`
 	MaxStrikes         int             `json:"maxStrikes" db:"max_strikes"`
 	MemberCount        int             `json:"memberCount" db:"member_count"`
+	RequiresInvite     bool            `json:"requiresInvite" db:"requires_invite"`
 	StartDate          sql.NullTime    `json:"startDate,omitempty" db:"start_date"`
 	EndDate            sql.NullTime    `json:"endDate,omitempty" db:"end_date"`
 	Status             CircleStatus    `json:"status" db:"status"`

@@ -33,6 +33,10 @@ type UserMOIData struct {
 	MoiScore int
 }
 
+type CommunityMembershipChecker interface {
+	IsMember(ctx context.Context, communityID, userID uuid.UUID) (bool, error)
+}
+
 type Transactor interface {
 	WithTransaction(ctx context.Context, fn func(repo Repository) error) error
 }
@@ -52,6 +56,7 @@ type CreateCircleInput struct {
 	LateFeePercent     float64         `json:"lateFeePercent" validate:"gte=0,lte=100"`
 	GracePeriodHours   int             `json:"gracePeriodHours" validate:"gte=0"`
 	MaxStrikes         int             `json:"maxStrikes" validate:"gte=1,lte=10"`
+	RequiresInvite     bool            `json:"requiresInvite"`
 }
 
 type UpdateCircleInput struct {
@@ -69,13 +74,14 @@ type UpdateCircleInput struct {
 }
 
 type circleService struct {
-	repo     Repository
-	userRepo UserMOIFetcher
-	tx       Transactor
+	repo             Repository
+	userRepo         UserMOIFetcher
+	communityChecker CommunityMembershipChecker
+	tx               Transactor
 }
 
-func NewService(repo Repository, userRepo UserMOIFetcher, tx Transactor) Service {
-	return &circleService{repo: repo, userRepo: userRepo, tx: tx}
+func NewService(repo Repository, userRepo UserMOIFetcher, communityChecker CommunityMembershipChecker, tx Transactor) Service {
+	return &circleService{repo: repo, userRepo: userRepo, communityChecker: communityChecker, tx: tx}
 }
 
 type circleTransactor struct {
@@ -194,6 +200,7 @@ func (s *circleService) Create(ctx context.Context, organizerID string, input Cr
 			LateFeePercent:     input.LateFeePercent,
 			GracePeriodHours:   input.GracePeriodHours,
 			MaxStrikes:         input.MaxStrikes,
+			RequiresInvite:     input.RequiresInvite,
 			Status:             CircleStatusPending,
 			CurrentRound:       0,
 			TotalContributions: 0,
@@ -444,6 +451,20 @@ func (s *circleService) Join(ctx context.Context, circleID, userID string, invit
 		}
 	}
 
+	if c.CircleType == "community" && c.CommunityID != nil {
+		ok, err := s.communityChecker.IsMember(ctx, *c.CommunityID, uid)
+		if err != nil {
+			return fmt.Errorf("checking community membership: %w", err)
+		}
+		if !ok {
+			return ErrNotCommunityMember
+		}
+	}
+
+	if (c.CircleType == CircleTypePrivate || c.RequiresInvite) && inviteCode == "" {
+		return ErrInvalidInvite
+	}
+
 	if s.tx != nil {
 		return s.tx.WithTransaction(ctx, func(repo Repository) error {
 			count, err := repo.GetMemberCount(ctx, cid)
@@ -456,9 +477,6 @@ func (s *circleService) Join(ctx context.Context, circleID, userID string, invit
 			existing, err := repo.FindMemberByCircleAndUser(ctx, cid, uid)
 			if err == nil && existing != nil {
 				return ErrAlreadyMember
-			}
-			if c.CircleType == CircleTypePrivate && inviteCode == "" {
-				return ErrInvalidInvite
 			}
 			if err := repo.CreateMember(ctx, &CircleMember{
 				CircleID: cid,
@@ -484,10 +502,6 @@ func (s *circleService) Join(ctx context.Context, circleID, userID string, invit
 	existing, err := s.repo.FindMemberByCircleAndUser(ctx, cid, uid)
 	if err == nil && existing != nil {
 		return ErrAlreadyMember
-	}
-
-	if c.CircleType == CircleTypePrivate && inviteCode == "" {
-		return ErrInvalidInvite
 	}
 
 	if err := s.repo.CreateMember(ctx, &CircleMember{
