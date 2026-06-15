@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"log"
 	"strings"
 
@@ -188,7 +190,7 @@ func (h *AuthHandler) Me(c *gin.Context) {
 }
 
 // @Summary Logout
-// @Description Invalidates the current session.
+// @Description Invalidates the current session and all refresh tokens.
 // @Tags Authentication
 // @Produce json
 // @Security BearerAuth
@@ -202,20 +204,48 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	}
 	token := strings.TrimPrefix(authHeader, "Bearer ")
 
-	expiresAt, err := middleware.ExtractTokenExpiry(token)
-	if err != nil {
-		response.BadRequest(c, "invalid token")
-		return
-	}
+	userID := middleware.GetUserID(c)
+	ctx := c.Request.Context()
 
 	if h.redisClient != nil {
-		middleware.BlocklistToken(c.Request.Context(), h.redisClient, token, expiresAt)
+		// 1. Blocklist the access token
+		if expiry, err := middleware.ExtractTokenExpiry(token); err == nil {
+			middleware.BlocklistToken(ctx, h.redisClient, token, expiry)
+		}
 
-		userID := middleware.GetUserID(c)
+		// 2. Delete all user sessions from Redis
 		if userID != "" {
-			middleware.BlocklistUserRefreshTokens(c.Request.Context(), h.redisClient, userID)
+			userSessionsKey := fmt.Sprintf("user:sessions:%s", userID)
+			sessionHashes, err := h.redisClient.SMembers(ctx, userSessionsKey).Result()
+			if err == nil {
+				pipe := h.redisClient.Pipeline()
+				for _, hash := range sessionHashes {
+					pipe.Del(ctx, fmt.Sprintf("session:%s", hash))
+				}
+				pipe.Del(ctx, userSessionsKey)
+				pipe.Exec(ctx)
+			}
+
+			// 3. Set blocklist key for any missed sessions
+			middleware.BlocklistUserRefreshTokens(ctx, h.redisClient, userID)
+		}
+
+		// 4. If refresh token was provided in body, also delete that specific session
+		var req struct {
+			RefreshToken string `json:"refreshToken"`
+		}
+		if err := c.ShouldBindJSON(&req); err == nil && req.RefreshToken != "" {
+			tokenHash := sha256HashForLogout(req.RefreshToken)
+			sessionKey := fmt.Sprintf("session:%s", tokenHash)
+			h.redisClient.Del(ctx, sessionKey)
 		}
 	}
 
 	response.OK(c, gin.H{"success": true})
+}
+
+// sha256HashForLogout computes SHA-256 for refresh token session lookup.
+func sha256HashForLogout(s string) string {
+	hash := sha256.Sum256([]byte(s))
+	return fmt.Sprintf("%x", hash)
 }

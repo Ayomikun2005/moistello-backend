@@ -57,7 +57,6 @@ func NewRouter(
 			auth.POST("/verify", authHandler.Verify)
 			auth.POST("/register", authHandler.Register)
 			auth.POST("/refresh", authHandler.Refresh)
-			auth.POST("/logout", authHandler.Logout)
 		}
 
 		authenticated := api.Group("")
@@ -65,6 +64,7 @@ func NewRouter(
 		authenticated.Use(middleware.TokenBlocklistMiddleware(redisClient))
 		{
 			authenticated.POST("/auth/me", authHandler.Me)
+			authenticated.POST("/auth/logout", authHandler.Logout)
 
 			authenticated.GET("/users/me", userHandler.GetMe)
 			authenticated.PATCH("/users/me", userHandler.UpdateMe)

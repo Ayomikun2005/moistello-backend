@@ -236,24 +236,74 @@ func (s *authService) RefreshToken(ctx context.Context, refreshToken string) (*T
 	return s.CreateSession(ctx, *uid)
 }
 
-func decodeStellarPublicKey(address string) (ed25519.PublicKey, error) {
-	pubKeyBytes, err := hex.DecodeString(address)
-	if err != nil {
-		return ed25519.PublicKey(hexDecodeStellar(address)), nil
+// stellarBase32Alphabet is the RFC 4648 Base32 alphabet used by Stellar StrKey.
+const stellarBase32Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+
+var stellarBase32Decode [256]byte
+
+func init() {
+	for i := range stellarBase32Decode {
+		stellarBase32Decode[i] = 0xFF
 	}
-	return ed25519.PublicKey(pubKeyBytes), nil
+	for i, c := range stellarBase32Alphabet {
+		stellarBase32Decode[c] = byte(i)
+	}
 }
 
-func hexDecodeStellar(s string) []byte {
-	b, err := hex.DecodeString(s)
-	if err != nil {
-		key := make([]byte, 32)
-		if len(s) == 56 {
-			copy(key, []byte(s)[:32])
-		}
-		return key
+// decodeStellarPublicKey decodes a Stellar G... address to an Ed25519 public key.
+// Stellar addresses use StrKey encoding: Base32 + 1 version byte + 2 CRC16 checksum.
+func decodeStellarPublicKey(address string) (ed25519.PublicKey, error) {
+	if len(address) != 56 {
+		return nil, fmt.Errorf("invalid stellar address length: got %d, want 56", len(address))
 	}
-	return b
+	if address[0] != 'G' {
+		return nil, fmt.Errorf("invalid stellar address prefix: got %c, want G", address[0])
+	}
+
+	// Base32 decode: 56 chars → 35 bytes (1 version + 32 key + 2 checksum)
+	decoded := make([]byte, 35)
+	for i := 0; i < 56; i++ {
+		c := address[i]
+		val := stellarBase32Decode[c]
+		if val == 0xFF {
+			return nil, fmt.Errorf("invalid character %c at position %d", c, i)
+		}
+		bitPos := uint(i * 5)
+		byteIdx := bitPos / 8
+		bitOffset := bitPos % 8
+		decoded[byteIdx] |= val << (3 - bitOffset)
+		if bitOffset > 3 {
+			decoded[byteIdx+1] |= val >> (bitOffset - 3)
+		}
+	}
+
+	// Verify XDR CRC-16 checksum
+	payload := decoded[:33]
+	checksum := decoded[33:35]
+	crc := xdrCRC16(payload)
+	if checksum[0] != byte(crc>>8) || checksum[1] != byte(crc) {
+		return nil, fmt.Errorf("stellar address checksum mismatch")
+	}
+
+	// Strip version byte (index 0), return 32-byte public key
+	return ed25519.PublicKey(decoded[1:33]), nil
+}
+
+// xdrCRC16 computes the XDR CRC-16 used by Stellar for address checksums.
+func xdrCRC16(data []byte) uint16 {
+	const poly uint16 = 0x8005
+	var crc uint16
+	for _, b := range data {
+		crc ^= uint16(b) << 8
+		for i := 0; i < 8; i++ {
+			if crc&0x8000 != 0 {
+				crc = (crc << 1) ^ poly
+			} else {
+				crc <<= 1
+			}
+		}
+	}
+	return crc
 }
 
 func sha256Hash(s string) string {

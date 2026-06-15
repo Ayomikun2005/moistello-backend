@@ -38,6 +38,9 @@ func AuthMiddleware(publicKeyPEM []byte) gin.HandlerFunc {
 			return
 		}
 		token, err := jwt.ParseWithClaims(parts[1], &Claims{}, func(t *jwt.Token) (any, error) {
+			if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+			}
 			return publicKey, nil
 		})
 		if err != nil || !token.Valid {
@@ -74,7 +77,12 @@ func OptionalAuthMiddleware(publicKeyPEM []byte) gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		token, err := jwt.ParseWithClaims(parts[1], &Claims{}, func(t *jwt.Token) (any, error) { return publicKey, nil })
+		token, err := jwt.ParseWithClaims(parts[1], &Claims{}, func(t *jwt.Token) (any, error) {
+			if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+			}
+			return publicKey, nil
+		})
 		if err != nil || !token.Valid {
 			c.Next()
 			return
@@ -102,9 +110,41 @@ func AdminMiddleware() gin.HandlerFunc {
 	}
 }
 
-func GetUserID(c *gin.Context) string { id, _ := c.Get("userID"); return id.(string) }
-func GetWallet(c *gin.Context) string  { w, _ := c.Get("wallet"); return w.(string) }
-func GetRole(c *gin.Context) string    { r, _ := c.Get("role"); return r.(string) }
+func GetUserID(c *gin.Context) string {
+	raw, exists := c.Get("userID")
+	if !exists {
+		return ""
+	}
+	id, ok := raw.(string)
+	if !ok {
+		return ""
+	}
+	return id
+}
+
+func GetWallet(c *gin.Context) string {
+	raw, exists := c.Get("wallet")
+	if !exists {
+		return ""
+	}
+	w, ok := raw.(string)
+	if !ok {
+		return ""
+	}
+	return w
+}
+
+func GetRole(c *gin.Context) string {
+	raw, exists := c.Get("role")
+	if !exists {
+		return ""
+	}
+	r, ok := raw.(string)
+	if !ok {
+		return ""
+	}
+	return r
+}
 
 func parseRSAPublicKey(pemBytes []byte) (*rsa.PublicKey, error) {
 	block, _ := pem.Decode(pemBytes)
