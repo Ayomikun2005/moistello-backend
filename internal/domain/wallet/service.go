@@ -56,11 +56,15 @@ func NewService(repo Repository, cfg Config) (Service, error) {
 }
 
 func (s *service) CreateWallet(ctx context.Context, userID string, passkeySeed []byte) (*Wallet, error) {
-	// 1. Generate Stellar keypair
-	kp, err := keypair.Random()
+	// 1. Generate Stellar keypair from the deterministic seed
+	// The seed is derived from email + server pepper (see deriveWalletSeed in auth handler).
+	// This ensures the same email always produces the same wallet address.
+	var rawSeed [32]byte
+	copy(rawSeed[:], passkeySeed[:32])
+	kp, err := keypair.FromRawSeed(rawSeed)
 	if err != nil {
-		log.Printf("[wallet] ERROR generating keypair: %v", err)
-		return nil, fmt.Errorf("generating keypair: %w", err)
+		log.Printf("[wallet] ERROR deriving keypair from seed: %v", err)
+		return nil, fmt.Errorf("deriving keypair from seed: %w", err)
 	}
 
 	// 2. Encrypt secret key with passkey seed

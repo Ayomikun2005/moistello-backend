@@ -308,12 +308,10 @@ func (h *AuthHandler) RegisterVerify(c *gin.Context) {
 		return
 	}
 
-	// Create the Stellar wallet from the email-derived seed
-	walletSeed := deriveWalletSeed(req.Email)
-	if _, err := h.walletSvc.CreateWallet(c.Request.Context(), u.ID.String(), []byte(walletSeed)); err != nil {
-		// Non-fatal: log but don't block registration. Wallet can be created later.
-		fmt.Printf("[WALLET] Failed to create wallet: %v\n", err)
-	}
+	// Wallet is NOT created here — it's triggered from the dashboard on first load.
+	// This keeps registration instant (<100ms).
+	// Wallet will be created deterministically from the email seed when
+	// POST /auth/wallet/init is called from the frontend.
 
 	// Clean up Redis
 	h.verificationSvc.DeletePendingRegistration(c.Request.Context(), req.Email)
@@ -591,6 +589,45 @@ func (h *AuthHandler) Recovery(c *gin.Context) {
 	response.OK(c, gin.H{
 		"token": pair.AccessToken, "refreshToken": pair.RefreshToken, "user": u,
 	})
+}
+
+// ── Wallet Initialization (from dashboard first load) ──
+
+// InitWallet creates the user's Stellar wallet deterministically from their email.
+// This is called from the frontend once when the user first lands on the dashboard
+// after registration, keeping the registration flow instant (<100ms).
+// POST /auth/wallet/init [AUTH]
+func (h *AuthHandler) InitWallet(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == "" {
+		response.Unauthorized(c, "not authenticated")
+		return
+	}
+
+	u, err := h.userService.GetByID(c.Request.Context(), userID)
+	if err != nil {
+		response.NotFound(c, "user not found")
+		return
+	}
+
+	// Derive wallet seed from email (deterministic — same email always produces same wallet)
+	email := ""
+	if u.Email != nil {
+		email = *u.Email
+	}
+	if email == "" {
+		response.BadRequest(c, "no email on account")
+		return
+	}
+
+	walletSeed := deriveWalletSeed(email)
+	w, err := h.walletSvc.CreateWallet(c.Request.Context(), userID, []byte(walletSeed))
+	if err != nil {
+		response.InternalError(c, "wallet creation failed: "+err.Error())
+		return
+	}
+
+	response.Created(c, gin.H{"wallet": w})
 }
 
 // ── Helpers ──

@@ -62,6 +62,7 @@ func NewRouter(
 		{
 			authenticated.POST("/auth/me", authHandler.Me)
 			authenticated.POST("/auth/logout", authHandler.Logout)
+			authenticated.POST("/auth/wallet/init", authHandler.InitWallet)
 			authenticated.POST("/auth/passkey/link", authHandler.PasskeyLink)
 			authenticated.POST("/auth/totp/setup", authHandler.SetupTOTP)
 			authenticated.POST("/auth/totp/verify", authHandler.VerifyTOTPSetup)
