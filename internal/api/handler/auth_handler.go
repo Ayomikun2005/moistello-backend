@@ -75,127 +75,6 @@ func (h *AuthHandler) Nonce(c *gin.Context) {
 	response.OK(c, gin.H{"nonce": nonce})
 }
 
-// @Summary Login with existing wallet
-// @Description Verifies a signed nonce to prove wallet ownership. Requires the user to already exist (register first).
-// @Tags Authentication
-// @Accept json
-// @Produce json
-// @Param body body object true "Signature payload" { "walletAddress": "G...", "signature": "base64_signed_nonce" }
-// @Success 200 {object} response.Envelope{data=object{token=string,refreshToken=string,user=object}}
-// @Failure 400 {object} response.Envelope
-// @Failure 401 {object} response.Envelope
-// @Failure 404 {object} response.Envelope
-// @Router /auth/verify [post]
-func (h *AuthHandler) Login(c *gin.Context) {
-	var req struct {
-		WalletAddress string `json:"walletAddress" binding:"required"`
-		Signature     string `json:"signature" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
-		return
-	}
-
-	if err := stellar.ValidateAddress(req.WalletAddress); err != nil {
-		response.BadRequest(c, "invalid wallet address: "+err.Error())
-		return
-	}
-
-	valid, err := h.authService.VerifySignature(c.Request.Context(), req.WalletAddress, req.Signature)
-	if err != nil || !valid {
-		response.Unauthorized(c, "signature verification failed")
-		return
-	}
-	u, err := h.userService.GetByWallet(c.Request.Context(), req.WalletAddress)
-	if err != nil {
-		if err == user.ErrUserNotFound {
-			response.NotFound(c, "account not found. please register first.")
-			return
-		}
-		response.InternalError(c, "failed to find user")
-		return
-	}
-	tokenPair, err := h.authService.CreateSession(c.Request.Context(), u.ID)
-	if err != nil {
-		response.InternalError(c, "failed to create session")
-		return
-	}
-	pepper := getPasskeyPepper()
-	response.OK(c, gin.H{
-		"token": tokenPair.AccessToken, "refreshToken": tokenPair.RefreshToken,
-		"user": u, "pepper": pepper,
-	})
-}
-
-// @Summary Register new user with profile
-// @Description Creates a new user account. Returns 409 if the wallet is already registered.
-// @Tags Authentication
-// @Accept json
-// @Produce json
-// @Param body body object true "Registration payload"
-// @Success 200 {object} response.Envelope{data=object{token=string,refreshToken=string,user=object}}
-// @Failure 400 {object} response.Envelope
-// @Failure 401 {object} response.Envelope
-// @Failure 409 {object} response.Envelope
-// @Router /auth/register [post]
-func (h *AuthHandler) Register(c *gin.Context) {
-	var req struct {
-		WalletAddress string  `json:"walletAddress" binding:"required"`
-		Signature     string  `json:"signature" binding:"required"`
-		DisplayName    *string `json:"displayName"`
-		Email          *string `json:"email"`
-		CountryCode    *string `json:"countryCode"`
-		Language       *string `json:"language"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
-		return
-	}
-
-	if err := stellar.ValidateAddress(req.WalletAddress); err != nil {
-		response.BadRequest(c, "invalid wallet address: "+err.Error())
-		return
-	}
-
-	valid, err := h.authService.VerifySignature(c.Request.Context(), req.WalletAddress, req.Signature)
-	if err != nil || !valid {
-		response.Unauthorized(c, "signature verification failed")
-		return
-	}
-
-	// Check for existing user before creating
-	existing, err := h.userService.GetByWallet(c.Request.Context(), req.WalletAddress)
-	if err == nil && existing != nil {
-		response.Conflict(c, "account already exists. please log in.")
-		return
-	}
-
-	u, err := h.userService.Create(c.Request.Context(), req.WalletAddress)
-	if err != nil {
-		response.InternalError(c, "failed to create user")
-		return
-	}
-	updates := user.UpdateProfileInput{
-		DisplayName:       req.DisplayName,
-		Email:             req.Email,
-		CountryCode:       req.CountryCode,
-		PreferredLanguage: req.Language,
-	}
-	u, err = h.userService.UpdateProfile(c.Request.Context(), u.ID.String(), updates)
-	if err != nil {
-		response.InternalError(c, "failed to update profile")
-		return
-	}
-	tokenPair, err := h.authService.CreateSession(c.Request.Context(), u.ID)
-	if err != nil {
-		log.Printf("CreateSession error for user %s: %v", u.ID.String(), err)
-		response.InternalError(c, "failed to create session")
-		return
-	}
-	pepper := getPasskeyPepper()
-	response.OK(c, gin.H{"token": tokenPair.AccessToken, "refreshToken": tokenPair.RefreshToken, "user": u, "pepper": pepper})
-}
-
 // @Summary Refresh JWT tokens
 // @Description Exchanges a valid refresh token for a new access token and refresh token pair.
 // @Tags Authentication
@@ -296,17 +175,24 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 }
 
 // ──────────────────────────────────────────────
-// Email + TOTP Registration & Login Handlers
+// Email OTP Registration & Login
 // ──────────────────────────────────────────────
 
-// RegisterStart sends an email OTP to begin registration.
-// POST /auth/register/start { email }
-func (h *AuthHandler) RegisterStart(c *gin.Context) {
+// Register sends an email OTP to begin registration.
+// POST /auth/register { email }
+func (h *AuthHandler) Register(c *gin.Context) {
 	var req struct {
 		Email string `json:"email" binding:"required,email"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "valid email is required")
+		return
+	}
+
+	// Check if email already exists
+	existing, err := h.userService.GetByEmail(c.Request.Context(), req.Email)
+	if err == nil && existing != nil {
+		response.Conflict(c, "email already registered. please log in.")
 		return
 	}
 
@@ -316,7 +202,6 @@ func (h *AuthHandler) RegisterStart(c *gin.Context) {
 		return
 	}
 
-	// Send the OTP via email
 	if h.emailSvc != nil {
 		if err := h.emailSvc.SendOTP(req.Email, code); err != nil {
 			log.Printf("Failed to send OTP email: %v", err)
@@ -326,7 +211,7 @@ func (h *AuthHandler) RegisterStart(c *gin.Context) {
 	response.OK(c, gin.H{"message": "verification code sent", "expiresIn": 300})
 }
 
-// RegisterVerify verifies the email OTP and creates a user account with TOTP setup.
+// RegisterVerify verifies the email OTP and creates the user.
 // POST /auth/register/verify { email, code }
 func (h *AuthHandler) RegisterVerify(c *gin.Context) {
 	var req struct {
@@ -338,25 +223,18 @@ func (h *AuthHandler) RegisterVerify(c *gin.Context) {
 		return
 	}
 
-	// Verify the OTP
 	valid, err := h.verificationSvc.VerifyOTP(c.Request.Context(), req.Email, req.Code)
-	if err != nil {
-		response.BadRequest(c, err.Error())
-		return
-	}
-	if !valid {
-		response.BadRequest(c, "invalid verification code")
+	if err != nil || !valid {
+		response.BadRequest(c, "invalid or expired verification code")
 		return
 	}
 
-	// Check if email is already registered
 	existing, err := h.userService.GetByEmail(c.Request.Context(), req.Email)
 	if err == nil && existing != nil {
-		response.Conflict(c, "email already registered. please log in.")
+		response.Conflict(c, "email already registered")
 		return
 	}
 
-	// Create the user
 	walletAddr := fmt.Sprintf("EMAIL:%s", req.Email)
 	u, err := h.userService.Create(c.Request.Context(), walletAddr)
 	if err != nil {
@@ -364,76 +242,11 @@ func (h *AuthHandler) RegisterVerify(c *gin.Context) {
 		return
 	}
 
-	// Update the email and mark as verified
 	email := req.Email
 	u.Email = &email
 	u.EmailVerified = true
 	h.userRepo.Update(c.Request.Context(), u)
 
-	// Generate TOTP secret
-	totpSecret, totpURI, err := h.totpService.GenerateSecret(req.Email)
-	if err != nil {
-		response.InternalError(c, "failed to generate TOTP secret")
-		return
-	}
-
-	// Store encrypted TOTP secret
-	u.TOTPSecret = totpSecretString(totpSecret)
-	h.userRepo.Update(c.Request.Context(), u)
-
-	response.Created(c, gin.H{
-		"totpSecret": totpSecret,
-		"totpUri":    totpURI,
-	})
-}
-
-// RegisterConfirm confirms TOTP setup and returns backup codes.
-// POST /auth/register/confirm { email, totpCode }
-func (h *AuthHandler) RegisterConfirm(c *gin.Context) {
-	var req struct {
-		Email    string `json:"email" binding:"required,email"`
-		TOTPCode string `json:"totpCode" binding:"required,len=6"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "email and 6-digit TOTP code are required")
-		return
-	}
-
-	u, err := h.userService.GetByEmail(c.Request.Context(), req.Email)
-	if err != nil {
-		response.NotFound(c, "user not found")
-		return
-	}
-
-	if !u.TOTPSecret.Valid {
-		response.BadRequest(c, "TOTP not set up. restart registration.")
-		return
-	}
-
-	if !h.totpService.ValidateCode(u.TOTPSecret.String, req.TOTPCode) {
-		response.BadRequest(c, "invalid TOTP code. make sure your authenticator app is set up correctly.")
-		return
-	}
-
-	// Generate backup codes
-	backupCodes, err := h.totpService.GenerateBackupCodes()
-	if err != nil {
-		response.InternalError(c, "failed to generate backup codes")
-		return
-	}
-
-	// Store hashed backup codes
-	u.TOTPEnabled = true
-	u.BackupCodes = h.totpService.HashBackupCodes(backupCodes)
-	h.userRepo.Update(c.Request.Context(), u)
-
-	// Extract plain codes for display
-	plainCodes := make([]string, len(backupCodes))
-	for i, bc := range backupCodes {
-		plainCodes[i] = bc.Plain
-	}
-
-	// Create session
 	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID)
 	if err != nil {
 		response.InternalError(c, "failed to create session")
@@ -441,78 +254,57 @@ func (h *AuthHandler) RegisterConfirm(c *gin.Context) {
 	}
 
 	response.Created(c, gin.H{
-		"token":        pair.AccessToken,
-		"refreshToken": pair.RefreshToken,
-		"user":         u,
-		"backupCodes":  plainCodes,
+		"token": pair.AccessToken, "refreshToken": pair.RefreshToken, "user": u,
 	})
 }
 
-// LoginWithTOTP authenticates with email + TOTP code.
-// POST /auth/login/totp { email, totpCode }
-func (h *AuthHandler) LoginWithTOTP(c *gin.Context) {
+// Login sends an OTP to the user's email for login.
+// POST /auth/login { email }
+func (h *AuthHandler) Login(c *gin.Context) {
 	var req struct {
-		Email    string `json:"email" binding:"required,email"`
-		TOTPCode string `json:"totpCode" binding:"required"`
+		Email string `json:"email" binding:"required,email"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "email and TOTP code are required")
+		response.BadRequest(c, "valid email is required")
 		return
 	}
 
-	u, err := h.userService.GetByEmail(c.Request.Context(), req.Email)
+	_, err := h.userService.GetByEmail(c.Request.Context(), req.Email)
 	if err != nil {
-		response.NotFound(c, "account not found")
+		response.NotFound(c, "account not found. please register first.")
 		return
 	}
 
-	if !u.TOTPEnabled {
-		// If TOTP is not set up yet (passkey-only account), log them in directly
-		pair, err := h.authService.CreateSession(c.Request.Context(), u.ID)
-		if err != nil {
-			response.InternalError(c, "failed to create session")
-			return
+	code, err := h.verificationSvc.SendOTP(c.Request.Context(), req.Email)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	if h.emailSvc != nil {
+		if err := h.emailSvc.SendOTP(req.Email, code); err != nil {
+			log.Printf("Failed to send OTP email: %v", err)
 		}
-		pepper := getPasskeyPepper()
-		response.OK(c, gin.H{
-			"token": pair.AccessToken, "refreshToken": pair.RefreshToken,
-			"user": u, "pepper": pepper,
-		})
-		return
 	}
 
-	if !u.TOTPSecret.Valid {
-		response.InternalError(c, "TOTP not configured")
-		return
-	}
-
-	if !h.totpService.ValidateCode(u.TOTPSecret.String, req.TOTPCode) {
-		response.BadRequest(c, "invalid TOTP code")
-		return
-	}
-
-	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID)
-	if err != nil {
-		response.InternalError(c, "failed to create session")
-		return
-	}
-
-	pepper := getPasskeyPepper()
-	response.OK(c, gin.H{
-		"token": pair.AccessToken, "refreshToken": pair.RefreshToken,
-		"user": u, "pepper": pepper,
-	})
+	response.OK(c, gin.H{"message": "verification code sent", "expiresIn": 300})
 }
 
-// Recovery uses a backup code to log in (bypasses TOTP).
-// POST /auth/recovery { email, backupCode }
-func (h *AuthHandler) Recovery(c *gin.Context) {
+// LoginVerify verifies the email OTP and returns tokens.
+// POST /auth/login/verify { email, code }
+func (h *AuthHandler) LoginVerify(c *gin.Context) {
 	var req struct {
-		Email      string `json:"email" binding:"required,email"`
-		BackupCode string `json:"backupCode" binding:"required"`
+		Email string `json:"email" binding:"required,email"`
+		Code  string `json:"code" binding:"required,len=6"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "email and backup code are required")
+		response.BadRequest(c, "email and 6-digit code are required")
+		return
+	}
+
+	valid, err := h.verificationSvc.VerifyOTP(c.Request.Context(), req.Email, req.Code)
+	if err != nil || !valid {
+		response.BadRequest(c, "invalid or expired verification code")
 		return
 	}
 
@@ -522,39 +314,25 @@ func (h *AuthHandler) Recovery(c *gin.Context) {
 		return
 	}
 
-	if len(u.BackupCodes) == 0 {
-		response.BadRequest(c, "no backup codes remaining")
-		return
-	}
-
-	remaining, valid := h.totpService.ValidateBackupCode(req.BackupCode, u.BackupCodes)
-	if !valid {
-		response.BadRequest(c, "invalid backup code")
-		return
-	}
-
-	// Update the remaining backup codes
-	u.BackupCodes = remaining
-	h.userRepo.Update(c.Request.Context(), u)
-
 	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID)
 	if err != nil {
 		response.InternalError(c, "failed to create session")
 		return
 	}
 
-	pepper := getPasskeyPepper()
 	response.OK(c, gin.H{
-		"token": pair.AccessToken, "refreshToken": pair.RefreshToken,
-		"user": u, "pepper": pepper,
+		"token": pair.AccessToken, "refreshToken": pair.RefreshToken, "user": u,
 	})
 }
+
+// ──────────────────────────────────────────────
+// Optional TOTP 2FA (Settings only)
+// ──────────────────────────────────────────────
 
 // SetupTOTP generates a new TOTP secret for an authenticated user.
 // POST /auth/totp/setup [AUTH]
 func (h *AuthHandler) SetupTOTP(c *gin.Context) {
 	userID := middleware.GetUserID(c)
-
 	u, err := h.userService.GetByID(c.Request.Context(), userID)
 	if err != nil {
 		response.NotFound(c, "user not found")
@@ -576,17 +354,13 @@ func (h *AuthHandler) SetupTOTP(c *gin.Context) {
 	u.TOTPEnabled = false
 	h.userRepo.Update(c.Request.Context(), u)
 
-	response.OK(c, gin.H{
-		"totpSecret": totpSecret,
-		"totpUri":    totpURI,
-	})
+	response.OK(c, gin.H{"totpSecret": totpSecret, "totpUri": totpURI})
 }
 
 // VerifyTOTPSetup confirms TOTP setup and generates backup codes.
 // POST /auth/totp/verify [AUTH] { totpCode }
 func (h *AuthHandler) VerifyTOTPSetup(c *gin.Context) {
 	userID := middleware.GetUserID(c)
-
 	var req struct {
 		TOTPCode string `json:"totpCode" binding:"required,len=6"`
 	}
@@ -600,12 +374,10 @@ func (h *AuthHandler) VerifyTOTPSetup(c *gin.Context) {
 		response.NotFound(c, "user not found")
 		return
 	}
-
 	if !u.TOTPSecret.Valid {
 		response.BadRequest(c, "TOTP not set up. use /auth/totp/setup first.")
 		return
 	}
-
 	if !h.totpService.ValidateCode(u.TOTPSecret.String, req.TOTPCode) {
 		response.BadRequest(c, "invalid TOTP code")
 		return
@@ -625,38 +397,49 @@ func (h *AuthHandler) VerifyTOTPSetup(c *gin.Context) {
 	for i, bc := range backupCodes {
 		plainCodes[i] = bc.Plain
 	}
-
-	response.OK(c, gin.H{
-		"backupCodes": plainCodes,
-	})
+	response.OK(c, gin.H{"backupCodes": plainCodes})
 }
 
-// LinkPasskey links a passkey credential to an existing user account.
-// POST /auth/passkey/link [AUTH] { credentialId }
-func (h *AuthHandler) LinkPasskey(c *gin.Context) {
-	userID := middleware.GetUserID(c)
-
+// Recovery uses a backup code to log in (bypasses TOTP).
+// POST /auth/recovery { email, backupCode }
+func (h *AuthHandler) Recovery(c *gin.Context) {
 	var req struct {
-		CredentialID string `json:"credentialId" binding:"required"`
+		Email      string `json:"email" binding:"required,email"`
+		BackupCode string `json:"backupCode" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "credentialId is required")
+		response.BadRequest(c, "email and backup code are required")
 		return
 	}
 
-	u, err := h.userService.GetByID(c.Request.Context(), userID)
+	u, err := h.userService.GetByEmail(c.Request.Context(), req.Email)
 	if err != nil {
-		response.NotFound(c, "user not found")
+		response.NotFound(c, "account not found")
+		return
+	}
+	if len(u.BackupCodes) == 0 {
+		response.BadRequest(c, "no backup codes remaining")
 		return
 	}
 
-	u.PasskeyCredentialID = &req.CredentialID
-	if err := h.userRepo.Update(c.Request.Context(), u); err != nil {
-		response.InternalError(c, "failed to link passkey")
+	remaining, valid := h.totpService.ValidateBackupCode(req.BackupCode, u.BackupCodes)
+	if !valid {
+		response.BadRequest(c, "invalid backup code")
 		return
 	}
 
-	response.OK(c, gin.H{"success": true})
+	u.BackupCodes = remaining
+	h.userRepo.Update(c.Request.Context(), u)
+
+	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID)
+	if err != nil {
+		response.InternalError(c, "failed to create session")
+		return
+	}
+
+	response.OK(c, gin.H{
+		"token": pair.AccessToken, "refreshToken": pair.RefreshToken, "user": u,
+	})
 }
 
 // totpSecretString wraps a TOTP secret as sql.NullString.

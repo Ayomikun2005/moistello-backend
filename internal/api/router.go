@@ -41,26 +41,15 @@ func NewRouter(
 	// WebSocket — real-time events
 	r.GET("/ws", wsHandler.HandleWebSocket)
 
-	// Passkey credential storage — authenticated
-	passkey := r.Group("/v1/passkey")
-	passkey.Use(middleware.AuthMiddleware(jwtPublicKey))
-	{
-		passkey.POST("/credentials", passkeyCredentialHandler.StoreCredential)
-		passkey.GET("/credentials/:id", passkeyCredentialHandler.GetCredential)
-	}
-
 	api := r.Group("/v1")
 	{
 		auth := api.Group("/auth")
 		auth.Use(middleware.AuthRateLimitMiddleware(redisClient, cfg.RateLimit))
 		{
-			auth.POST("/nonce", authHandler.Nonce)
-			auth.POST("/login", authHandler.Login)
-			auth.POST("/login/totp", authHandler.LoginWithTOTP)
 			auth.POST("/register", authHandler.Register)
-			auth.POST("/register/start", authHandler.RegisterStart)
 			auth.POST("/register/verify", authHandler.RegisterVerify)
-			auth.POST("/register/confirm", authHandler.RegisterConfirm)
+			auth.POST("/login", authHandler.Login)
+			auth.POST("/login/verify", authHandler.LoginVerify)
 			auth.POST("/refresh", middleware.RefreshTokenBlocklistMiddleware(redisClient), authHandler.Refresh)
 			auth.POST("/recovery", authHandler.Recovery)
 		}
@@ -74,7 +63,6 @@ func NewRouter(
 			authenticated.POST("/auth/logout", authHandler.Logout)
 			authenticated.POST("/auth/totp/setup", authHandler.SetupTOTP)
 			authenticated.POST("/auth/totp/verify", authHandler.VerifyTOTPSetup)
-			authenticated.POST("/auth/passkey/link", authHandler.LinkPasskey)
 
 			authenticated.GET("/users/me", userHandler.GetMe)
 			authenticated.PATCH("/users/me", userHandler.UpdateMe)
