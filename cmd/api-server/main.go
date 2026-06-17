@@ -123,26 +123,7 @@ func main() {
 	_ = reputationSvc
 	_ = auditRepo
 
-	jwtPublicKey, err := os.ReadFile(cfg.Auth.JWTPublicKeyPath)
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to load JWT public key")
-	}
-
-	wsH := handler.NewWebSocketHandler(wsHub)
-
-	authH := handler.NewAuthHandler(authSvc, userSvc, totpSvc, verificationSvc, emailSvc, redisClient, userRepo)
-	userH := handler.NewUserHandler(userSvc)
-	circleH := handler.NewCircleHandler(circleSvc, inviteSvc, contribSvc, payoutSvc)
-	contribH := handler.NewContributionHandler(contribSvc, contribRepo)
-	payoutH := handler.NewPayoutHandler(payoutSvc, payoutRepo)
-	inviteH := handler.NewInviteHandler(inviteSvc)
-	notifH := handler.NewNotificationHandler(notificationSvc)
-	adminH := handler.NewAdminHandler(userSvc, userRepo, circleSvc, auditRepo)
-	webhookH := handler.NewWebhookHandler()
-	healthH := handler.NewHealthHandler(db.DB, redisClient)
-	passkeyCredH := handler.NewPasskeyCredentialHandler(db)
-
-	// Wallet service
+	// Wallet service (needed before auth handler for wallet creation)
 	walletCfg := wallet.Config{
 		MasterSecretKey:   cfg.Stellar.MasterSecretKey,
 		MasterPublicKey:   cfg.Stellar.MasterPublicKey,
@@ -155,6 +136,25 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to initialize wallet service")
 	}
+
+	jwtPublicKey, err := os.ReadFile(cfg.Auth.JWTPublicKeyPath)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to load JWT public key")
+	}
+
+	wsH := handler.NewWebSocketHandler(wsHub)
+
+	authH := handler.NewAuthHandler(authSvc, userSvc, walletSvc, totpSvc, verificationSvc, emailSvc, redisClient, userRepo)
+	userH := handler.NewUserHandler(userSvc)
+	circleH := handler.NewCircleHandler(circleSvc, inviteSvc, contribSvc, payoutSvc)
+	contribH := handler.NewContributionHandler(contribSvc, contribRepo)
+	payoutH := handler.NewPayoutHandler(payoutSvc, payoutRepo)
+	inviteH := handler.NewInviteHandler(inviteSvc)
+	notifH := handler.NewNotificationHandler(notificationSvc)
+	adminH := handler.NewAdminHandler(userSvc, userRepo, circleSvc, auditRepo)
+	webhookH := handler.NewWebhookHandler()
+	healthH := handler.NewHealthHandler(db.DB, redisClient)
+	passkeyCredH := handler.NewPasskeyCredentialHandler(db)
 	walletH := handler.NewWalletHandler(walletSvc)
 
 	// Community service

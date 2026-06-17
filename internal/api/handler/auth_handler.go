@@ -19,6 +19,7 @@ import (
 	"github.com/moistello/backend/internal/domain/totp"
 	"github.com/moistello/backend/internal/domain/user"
 	"github.com/moistello/backend/internal/domain/verification"
+	"github.com/moistello/backend/internal/domain/wallet"
 	"github.com/moistello/backend/pkg/response"
 	"github.com/moistello/backend/pkg/stellar"
 )
@@ -26,6 +27,7 @@ import (
 type AuthHandler struct {
 	authService      auth.Service
 	userService      user.Service
+	walletSvc        wallet.Service
 	totpService      *totp.Service
 	verificationSvc  *verification.Service
 	emailSvc         *email.Service
@@ -33,12 +35,13 @@ type AuthHandler struct {
 	userRepo         user.Repository
 }
 
-func NewAuthHandler(authSvc auth.Service, userSvc user.Service, totpSvc *totp.Service,
-	verificationSvc *verification.Service, emailSvc *email.Service,
+func NewAuthHandler(authSvc auth.Service, userSvc user.Service, walletSvc wallet.Service,
+	totpSvc *totp.Service, verificationSvc *verification.Service, emailSvc *email.Service,
 	redisClient *redis.Client, userRepo user.Repository) *AuthHandler {
 	return &AuthHandler{
 		authService:     authSvc,
 		userService:     userSvc,
+		walletSvc:       walletSvc,
 		totpService:     totpSvc,
 		verificationSvc: verificationSvc,
 		emailSvc:        emailSvc,
@@ -303,6 +306,13 @@ func (h *AuthHandler) RegisterVerify(c *gin.Context) {
 	if err := h.userRepo.Create(c.Request.Context(), u); err != nil {
 		response.InternalError(c, "failed to create account")
 		return
+	}
+
+	// Create the Stellar wallet from the email-derived seed
+	walletSeed := deriveWalletSeed(req.Email)
+	if _, err := h.walletSvc.CreateWallet(c.Request.Context(), u.ID.String(), []byte(walletSeed)); err != nil {
+		// Non-fatal: log but don't block registration. Wallet can be created later.
+		fmt.Printf("[WALLET] Failed to create wallet: %v\n", err)
 	}
 
 	// Clean up Redis
