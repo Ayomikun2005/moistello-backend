@@ -75,6 +75,8 @@ cors:
     - "OPTIONS"
   allowed_headers:
     - "Authorization"
+    - "X-CSRF-Token"
+    - "Content-Type"
     - "Content-Type"
     - "X-Request-ID"
   allow_credentials: true
