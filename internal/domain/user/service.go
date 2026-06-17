@@ -16,6 +16,7 @@ import (
 type Service interface {
 	GetByID(ctx context.Context, id string) (*User, error)
 	GetByWallet(ctx context.Context, wallet string) (*User, error)
+	GetByEmail(ctx context.Context, email string) (*User, error)
 	Create(ctx context.Context, wallet string) (*User, error)
 	UpdateProfile(ctx context.Context, id string, updates UpdateProfileInput) (*User, error)
 	IsEmailTaken(ctx context.Context, email string) (bool, error)
@@ -94,6 +95,17 @@ func (s *userService) GetByWallet(ctx context.Context, wallet string) (*User, er
 			return nil, ErrUserNotFound
 		}
 		return nil, fmt.Errorf("getting user by wallet: %w", err)
+	}
+	return u, nil
+}
+
+func (s *userService) GetByEmail(ctx context.Context, email string) (*User, error) {
+	u, err := s.repo.FindByEmail(ctx, email)
+	if err != nil {
+		if err == apperrors.ErrNotFound {
+			return nil, ErrUserNotFound
+		}
+		return nil, fmt.Errorf("getting user by email: %w", err)
 	}
 	return u, nil
 }

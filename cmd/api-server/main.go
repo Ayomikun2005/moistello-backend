@@ -29,10 +29,13 @@ import (
 	"github.com/moistello/backend/internal/domain/circle"
 	"github.com/moistello/backend/internal/domain/community"
 	"github.com/moistello/backend/internal/domain/contribution"
+	"github.com/moistello/backend/internal/domain/email"
 	"github.com/moistello/backend/internal/domain/invite"
 	"github.com/moistello/backend/internal/domain/notification"
 	"github.com/moistello/backend/internal/domain/payout"
 	"github.com/moistello/backend/internal/domain/reputation"
+	"github.com/moistello/backend/internal/domain/totp"
+	"github.com/moistello/backend/internal/domain/verification"
 	"github.com/moistello/backend/internal/domain/user"
 	"github.com/moistello/backend/internal/domain/wallet"
 	"github.com/moistello/backend/internal/domain/yellowcard"
@@ -112,6 +115,10 @@ func main() {
 		log.Fatal().Err(err).Msg("failed to initialize auth service")
 	}
 
+	totpSvc := totp.NewService()
+	verificationSvc := verification.NewService(redisClient)
+	emailSvc := email.NewService(email.ConfigFromEnv())
+
 	inviteSvc := invite.NewService(inviteRepo)
 	_ = reputationSvc
 	_ = auditRepo
@@ -123,7 +130,7 @@ func main() {
 
 	wsH := handler.NewWebSocketHandler(wsHub)
 
-	authH := handler.NewAuthHandler(authSvc, userSvc, redisClient)
+	authH := handler.NewAuthHandler(authSvc, userSvc, totpSvc, verificationSvc, emailSvc, redisClient, userRepo)
 	userH := handler.NewUserHandler(userSvc)
 	circleH := handler.NewCircleHandler(circleSvc, inviteSvc, contribSvc, payoutSvc)
 	contribH := handler.NewContributionHandler(contribSvc, contribRepo)
