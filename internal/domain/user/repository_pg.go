@@ -255,6 +255,19 @@ func (r *pgRepo) ClaimNextName(ctx context.Context) (int64, error) {
 	return value, nil
 }
 
+func (r *pgRepo) Delete(ctx context.Context, id uuid.UUID) error {
+	query := `DELETE FROM users WHERE id = $1`
+	result, err := r.db.ExecContext(ctx, query, id)
+	if err != nil {
+		return fmt.Errorf("deleting user: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return ErrUserNotFound
+	}
+	return nil
+}
+
 func isUniqueViolation(err error) bool {
 	if err == nil {
 		return false

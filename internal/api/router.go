@@ -69,6 +69,7 @@ func NewRouter(
 
 			authenticated.GET("/users/me", userHandler.GetMe)
 			authenticated.PATCH("/users/me", userHandler.UpdateMe)
+			authenticated.DELETE("/users/me", userHandler.DeleteUser)
 			authenticated.GET("/users/me/reputation", userHandler.GetReputation)
 			authenticated.GET("/users/me/circles", userHandler.GetMyCircles)
 

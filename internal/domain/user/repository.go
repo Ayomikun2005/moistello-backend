@@ -18,6 +18,7 @@ type Repository interface {
 	FindByEmail(ctx context.Context, email string) (*User, error)
 	FindByPasskeyCredentialID(ctx context.Context, credentialID string) (*User, error)
 	Create(ctx context.Context, u *User) error
+	Delete(ctx context.Context, id uuid.UUID) error
 	Update(ctx context.Context, u *User) error
 	UpdateMoiScore(ctx context.Context, id uuid.UUID, score int) error
 	List(ctx context.Context, filter UserFilter) ([]User, error)

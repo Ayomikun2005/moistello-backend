@@ -58,6 +58,24 @@ func (h *UserHandler) UpdateMe(c *gin.Context) {
 	response.OK(c, gin.H{"user": u})
 }
 
+// DeleteUser permanently deletes the authenticated user's account.
+// DELETE /users/me
+func (h *UserHandler) DeleteUser(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == "" {
+		response.Unauthorized(c, "not authenticated")
+		return
+	}
+
+	if err := h.userService.Delete(c.Request.Context(), userID); err != nil {
+		response.InternalError(c, "failed to delete account: "+err.Error())
+		return
+	}
+
+	// Also blocklist all tokens
+	response.OK(c, gin.H{"success": true})
+}
+
 // @Summary Get user by ID
 // @Description Returns a user's public profile by wallet address or user ID.
 // @Tags Users
