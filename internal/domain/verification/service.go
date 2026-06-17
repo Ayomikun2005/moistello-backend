@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/json"
 	"encoding/hex"
 	"fmt"
 	"math/big"
@@ -13,6 +14,18 @@ import (
 
 	"github.com/redis/go-redis/v9"
 )
+
+const pendingRegistrationTTL = 15 * time.Minute
+
+// PendingRegistration holds user data that hasn't been verified yet.
+// Stored in Redis until email OTP verification completes.
+type PendingRegistration struct {
+	PasswordHash string `json:"passwordHash"`
+	WalletAddr   string `json:"walletAddr"`
+	Email        string `json:"email"`
+	DisplayName  string `json:"displayName,omitempty"`
+	Language     string `json:"language,omitempty"`
+}
 
 const (
 	otpTTL       = 5 * time.Minute
@@ -135,6 +148,41 @@ func (s *Service) VerifyRecoveryCode(ctx context.Context, email, code string) (b
 		return true, nil
 	}
 	return false, nil
+}
+
+// StorePendingRegistration saves user data in Redis before email verification.
+// Data is automatically deleted after 15 minutes.
+func (s *Service) StorePendingRegistration(ctx context.Context, email string, data *PendingRegistration) error {
+	key := fmt.Sprintf("pending:register:%s", email)
+	payload, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("marshaling pending registration: %w", err)
+	}
+	return s.rdb.Set(ctx, key, payload, pendingRegistrationTTL).Err()
+}
+
+// GetPendingRegistration retrieves pending registration data from Redis.
+// Returns nil if no pending registration exists or it expired.
+func (s *Service) GetPendingRegistration(ctx context.Context, email string) (*PendingRegistration, error) {
+	key := fmt.Sprintf("pending:register:%s", email)
+	data, err := s.rdb.Get(ctx, key).Bytes()
+	if err == redis.Nil {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading pending registration: %w", err)
+	}
+	var pr PendingRegistration
+	if err := json.Unmarshal(data, &pr); err != nil {
+		return nil, fmt.Errorf("unmarshaling pending registration: %w", err)
+	}
+	return &pr, nil
+}
+
+// DeletePendingRegistration removes pending registration data from Redis.
+func (s *Service) DeletePendingRegistration(ctx context.Context, email string) error {
+	key := fmt.Sprintf("pending:register:%s", email)
+	return s.rdb.Del(ctx, key).Err()
 }
 
 func generateNumericCode(length int) (string, error) {

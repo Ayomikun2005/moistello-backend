@@ -196,11 +196,22 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	// Check if email already exists (by wallet address lookup, since email is stored hashed in DB)
+	// Check if email already exists (by wallet address lookup)
 	walletAddr := emailToWalletAddr(req.Email)
 	existing, err := h.userService.GetByWallet(c.Request.Context(), walletAddr)
 	if err == nil && existing != nil {
 		response.Conflict(c, "email already registered. please log in.")
+		return
+	}
+
+	// Check if there's already a pending registration for this email
+	pending, err := h.verificationSvc.GetPendingRegistration(c.Request.Context(), req.Email)
+	if err != nil {
+		response.InternalError(c, "failed to check pending registration")
+		return
+	}
+	if pending != nil {
+		response.Conflict(c, "a verification code was already sent. check your email.")
 		return
 	}
 
@@ -211,23 +222,16 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	// Derive wallet from email
 	walletSeed := deriveWalletSeed(req.Email)
 
-	// Create user with password hash and wallet
-	u := &user.User{
-		ID:            uuid.New(),
-		WalletAddress: walletAddr,
-		PasswordHash:  passwordHashStruct(passwordHash),
-		Email:         &req.Email,
-		EmailVerified: false,
-		PreferredLanguage: "en",
-		Role:          user.RoleUser,
-		CreatedAt:     time.Now().UTC(),
-		UpdatedAt:     time.Now().UTC(),
+	// Store in Redis — NOT in PostgreSQL. User is only created after email verification.
+	pendingData := &verification.PendingRegistration{
+		PasswordHash: passwordHash,
+		WalletAddr:   walletAddr,
+		Email:        req.Email,
 	}
-	if err := h.userRepo.Create(c.Request.Context(), u); err != nil {
-		response.InternalError(c, "failed to create account")
+	if err := h.verificationSvc.StorePendingRegistration(c.Request.Context(), req.Email, pendingData); err != nil {
+		response.InternalError(c, "failed to save registration data")
 		return
 	}
 
@@ -248,7 +252,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	})
 }
 
-// RegisterVerify verifies the email OTP and creates a session.
+// RegisterVerify verifies the email OTP, creates the user, and returns a session.
 // POST /auth/register/verify { email, code }
 func (h *AuthHandler) RegisterVerify(c *gin.Context) {
 	var req struct {
@@ -266,15 +270,43 @@ func (h *AuthHandler) RegisterVerify(c *gin.Context) {
 		return
 	}
 
-	walletAddr := emailToWalletAddr(req.Email)
-	u, err := h.userService.GetByWallet(c.Request.Context(), walletAddr)
+	// Read pending registration from Redis — user hasn't been created yet
+	pending, err := h.verificationSvc.GetPendingRegistration(c.Request.Context(), req.Email)
 	if err != nil {
-		response.NotFound(c, "account not found")
+		response.InternalError(c, "failed to read registration data")
+		return
+	}
+	if pending == nil {
+		response.BadRequest(c, "registration session expired. please start over.")
 		return
 	}
 
-	u.EmailVerified = true
-	h.userRepo.Update(c.Request.Context(), u)
+	// Double-check the user doesn't already exist (prevent race condition)
+	existing, err := h.userService.GetByWallet(c.Request.Context(), pending.WalletAddr)
+	if err == nil && existing != nil {
+		response.Conflict(c, "account already exists.")
+		return
+	}
+
+	// Create the user NOW — only after email is verified
+	u := &user.User{
+		ID:               uuid.New(),
+		WalletAddress:    pending.WalletAddr,
+		PasswordHash:     passwordHashStruct(pending.PasswordHash),
+		Email:            &pending.Email,
+		EmailVerified:    true,
+		PreferredLanguage: "en",
+		Role:             user.RoleUser,
+		CreatedAt:        time.Now().UTC(),
+		UpdatedAt:        time.Now().UTC(),
+	}
+	if err := h.userRepo.Create(c.Request.Context(), u); err != nil {
+		response.InternalError(c, "failed to create account")
+		return
+	}
+
+	// Clean up Redis
+	h.verificationSvc.DeletePendingRegistration(c.Request.Context(), req.Email)
 
 	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID)
 	if err != nil {
