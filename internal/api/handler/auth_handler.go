@@ -196,8 +196,9 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	// Check if email already exists
-	existing, err := h.userService.GetByEmail(c.Request.Context(), req.Email)
+	// Check if email already exists (by wallet address lookup, since email is stored hashed in DB)
+	walletAddr := emailToWalletAddr(req.Email)
+	existing, err := h.userService.GetByWallet(c.Request.Context(), walletAddr)
 	if err == nil && existing != nil {
 		response.Conflict(c, "email already registered. please log in.")
 		return
@@ -212,8 +213,6 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	// Derive wallet from email
 	walletSeed := deriveWalletSeed(req.Email)
-	emailHash := sha256.Sum256([]byte(req.Email))
-	walletAddr := fmt.Sprintf("EMAIL:%x", emailHash[:16])
 
 	// Create user with password hash and wallet
 	u := &user.User{
@@ -267,7 +266,8 @@ func (h *AuthHandler) RegisterVerify(c *gin.Context) {
 		return
 	}
 
-	u, err := h.userService.GetByEmail(c.Request.Context(), req.Email)
+	walletAddr := emailToWalletAddr(req.Email)
+	u, err := h.userService.GetByWallet(c.Request.Context(), walletAddr)
 	if err != nil {
 		response.NotFound(c, "account not found")
 		return
@@ -301,7 +301,8 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	u, err := h.userService.GetByEmail(c.Request.Context(), req.Email)
+	walletAddr := emailToWalletAddr(req.Email)
+	u, err := h.userService.GetByWallet(c.Request.Context(), walletAddr)
 	if err != nil {
 		response.NotFound(c, "account not found")
 		return
@@ -519,7 +520,8 @@ func (h *AuthHandler) Recovery(c *gin.Context) {
 		return
 	}
 
-	u, err := h.userService.GetByEmail(c.Request.Context(), req.Email)
+	walletAddr := emailToWalletAddr(req.Email)
+	u, err := h.userService.GetByWallet(c.Request.Context(), walletAddr)
 	if err != nil {
 		response.NotFound(c, "account not found")
 		return
@@ -557,6 +559,13 @@ func passwordHashStruct(s string) sql.NullString {
 
 func totpSecretString(s string) sql.NullString {
 	return sql.NullString{String: s, Valid: true}
+}
+
+// emailToWalletAddr converts an email to the wallet address format used in the users table.
+// Must match the format in the Register handler.
+func emailToWalletAddr(email string) string {
+	emailHash := sha256.Sum256([]byte(email))
+	return fmt.Sprintf("EMAIL:%x", emailHash[:16])
 }
 
 // deriveWalletSeed derives a deterministic Stellar wallet seed from an email.
