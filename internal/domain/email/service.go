@@ -8,15 +8,14 @@ import (
 	"os"
 )
 
-// Config holds the email sending configuration.
+// Config holds the Brevo email sending configuration.
 type Config struct {
-	Provider    string // "brevo" or "sendgrid"
 	APIKey      string
 	FromAddress string
 	FromName    string
 }
 
-// Service handles sending transactional emails via Brevo or SendGrid API.
+// Service handles sending transactional emails via Brevo API.
 type Service struct {
 	config Config
 	client *http.Client
@@ -29,6 +28,9 @@ func NewService(cfg Config) *Service {
 	if cfg.FromName == "" {
 		cfg.FromName = "Moistello"
 	}
+	if cfg.APIKey == "" {
+		cfg.APIKey = os.Getenv("MOISTELLO_BREVO_API_KEY")
+	}
 	return &Service{
 		config: cfg,
 		client: &http.Client{},
@@ -38,75 +40,53 @@ func NewService(cfg Config) *Service {
 // SendOTP sends a 6-digit verification code to the user's email.
 func (s *Service) SendOTP(email, code string) error {
 	subject := "Your Moistello verification code"
-	body := fmt.Sprintf(`Your Moistello verification code is: <strong>%s</strong>
-
-This code expires in 5 minutes. If you did not request this code, please ignore this email.`, code)
-	return s.send(email, subject, body)
+	body := fmt.Sprintf(`<p>Your Moistello verification code is:</p>
+<h2 style="font-size:28px;letter-spacing:6px;text-align:center;padding:16px;background:#f5f5f5;border-radius:8px;font-family:monospace">%s</h2>
+<p>This code expires in <strong>5 minutes</strong>. If you did not request this code, please ignore this email.</p>`, code)
+	return s.sendBrevo(email, subject, body)
 }
 
-// SendBackupCodes sends the backup codes to the user's email after TOTP setup.
+// SendBackupCodes sends backup codes to the user's email.
 func (s *Service) SendBackupCodes(email string, codes []string) error {
 	subject := "Your Moistello backup codes"
-	body := `Save these backup codes in a secure place. Each code can be used only once to access your account if you lose your authenticator device.<br><br>`
+	body := `<p>Save these backup codes in a secure place. Each code can be used <strong>only once</strong> to access your account if you lose your authenticator device.</p><br>`
 	for _, c := range codes {
-		body += fmt.Sprintf("<code>%s</code><br>", c)
+		body += fmt.Sprintf(`<code style="display:block;font-size:16px;padding:4px 8px;background:#f5f5f5;border-radius:4px;margin:4px 0;font-family:monospace">%s</code>`, c)
 	}
-	body += `<br><strong>Keep these codes safe. They will not be shown again.</strong>`
-	return s.send(email, subject, body)
+	body += `<br><p><strong>Keep these codes safe. They will not be shown again.</strong></p>`
+	return s.sendBrevo(email, subject, body)
 }
 
-// SendRecoveryCode sends a recovery code during the passwordless recovery flow.
+// SendRecoveryCode sends a one-time recovery code.
 func (s *Service) SendRecoveryCode(email, code string) error {
-	subject := "Your Moistello recovery code"
-	body := fmt.Sprintf(`Your Moistello recovery code is: <strong>%s</strong>
-
-This code expires in 15 minutes. Use it to log in to your account. If you did not request this code, please secure your account immediately.`, code)
-	return s.send(email, subject, body)
-}
-
-func (s *Service) send(to, subject, htmlBody string) error {
-	switch s.config.Provider {
-	case "brevo":
-		return s.sendBrevo(to, subject, htmlBody)
-	case "sendgrid":
-		return s.sendSendGrid(to, subject, htmlBody)
-	default:
-		// Log the email in development — no actual sending
-		fmt.Printf("[EMAIL] To: %s | Subject: %s | Body: %s\n", to, subject, htmlBody)
-		return nil
-	}
+	subject := "Your Moistello account recovery code"
+	body := fmt.Sprintf(`<p>Your Moistello recovery code is:</p>
+<h2 style="font-size:28px;letter-spacing:6px;text-align:center;padding:16px;background:#f5f5f5;border-radius:8px;font-family:monospace">%s</h2>
+<p>This code expires in <strong>15 minutes</strong>. If you did not request this code, please secure your account immediately.</p>`, code)
+	return s.sendBrevo(email, subject, body)
 }
 
 func (s *Service) sendBrevo(to, subject, htmlBody string) error {
-	type brevoTo struct {
-		Email string `json:"email"`
-		Name  string `json:"name"`
-	}
-	type brevoPayload struct {
-		Sender      map[string]string `json:"sender"`
-		To          []brevoTo         `json:"to"`
-		Subject     string            `json:"subject"`
-		HTMLContent string            `json:"htmlContent"`
-	}
-
-	payload := brevoPayload{
-		Sender: map[string]string{
+	payload := map[string]any{
+		"sender": map[string]string{
 			"name":  s.config.FromName,
 			"email": s.config.FromAddress,
 		},
-		To:          []brevoTo{{Email: to}},
-		Subject:     subject,
-		HTMLContent: htmlBody,
+		"to": []map[string]string{
+			{"email": to},
+		},
+		"subject":     subject,
+		"htmlContent": htmlBody,
 	}
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("marshaling brevo payload: %w", err)
+		return fmt.Errorf("marshaling payload: %w", err)
 	}
 
 	req, err := http.NewRequest("POST", "https://api.brevo.com/v3/smtp/email", bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("creating brevo request: %w", err)
+		return fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("api-key", s.config.APIKey)
@@ -120,67 +100,34 @@ func (s *Service) sendBrevo(to, subject, htmlBody string) error {
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("brevo API error: %s", resp.Status)
 	}
+
+	fmt.Printf("[BREVO] Email sent to %s — subject: %s\n", to, subject)
 	return nil
 }
 
-func (s *Service) sendSendGrid(to, subject, htmlBody string) error {
-	type sendgridPersonalization struct {
-		To []map[string]string `json:"to"`
-	}
-	type sendgridContent struct {
-		Type  string `json:"type"`
-		Value string `json:"value"`
-	}
-	type sendgridPayload struct {
-		Personalizations []sendgridPersonalization `json:"personalizations"`
-		From             map[string]string         `json:"from"`
-		Subject          string                    `json:"subject"`
-		Content          []sendgridContent         `json:"content"`
-	}
-
-	payload := sendgridPayload{
-		Personalizations: []sendgridPersonalization{
-			{To: []map[string]string{{"email": to}}},
-		},
-		From:    map[string]string{"email": s.config.FromAddress, "name": s.config.FromName},
-		Subject: subject,
-		Content: []sendgridContent{{Type: "text/html", Value: htmlBody}},
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("marshaling sendgrid payload: %w", err)
-	}
-
-	req, err := http.NewRequest("POST", "https://api.sendgrid.com/v3/mail/send", bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("creating sendgrid request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+s.config.APIKey)
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("sending via sendgrid: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("sendgrid API error: %s", resp.Status)
-	}
-	return nil
-}
-
-// ConfigFromEnv loads email config from environment variables.
+// ConfigFromEnv loads Brevo config from environment variables.
 func ConfigFromEnv() Config {
-	provider := os.Getenv("MOISTELLO_EMAIL_PROVIDER")
-	if provider == "" {
-		provider = "brevo"
+	apiKey := os.Getenv("MOISTELLO_BREVO_API_KEY")
+	if apiKey == "" {
+		apiKey = os.Getenv("MOISTELLO_NOTIFICATION_EMAIL_APIKEY")
 	}
+	if apiKey == "" {
+		apiKey = os.Getenv("MOISTELLO_EMAIL_API_KEY")
+	}
+
+	from := os.Getenv("MOISTELLO_BREVO_FROM_EMAIL")
+	if from == "" {
+		from = os.Getenv("MOISTELLO_NOTIFICATION_EMAIL_FROM_ADDRESS")
+	}
+
+	name := os.Getenv("MOISTELLO_BREVO_FROM_NAME")
+	if name == "" {
+		name = os.Getenv("MOISTELLO_NOTIFICATION_EMAIL_FROM_NAME")
+	}
+
 	return Config{
-		Provider:    provider,
-		APIKey:      os.Getenv("MOISTELLO_EMAIL_API_KEY"),
-		FromAddress: os.Getenv("MOISTELLO_EMAIL_FROM"),
-		FromName:    "Moistello",
+		APIKey:      apiKey,
+		FromAddress: from,
+		FromName:    name,
 	}
 }
