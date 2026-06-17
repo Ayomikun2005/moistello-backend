@@ -3,12 +3,14 @@ package handler
 import (
 	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
-	"log"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/moistello/backend/internal/api/middleware"
@@ -180,12 +182,17 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 
 // Register sends an email OTP to begin registration.
 // POST /auth/register { email }
+// ── Registration: Email + Password ──
+
+// Register creates a user with email+password and sends email OTP.
+// POST /auth/register { email, password }
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req struct {
-		Email string `json:"email" binding:"required,email"`
+		Email    string `json:"email" binding:"required,email"`
+		Password string `json:"password" binding:"required,min=8"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "valid email is required")
+		response.BadRequest(c, "valid email and password (min 8 chars) are required")
 		return
 	}
 
@@ -196,103 +203,55 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	code, err := h.verificationSvc.SendOTP(c.Request.Context(), req.Email)
+	// Hash password
+	passwordHash, err := auth.HashPassword(req.Password)
 	if err != nil {
-		response.BadRequest(c, err.Error())
+		response.InternalError(c, "failed to process password")
 		return
 	}
 
-	if h.emailSvc != nil {
-		if err := h.emailSvc.SendOTP(req.Email, code); err != nil {
-			log.Printf("Failed to send OTP email: %v", err)
-		}
-	}
+	// Derive wallet from email
+	walletSeed := deriveWalletSeed(req.Email)
+	emailHash := sha256.Sum256([]byte(req.Email))
+	walletAddr := fmt.Sprintf("EMAIL:%x", emailHash[:16])
 
-	response.OK(c, gin.H{"message": "verification code sent", "expiresIn": 300})
-}
-
-// RegisterVerify verifies the email OTP and creates the user.
-// POST /auth/register/verify { email, code }
-func (h *AuthHandler) RegisterVerify(c *gin.Context) {
-	var req struct {
-		Email string `json:"email" binding:"required,email"`
-		Code  string `json:"code" binding:"required,len=6"`
+	// Create user with password hash and wallet
+	u := &user.User{
+		ID:            uuid.New(),
+		WalletAddress: walletAddr,
+		PasswordHash:  passwordHashStruct(passwordHash),
+		Email:         &req.Email,
+		EmailVerified: false,
+		PreferredLanguage: "en",
+		Role:          user.RoleUser,
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "email and 6-digit code are required")
-		return
-	}
-
-	valid, err := h.verificationSvc.VerifyOTP(c.Request.Context(), req.Email, req.Code)
-	if err != nil || !valid {
-		response.BadRequest(c, "invalid or expired verification code")
-		return
-	}
-
-	existing, err := h.userService.GetByEmail(c.Request.Context(), req.Email)
-	if err == nil && existing != nil {
-		response.Conflict(c, "email already registered")
-		return
-	}
-
-	walletAddr := fmt.Sprintf("EMAIL:%s", req.Email)
-	u, err := h.userService.Create(c.Request.Context(), walletAddr)
-	if err != nil {
+	if err := h.userRepo.Create(c.Request.Context(), u); err != nil {
 		response.InternalError(c, "failed to create account")
 		return
 	}
 
-	email := req.Email
-	u.Email = &email
-	u.EmailVerified = true
-	h.userRepo.Update(c.Request.Context(), u)
-
-	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID)
+	// Send OTP
+	code, err := h.verificationSvc.SendOTP(c.Request.Context(), req.Email)
 	if err != nil {
-		response.InternalError(c, "failed to create session")
+		response.InternalError(c, "failed to send verification code")
 		return
+	}
+	if h.emailSvc != nil {
+		h.emailSvc.SendOTP(req.Email, code)
 	}
 
 	response.Created(c, gin.H{
-		"token": pair.AccessToken, "refreshToken": pair.RefreshToken, "user": u,
+		"message": "verification code sent",
+		"walletSeed": walletSeed,
+		"expiresIn": 300,
 	})
 }
 
-// Login sends an OTP to the user's email for login.
-// POST /auth/login { email }
-func (h *AuthHandler) Login(c *gin.Context) {
-	var req struct {
-		Email string `json:"email" binding:"required,email"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "valid email is required")
-		return
-	}
-
-	_, err := h.userService.GetByEmail(c.Request.Context(), req.Email)
-	if err != nil {
-		response.NotFound(c, "account not found. please register first.")
-		return
-	}
-
-	code, err := h.verificationSvc.SendOTP(c.Request.Context(), req.Email)
-	if err != nil {
-		response.BadRequest(c, err.Error())
-		return
-	}
-
-	if h.emailSvc != nil {
-		if err := h.emailSvc.SendOTP(req.Email, code); err != nil {
-			log.Printf("Failed to send OTP email: %v", err)
-		}
-	}
-
-	response.OK(c, gin.H{"message": "verification code sent", "expiresIn": 300})
-}
-
-// LoginVerify verifies the email OTP and returns tokens.
-// POST /auth/login/verify { email, code }
-func (h *AuthHandler) LoginVerify(c *gin.Context) {
+// RegisterVerify verifies the email OTP and creates a session.
+// POST /auth/register/verify { email, code }
+func (h *AuthHandler) RegisterVerify(c *gin.Context) {
 	var req struct {
 		Email string `json:"email" binding:"required,email"`
 		Code  string `json:"code" binding:"required,len=6"`
@@ -314,6 +273,63 @@ func (h *AuthHandler) LoginVerify(c *gin.Context) {
 		return
 	}
 
+	u.EmailVerified = true
+	h.userRepo.Update(c.Request.Context(), u)
+
+	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID)
+	if err != nil {
+		response.InternalError(c, "failed to create session")
+		return
+	}
+
+	response.Created(c, gin.H{
+		"token": pair.AccessToken, "refreshToken": pair.RefreshToken, "user": u,
+	})
+}
+
+// ── Login: Email + Password ──
+
+// Login authenticates with email+password.
+// POST /auth/login { email, password }
+func (h *AuthHandler) Login(c *gin.Context) {
+	var req struct {
+		Email    string `json:"email" binding:"required,email"`
+		Password string `json:"password" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "email and password are required")
+		return
+	}
+
+	u, err := h.userService.GetByEmail(c.Request.Context(), req.Email)
+	if err != nil {
+		response.NotFound(c, "account not found")
+		return
+	}
+
+	if !u.PasswordHash.Valid {
+		response.BadRequest(c, "account has no password set. use passkey.")
+		return
+	}
+
+	if !auth.VerifyPassword(req.Password, u.PasswordHash.String) {
+		response.Unauthorized(c, "incorrect password")
+		return
+	}
+
+	if !u.EmailVerified {
+		code, err := h.verificationSvc.SendOTP(c.Request.Context(), req.Email)
+		if err != nil {
+			response.InternalError(c, "failed to send verification code")
+			return
+		}
+		if h.emailSvc != nil {
+			h.emailSvc.SendOTP(req.Email, code)
+		}
+		response.OK(c, gin.H{"needsVerification": true, "message": "email not verified. code sent."})
+		return
+	}
+
 	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID)
 	if err != nil {
 		response.InternalError(c, "failed to create session")
@@ -325,9 +341,100 @@ func (h *AuthHandler) LoginVerify(c *gin.Context) {
 	})
 }
 
-// ──────────────────────────────────────────────
-// Optional TOTP 2FA (Settings only)
-// ──────────────────────────────────────────────
+// ── Passkey Authentication ──
+
+// PasskeyNonce generates a nonce for passkey-based wallet authentication.
+// POST /auth/passkey/nonce { credentialId }
+func (h *AuthHandler) PasskeyNonce(c *gin.Context) {
+	var req struct {
+		CredentialID string `json:"credentialId" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "credentialId is required")
+		return
+	}
+
+	// Look up user by passkey credential
+	u, err := h.userRepo.FindByPasskeyCredentialID(c.Request.Context(), req.CredentialID)
+	if err != nil {
+		response.NotFound(c, "passkey not linked to any account")
+		return
+	}
+
+	// Generate nonce for the user's wallet address
+	nonce, err := h.authService.GenerateNonce(c.Request.Context(), u.WalletAddress)
+	if err != nil {
+		response.InternalError(c, "failed to generate nonce")
+		return
+	}
+
+	response.OK(c, gin.H{"nonce": nonce, "walletAddress": u.WalletAddress})
+}
+
+// PasskeyVerify verifies a passkey-signed nonce and creates a session.
+// POST /auth/passkey/verify { credentialId, signature }
+func (h *AuthHandler) PasskeyVerify(c *gin.Context) {
+	var req struct {
+		CredentialID string `json:"credentialId" binding:"required"`
+		Signature    string `json:"signature" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "credentialId and signature are required")
+		return
+	}
+
+	u, err := h.userRepo.FindByPasskeyCredentialID(c.Request.Context(), req.CredentialID)
+	if err != nil {
+		response.NotFound(c, "passkey not linked to any account")
+		return
+	}
+
+	valid, err := h.authService.VerifySignature(c.Request.Context(), u.WalletAddress, req.Signature)
+	if err != nil || !valid {
+		response.Unauthorized(c, "signature verification failed")
+		return
+	}
+
+	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID)
+	if err != nil {
+		response.InternalError(c, "failed to create session")
+		return
+	}
+
+	response.OK(c, gin.H{
+		"token": pair.AccessToken, "refreshToken": pair.RefreshToken, "user": u,
+	})
+}
+
+// PasskeyLink links a passkey credential to the authenticated user's account.
+// POST /auth/passkey/link [AUTH] { credentialId }
+func (h *AuthHandler) PasskeyLink(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+
+	var req struct {
+		CredentialID string `json:"credentialId" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "credentialId is required")
+		return
+	}
+
+	u, err := h.userService.GetByID(c.Request.Context(), userID)
+	if err != nil {
+		response.NotFound(c, "user not found")
+		return
+	}
+
+	u.PasskeyCredentialID = &req.CredentialID
+	if err := h.userRepo.Update(c.Request.Context(), u); err != nil {
+		response.InternalError(c, "failed to link passkey")
+		return
+	}
+
+	response.OK(c, gin.H{"success": true})
+}
+
+// ── Optional TOTP 2FA (Settings only) ──
 
 // SetupTOTP generates a new TOTP secret for an authenticated user.
 // POST /auth/totp/setup [AUTH]
@@ -442,13 +549,28 @@ func (h *AuthHandler) Recovery(c *gin.Context) {
 	})
 }
 
-// totpSecretString wraps a TOTP secret as sql.NullString.
+// ── Helpers ──
+
+func passwordHashStruct(s string) sql.NullString {
+	return sql.NullString{String: s, Valid: true}
+}
+
 func totpSecretString(s string) sql.NullString {
 	return sql.NullString{String: s, Valid: true}
 }
 
-// getPasskeyPepper returns the passkey pepper used for wallet seed derivation.
-// In production, set MOISTELLO_PASSKEY_PEPPER environment variable.
+// deriveWalletSeed derives a deterministic Stellar wallet seed from an email.
+// Uses SHA-256(email + ":" + pepper) for deterministic, recoverable wallets.
+func deriveWalletSeed(email string) string {
+	pepper := os.Getenv("MOISTELLO_WALLET_PEPPER")
+	if pepper == "" {
+		pepper = "moistello-local-dev"
+	}
+	seed := sha256.Sum256([]byte(email + ":" + pepper))
+	return hex.EncodeToString(seed[:])
+}
+
+// getPasskeyPepper returns the passkey pepper for wallet seed derivation.
 func getPasskeyPepper() string {
 	p := os.Getenv("MOISTELLO_PASSKEY_PEPPER")
 	if p != "" {

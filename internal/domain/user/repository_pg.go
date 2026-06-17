@@ -30,7 +30,7 @@ func NewRepository(db *sqlx.DB) Repository {
 
 func scanUser(row interface{ Scan(...interface{}) error }) (*User, error) {
 	var u User
-	var email, phone, displayName, avatarIpfsHash, countryCode, passkeyCredentialID, totpSecret sql.NullString
+	var email, phone, displayName, avatarIpfsHash, countryCode, passkeyCredentialID, totpSecret, passwordHash sql.NullString
 	err := row.Scan(
 		&u.ID,
 		&u.WalletAddress,
@@ -42,6 +42,7 @@ func scanUser(row interface{ Scan(...interface{}) error }) (*User, error) {
 		&u.PreferredLanguage,
 		&u.MoiScore,
 		&u.Role,
+		&passwordHash,
 		&totpSecret,
 		&u.TOTPEnabled,
 		&u.BackupCodes,
@@ -71,6 +72,9 @@ func scanUser(row interface{ Scan(...interface{}) error }) (*User, error) {
 	if countryCode.Valid {
 		u.CountryCode = &countryCode.String
 	}
+	if passwordHash.Valid {
+		u.PasswordHash = passwordHash
+	}
 	if totpSecret.Valid {
 		u.TOTPSecret = totpSecret
 	}
@@ -83,7 +87,7 @@ func scanUser(row interface{ Scan(...interface{}) error }) (*User, error) {
 func (r *pgRepo) FindByID(ctx context.Context, id uuid.UUID) (*User, error) {
 	query := `SELECT id, wallet_address, email, phone, display_name, avatar_ipfs_hash,
 		country_code, preferred_language, moi_score, role,
-		totp_secret, totp_enabled, backup_codes, email_verified, passkey_credential_id,
+		password_hash, totp_secret, totp_enabled, backup_codes, email_verified, passkey_credential_id,
 		created_at, updated_at FROM users WHERE id = $1`
 	return scanUser(r.db.QueryRowxContext(ctx, query, id))
 }
@@ -91,7 +95,7 @@ func (r *pgRepo) FindByID(ctx context.Context, id uuid.UUID) (*User, error) {
 func (r *pgRepo) FindByWalletAddress(ctx context.Context, walletAddress string) (*User, error) {
 	query := `SELECT id, wallet_address, email, phone, display_name, avatar_ipfs_hash,
 		country_code, preferred_language, moi_score, role,
-		totp_secret, totp_enabled, backup_codes, email_verified, passkey_credential_id,
+		password_hash, totp_secret, totp_enabled, backup_codes, email_verified, passkey_credential_id,
 		created_at, updated_at FROM users WHERE wallet_address = $1`
 	return scanUser(r.db.QueryRowxContext(ctx, query, walletAddress))
 }
@@ -100,7 +104,7 @@ func (r *pgRepo) FindByEmail(ctx context.Context, email string) (*User, error) {
 	hashedEmail := hashUserEmail(email)
 	query := `SELECT id, wallet_address, email, phone, display_name, avatar_ipfs_hash,
 		country_code, preferred_language, moi_score, role,
-		totp_secret, totp_enabled, backup_codes, email_verified, passkey_credential_id,
+		password_hash, totp_secret, totp_enabled, backup_codes, email_verified, passkey_credential_id,
 		created_at, updated_at FROM users WHERE email = $1`
 	return scanUser(r.db.QueryRowxContext(ctx, query, hashedEmail))
 }
@@ -108,7 +112,7 @@ func (r *pgRepo) FindByEmail(ctx context.Context, email string) (*User, error) {
 func (r *pgRepo) FindByPasskeyCredentialID(ctx context.Context, credentialID string) (*User, error) {
 	query := `SELECT id, wallet_address, email, phone, display_name, avatar_ipfs_hash,
 		country_code, preferred_language, moi_score, role,
-		totp_secret, totp_enabled, backup_codes, email_verified, passkey_credential_id,
+		password_hash, totp_secret, totp_enabled, backup_codes, email_verified, passkey_credential_id,
 		created_at, updated_at FROM users WHERE passkey_credential_id = $1`
 	return scanUser(r.db.QueryRowxContext(ctx, query, credentialID))
 }
@@ -116,11 +120,11 @@ func (r *pgRepo) FindByPasskeyCredentialID(ctx context.Context, credentialID str
 func (r *pgRepo) Create(ctx context.Context, u *User) error {
 	query := `INSERT INTO users (id, wallet_address, email, phone, display_name,
 		avatar_ipfs_hash, country_code, preferred_language,
-		moi_score, role, totp_secret, totp_enabled, backup_codes, email_verified, passkey_credential_id,
+		moi_score, role, password_hash, totp_secret, totp_enabled, backup_codes, email_verified, passkey_credential_id,
 		created_at, updated_at)
 		VALUES (:id, :wallet_address, :email, :phone, :display_name,
 		:avatar_ipfs_hash, :country_code, :preferred_language,
-		:moi_score, :role, :totp_secret, :totp_enabled, :backup_codes, :email_verified, :passkey_credential_id,
+		:moi_score, :role, :password_hash, :totp_secret, :totp_enabled, :backup_codes, :email_verified, :passkey_credential_id,
 		:created_at, :updated_at)`
 	_, err := r.db.NamedExecContext(ctx, query, u)
 	if err != nil {
@@ -136,7 +140,7 @@ func (r *pgRepo) Update(ctx context.Context, u *User) error {
 	query := `UPDATE users SET email = :email, phone = :phone, display_name = :display_name,
 		avatar_ipfs_hash = :avatar_ipfs_hash,
 		country_code = :country_code, preferred_language = :preferred_language, moi_score = :moi_score,
-		role = :role, totp_secret = :totp_secret, totp_enabled = :totp_enabled,
+		role = :role, password_hash = :password_hash, totp_secret = :totp_secret, totp_enabled = :totp_enabled,
 		backup_codes = :backup_codes, email_verified = :email_verified,
 		passkey_credential_id = :passkey_credential_id, updated_at = :updated_at WHERE id = :id`
 	result, err := r.db.NamedExecContext(ctx, query, u)
@@ -191,6 +195,7 @@ func (r *pgRepo) List(ctx context.Context, filter UserFilter) ([]User, error) {
 
 	query := fmt.Sprintf(`SELECT id, wallet_address, email, phone, display_name, avatar_ipfs_hash,
 		country_code, preferred_language, moi_score, role,
+		password_hash, totp_secret, totp_enabled, backup_codes, email_verified, passkey_credential_id,
 		created_at, updated_at FROM users %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d`,
 		whereClause, argIdx, argIdx+1)
 	args = append(args, limit, offset)

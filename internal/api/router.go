@@ -49,8 +49,9 @@ func NewRouter(
 			auth.POST("/register", authHandler.Register)
 			auth.POST("/register/verify", authHandler.RegisterVerify)
 			auth.POST("/login", authHandler.Login)
-			auth.POST("/login/verify", authHandler.LoginVerify)
 			auth.POST("/refresh", middleware.RefreshTokenBlocklistMiddleware(redisClient), authHandler.Refresh)
+			auth.POST("/passkey/nonce", authHandler.PasskeyNonce)
+			auth.POST("/passkey/verify", authHandler.PasskeyVerify)
 			auth.POST("/recovery", authHandler.Recovery)
 		}
 
@@ -61,6 +62,7 @@ func NewRouter(
 		{
 			authenticated.POST("/auth/me", authHandler.Me)
 			authenticated.POST("/auth/logout", authHandler.Logout)
+			authenticated.POST("/auth/passkey/link", authHandler.PasskeyLink)
 			authenticated.POST("/auth/totp/setup", authHandler.SetupTOTP)
 			authenticated.POST("/auth/totp/verify", authHandler.VerifyTOTPSetup)
 
