@@ -26,6 +26,7 @@ type User struct {
 	PreferredLanguage  string         `json:"preferredLanguage" db:"preferred_language"`
 	MoiScore           int            `json:"moiScore" db:"moi_score"`
 	Role               Role           `json:"role" db:"role"`
+	SessionTTLMinutes  int            `json:"sessionTtlMinutes" db:"session_ttl_minutes"`
 	PasswordHash       sql.NullString `json:"-" db:"password_hash"`
 	TOTPSecret         sql.NullString `json:"-" db:"totp_secret"`
 	TOTPEnabled        bool           `json:"totpEnabled" db:"totp_enabled"`

@@ -42,7 +42,7 @@ stellar:
 auth:
   jwt_private_key_path: "./config/keys/jwt-private.pem"
   jwt_public_key_path: "./config/keys/jwt-public.pem"
-  access_token_ttl: "15m"
+  access_token_ttl: "240m"
   refresh_token_ttl: "168h"
   nonce_ttl: "5m"
 

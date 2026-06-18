@@ -313,10 +313,9 @@ func (h *AuthHandler) RegisterVerify(c *gin.Context) {
 	// Wallet will be created deterministically from the email seed when
 	// POST /auth/wallet/init is called from the frontend.
 
-	// Clean up Redis
 	h.verificationSvc.DeletePendingRegistration(c.Request.Context(), req.Email)
 
-	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID)
+	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, sessionTTLFromUser(u), deviceInfoFromContext(c))
 	if err != nil {
 		response.InternalError(c, "failed to create session")
 		return
@@ -328,8 +327,6 @@ func (h *AuthHandler) RegisterVerify(c *gin.Context) {
 }
 
 // ── Login: Email + Password ──
-
-// Login authenticates with email+password.
 // POST /auth/login { email, password }
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req struct {
@@ -371,7 +368,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID)
+	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, sessionTTLFromUser(u), deviceInfoFromContext(c))
 	if err != nil {
 		response.InternalError(c, "failed to create session")
 		return
@@ -436,7 +433,7 @@ func (h *AuthHandler) PasskeyVerify(c *gin.Context) {
 		return
 	}
 
-	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID)
+	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, sessionTTLFromUser(u), deviceInfoFromContext(c))
 	if err != nil {
 		response.InternalError(c, "failed to create session")
 		return
@@ -445,34 +442,6 @@ func (h *AuthHandler) PasskeyVerify(c *gin.Context) {
 	response.OK(c, gin.H{
 		"token": pair.AccessToken, "refreshToken": pair.RefreshToken, "user": u,
 	})
-}
-
-// PasskeyLink links a passkey credential to the authenticated user's account.
-// POST /auth/passkey/link [AUTH] { credentialId }
-func (h *AuthHandler) PasskeyLink(c *gin.Context) {
-	userID := middleware.GetUserID(c)
-
-	var req struct {
-		CredentialID string `json:"credentialId" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "credentialId is required")
-		return
-	}
-
-	u, err := h.userService.GetByID(c.Request.Context(), userID)
-	if err != nil {
-		response.NotFound(c, "user not found")
-		return
-	}
-
-	u.PasskeyCredentialID = &req.CredentialID
-	if err := h.userRepo.Update(c.Request.Context(), u); err != nil {
-		response.InternalError(c, "failed to link passkey")
-		return
-	}
-
-	response.OK(c, gin.H{"success": true})
 }
 
 // ── Optional TOTP 2FA (Settings only) ──
@@ -580,7 +549,7 @@ func (h *AuthHandler) Recovery(c *gin.Context) {
 	u.BackupCodes = remaining
 	h.userRepo.Update(c.Request.Context(), u)
 
-	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID)
+	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, sessionTTLFromUser(u), deviceInfoFromContext(c))
 	if err != nil {
 		response.InternalError(c, "failed to create session")
 		return
@@ -591,11 +560,9 @@ func (h *AuthHandler) Recovery(c *gin.Context) {
 	})
 }
 
-// ── Wallet Initialization (from dashboard first load) ──
+// ── Wallet Initialization ──
 
-// InitWallet creates the user's Stellar wallet deterministically from their email.
-// This is called from the frontend once when the user first lands on the dashboard
-// after registration, keeping the registration flow instant (<100ms).
+// InitWallet creates the user's Stellar wallet from their email-derived seed.
 // POST /auth/wallet/init [AUTH]
 func (h *AuthHandler) InitWallet(c *gin.Context) {
 	userID := middleware.GetUserID(c)
@@ -610,7 +577,6 @@ func (h *AuthHandler) InitWallet(c *gin.Context) {
 		return
 	}
 
-	// Derive wallet seed from email (deterministic — same email always produces same wallet)
 	email := ""
 	if u.Email != nil {
 		email = *u.Email
@@ -630,12 +596,105 @@ func (h *AuthHandler) InitWallet(c *gin.Context) {
 	response.Created(c, gin.H{"wallet": w})
 }
 
-// ── Helpers ──
+// PasskeyLink links a passkey credential to the authenticated user's account.
+// POST /auth/passkey/link [AUTH] { credentialId }
+func (h *AuthHandler) PasskeyLink(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	var req struct {
+		CredentialID string `json:"credentialId" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "credentialId is required")
+		return
+	}
 
-func passwordHashStruct(s string) sql.NullString {
-	return sql.NullString{String: s, Valid: true}
+	u, err := h.userService.GetByID(c.Request.Context(), userID)
+	if err != nil {
+		response.NotFound(c, "user not found")
+		return
+	}
+
+	u.PasskeyCredentialID = &req.CredentialID
+	if err := h.userRepo.Update(c.Request.Context(), u); err != nil {
+		response.InternalError(c, "failed to link passkey")
+		return
+	}
+
+	response.OK(c, gin.H{"success": true})
 }
 
+// ── Session Management ──
+
+// ListSessions returns all active sessions for the authenticated user.
+// GET /sessions [AUTH]
+func (h *AuthHandler) ListSessions(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == "" {
+		response.Unauthorized(c, "not authenticated")
+		return
+	}
+
+	authHeader := c.GetHeader("Authorization")
+	currentHash := ""
+	if authHeader != "" {
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) == 2 {
+			sha := sha256.Sum256([]byte(parts[1]))
+			currentHash = fmt.Sprintf("%x", sha)
+		}
+	}
+
+	sessions, err := h.authService.ListSessions(c.Request.Context(), userID, currentHash)
+	if err != nil {
+		response.InternalError(c, "failed to list sessions")
+		return
+	}
+
+	response.OK(c, gin.H{"sessions": sessions})
+}
+
+// RevokeSession revokes a specific session by its hash.
+// DELETE /sessions/:id [AUTH]
+func (h *AuthHandler) RevokeSession(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	sessionHash := c.Param("id")
+	if sessionHash == "" {
+		response.BadRequest(c, "session ID is required")
+		return
+	}
+
+	if err := h.authService.RevokeSession(c.Request.Context(), userID, sessionHash); err != nil {
+		response.InternalError(c, "failed to revoke session")
+		return
+	}
+
+	response.OK(c, gin.H{"success": true})
+}
+
+// RevokeAllSessions revokes all sessions except the current one.
+// DELETE /sessions [AUTH]
+func (h *AuthHandler) RevokeAllSessions(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+
+	authHeader := c.GetHeader("Authorization")
+	currentHash := ""
+	if authHeader != "" {
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) == 2 {
+			sha := sha256.Sum256([]byte(parts[1]))
+			currentHash = fmt.Sprintf("%x", sha)
+		}
+	}
+
+	if err := h.authService.RevokeAllSessions(c.Request.Context(), userID, currentHash); err != nil {
+		response.InternalError(c, "failed to revoke sessions")
+		return
+	}
+
+	response.OK(c, gin.H{"success": true})
+}
+
+// totpSecretString wraps a TOTP secret as sql.NullString.
 func totpSecretString(s string) sql.NullString {
 	return sql.NullString{String: s, Valid: true}
 }
@@ -668,6 +727,30 @@ func getPasskeyPepper() string {
 }
 
 // sha256HashForLogout computes SHA-256 for refresh token session lookup.
+func sessionTTLFromUser(u *user.User) time.Duration {
+	ttl := u.SessionTTLMinutes
+	if ttl < 60 {
+		ttl = 240
+	}
+	return time.Duration(ttl) * time.Minute
+}
+
+func deviceInfoFromContext(c *gin.Context) string {
+	ua := c.GetHeader("User-Agent")
+	if ua == "" {
+		ua = "unknown"
+	}
+	ip := c.ClientIP()
+	if ip == "" {
+		ip = "unknown"
+	}
+	return fmt.Sprintf("%s|%s", ua, ip)
+}
+
+func passwordHashStruct(s string) sql.NullString {
+	return sql.NullString{String: s, Valid: true}
+}
+
 func sha256HashForLogout(s string) string {
 	hash := sha256.Sum256([]byte(s))
 	return fmt.Sprintf("%x", hash)

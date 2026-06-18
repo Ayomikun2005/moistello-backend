@@ -64,6 +64,9 @@ func NewRouter(
 			authenticated.POST("/auth/logout", authHandler.Logout)
 			authenticated.POST("/auth/wallet/init", authHandler.InitWallet)
 			authenticated.POST("/auth/passkey/link", authHandler.PasskeyLink)
+			authenticated.GET("/sessions", authHandler.ListSessions)
+			authenticated.DELETE("/sessions/:id", authHandler.RevokeSession)
+			authenticated.DELETE("/sessions", authHandler.RevokeAllSessions)
 			authenticated.POST("/auth/totp/setup", authHandler.SetupTOTP)
 			authenticated.POST("/auth/totp/verify", authHandler.VerifyTOTPSetup)
 

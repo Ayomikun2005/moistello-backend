@@ -32,6 +32,7 @@ type UpdateProfileInput struct {
 	Phone             *string `json:"phone"`
 	CountryCode       *string `json:"countryCode"`
 	PreferredLanguage *string `json:"preferredLanguage"`
+	SessionTTL        *int    `json:"sessionTtlMinutes"`
 }
 
 type MoiScoreResponse struct {
@@ -183,6 +184,16 @@ func (s *userService) UpdateProfile(ctx context.Context, id string, updates Upda
 	}
 	if updates.PreferredLanguage != nil {
 		u.PreferredLanguage = *updates.PreferredLanguage
+	}
+	if updates.SessionTTL != nil {
+		ttl := *updates.SessionTTL
+		if ttl < 60 {
+			ttl = 60
+		}
+		if ttl > 1440 {
+			ttl = 1440
+		}
+		u.SessionTTLMinutes = ttl
 	}
 	u.UpdatedAt = time.Now().UTC()
 

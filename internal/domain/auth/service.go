@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
@@ -27,11 +28,15 @@ import (
 type Service interface {
 	GenerateNonce(ctx context.Context, walletAddress string) (*Nonce, error)
 	VerifySignature(ctx context.Context, walletAddress, signature string) (bool, error)
-	CreateSession(ctx context.Context, userID uuid.UUID) (*TokenPair, error)
+	CreateSession(ctx context.Context, userID uuid.UUID, sessionTTL time.Duration, deviceInfo string) (*TokenPair, error)
 	ValidateSession(ctx context.Context, refreshToken string) (*uuid.UUID, error)
 	GenerateJWT(userID uuid.UUID, walletAddress, role string) (string, error)
+	GenerateJWTWithTTL(userID uuid.UUID, walletAddress, role string, ttl time.Duration) (string, error)
 	ValidateJWT(tokenString string) (*JWTCustomClaims, error)
 	RefreshToken(ctx context.Context, refreshToken string) (*TokenPair, error)
+	ListSessions(ctx context.Context, userID string, currentTokenHash string) ([]SessionInfo, error)
+	RevokeSession(ctx context.Context, userID, sessionHash string) error
+	RevokeAllSessions(ctx context.Context, userID, currentHash string) error
 }
 
 type authService struct {
@@ -137,8 +142,8 @@ func (s *authService) VerifySignature(ctx context.Context, walletAddress, signat
 	return valid, nil
 }
 
-func (s *authService) CreateSession(ctx context.Context, userID uuid.UUID) (*TokenPair, error) {
-	accessToken, err := s.GenerateJWT(userID, "", "user")
+func (s *authService) CreateSession(ctx context.Context, userID uuid.UUID, sessionTTL time.Duration, deviceInfo string) (*TokenPair, error) {
+	accessToken, err := s.GenerateJWTWithTTL(userID, "", "user", sessionTTL)
 	if err != nil {
 		return nil, fmt.Errorf("generating access token: %w", err)
 	}
@@ -152,9 +157,10 @@ func (s *authService) CreateSession(ctx context.Context, userID uuid.UUID) (*Tok
 
 	userIDStr := userID.String()
 
-	// Store session
+	// Store session with device metadata
+	sessionData := fmt.Sprintf("%s|%s|%d", userIDStr, deviceInfo, time.Now().Unix())
 	sessionKey := fmt.Sprintf("session:%s", tokenHash)
-	if err := s.redis.Set(ctx, sessionKey, userIDStr, s.refreshTTL).Err(); err != nil {
+	if err := s.redis.Set(ctx, sessionKey, sessionData, s.refreshTTL).Err(); err != nil {
 		return nil, fmt.Errorf("storing session in redis: %w", err)
 	}
 
@@ -241,6 +247,128 @@ func (s *authService) GenerateJWT(userID uuid.UUID, walletAddress, role string) 
 	return signed, nil
 }
 
+// GenerateJWTWithTTL generates an access token with a custom TTL.
+func (s *authService) GenerateJWTWithTTL(userID uuid.UUID, walletAddress, role string, ttl time.Duration) (string, error) {
+	block, _ := pem.Decode(s.jwtPrivateKey)
+	if block == nil {
+		return "", fmt.Errorf("failed to decode PEM block for private key")
+	}
+
+	var privateKey *rsa.PrivateKey
+	parsedKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err == nil {
+		var ok bool
+		privateKey, ok = parsedKey.(*rsa.PrivateKey)
+		if !ok {
+			return "", fmt.Errorf("PKCS8 key is not RSA")
+		}
+	} else {
+		_, err2 := x509.ParseECPrivateKey(block.Bytes)
+		if err2 == nil {
+			return "", fmt.Errorf("EC keys not supported for JWT signing")
+		}
+		rsaKey, err3 := x509.ParsePKCS1PrivateKey(block.Bytes)
+		if err3 != nil {
+			return "", fmt.Errorf("parsing private key: %w (also tried EC: %v, RSA: %v)", err, err2, err3)
+		}
+		privateKey = rsaKey
+	}
+
+	now := time.Now().UTC()
+	claims := jwt.MapClaims{
+		"sub":    userID.String(),
+		"wallet": walletAddress,
+		"role":   role,
+		"iat":    now.Unix(),
+		"exp":    now.Add(ttl).Unix(),
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	signed, err := token.SignedString(privateKey)
+	if err != nil {
+		return "", fmt.Errorf("signing JWT: %w", err)
+	}
+	return signed, nil
+}
+
+// SessionInfo holds metadata about an active session.
+type SessionInfo struct {
+	ID         string `json:"id"`
+	DeviceInfo string `json:"deviceInfo"`
+	LastActive string `json:"lastActive"`
+	IsCurrent  bool   `json:"isCurrent"`
+}
+
+// ListSessions returns all active sessions for a user.
+func (s *authService) ListSessions(ctx context.Context, userID string, currentTokenHash string) ([]SessionInfo, error) {
+	userSessionsKey := fmt.Sprintf("user:sessions:%s", userID)
+	hashes, err := s.redis.SMembers(ctx, userSessionsKey).Result()
+	if err != nil {
+		return nil, fmt.Errorf("listing sessions: %w", err)
+	}
+
+	var sessions []SessionInfo
+	for _, hash := range hashes {
+		sessionKey := fmt.Sprintf("session:%s", hash)
+		data, err := s.redis.Get(ctx, sessionKey).Result()
+		if err != nil {
+			continue
+		}
+		parts := strings.SplitN(data, "|", 3)
+		deviceInfo := ""
+		lastActive := ""
+		if len(parts) >= 2 {
+			deviceInfo = parts[1]
+		}
+		if len(parts) >= 3 {
+			ts, err := strconv.ParseInt(parts[2], 10, 64)
+			if err == nil {
+				lastActive = time.Unix(ts, 0).Format(time.RFC3339)
+			}
+		}
+		sessions = append(sessions, SessionInfo{
+			ID:         hash,
+			DeviceInfo: deviceInfo,
+			LastActive: lastActive,
+			IsCurrent:  hash == currentTokenHash,
+		})
+	}
+	return sessions, nil
+}
+
+// RevokeSession deletes a specific session by its hash.
+func (s *authService) RevokeSession(ctx context.Context, userID, sessionHash string) error {
+	sessionKey := fmt.Sprintf("session:%s", sessionHash)
+	s.redis.Del(ctx, sessionKey)
+	userSessionsKey := fmt.Sprintf("user:sessions:%s", userID)
+	s.redis.SRem(ctx, userSessionsKey, sessionHash)
+	return nil
+}
+
+// RevokeAllSessions deletes all sessions for a user except the current one.
+func (s *authService) RevokeAllSessions(ctx context.Context, userID, currentHash string) error {
+	userSessionsKey := fmt.Sprintf("user:sessions:%s", userID)
+	hashes, err := s.redis.SMembers(ctx, userSessionsKey).Result()
+	if err != nil {
+		return fmt.Errorf("listing sessions for revoke: %w", err)
+	}
+
+	for _, hash := range hashes {
+		if hash == currentHash {
+			continue
+		}
+		sessionKey := fmt.Sprintf("session:%s", hash)
+		s.redis.Del(ctx, sessionKey)
+	}
+	s.redis.Del(ctx, userSessionsKey)
+	// Re-add current session to the set
+	if currentHash != "" {
+		s.redis.SAdd(ctx, userSessionsKey, currentHash)
+		s.redis.Expire(ctx, userSessionsKey, s.refreshTTL)
+	}
+	return nil
+}
+
 func (s *authService) ValidateJWT(tokenString string) (*JWTCustomClaims, error) {
 	block, _ := pem.Decode(s.jwtPublicKey)
 	if block == nil {
@@ -283,7 +411,7 @@ func (s *authService) RefreshToken(ctx context.Context, refreshToken string) (*T
 	}
 
 	// Create the NEW session first so that if this fails, the old one remains valid
-	newPair, err := s.CreateSession(ctx, *uid)
+	newPair, err := s.CreateSession(ctx, *uid, s.accessTTL, "")
 	if err != nil {
 		return nil, fmt.Errorf("creating new session: %w", err)
 	}
