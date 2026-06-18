@@ -34,6 +34,7 @@ import (
 	"github.com/moistello/backend/internal/domain/notification"
 	"github.com/moistello/backend/internal/domain/payout"
 	"github.com/moistello/backend/internal/domain/reputation"
+	"github.com/moistello/backend/internal/domain/savings"
 	"github.com/moistello/backend/internal/domain/totp"
 	"github.com/moistello/backend/internal/domain/verification"
 	"github.com/moistello/backend/internal/domain/user"
@@ -165,7 +166,12 @@ func main() {
 	ycClient := yellowcard.NewClient(cfg.YellowCard.APIKey, cfg.YellowCard.APISecret)
 	depositH := handler.NewDepositHandler(ycClient, walletSvc)
 
-	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, communityH, wsH, jwtPublicKey)
+	// Savings goals
+	savingsRepo := savings.NewRepository(db)
+	savingsSvc := savings.NewService(savingsRepo)
+	savingsH := handler.NewSavingsGoalHandler(savingsSvc)
+
+	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, communityH, wsH, savingsH, jwtPublicKey)
 
 	if err := api.RunServer(router, cfg.Server); err != nil {
 		log.Fatal().Err(err).Msg("server error")

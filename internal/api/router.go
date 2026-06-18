@@ -26,6 +26,7 @@ func NewRouter(
 	depositHandler *handler.DepositHandler,
 	communityHandler *handler.CommunityHandler,
 	wsHandler *handler.WebSocketHandler,
+	savingsGoalHandler *handler.SavingsGoalHandler,
 	jwtPublicKey []byte,
 ) *gin.Engine {
 	r := gin.New()
@@ -142,6 +143,17 @@ func NewRouter(
 			authenticated.PATCH("/notifications/:id/read", notificationHandler.MarkRead)
 			authenticated.PATCH("/notifications/read-all", notificationHandler.MarkAllRead)
 			authenticated.PUT("/notifications/preferences", notificationHandler.UpdatePreferences)
+
+			// Savings goals
+			authenticated.POST("/savings/goals", savingsGoalHandler.Create)
+			authenticated.GET("/savings/goals", savingsGoalHandler.List)
+			authenticated.GET("/savings/goals/active", savingsGoalHandler.ListActive)
+			authenticated.GET("/savings/goals/summary", savingsGoalHandler.Summary)
+			authenticated.GET("/savings/goals/obligations", savingsGoalHandler.UpcomingObligations)
+			authenticated.GET("/savings/goals/:id", savingsGoalHandler.Get)
+			authenticated.PATCH("/savings/goals/:id", savingsGoalHandler.Update)
+			authenticated.DELETE("/savings/goals/:id", savingsGoalHandler.Delete)
+			authenticated.POST("/savings/goals/:id/complete", savingsGoalHandler.Complete)
 
 			authenticated.POST("/webhooks", webhookHandler.RegisterWebhook)
 			authenticated.GET("/webhooks", webhookHandler.ListWebhooks)
