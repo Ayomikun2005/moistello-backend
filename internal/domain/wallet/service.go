@@ -386,7 +386,7 @@ func (s *service) SendPayment(ctx context.Context, userID string, passkeySeed []
 			Status: "blocked_daily_limit", IPAddress: ipAddress, UserAgent: userAgent, CreatedAt: time.Now().UTC(),
 		})
 		if auditErr != nil { _ = auditErr }
-		return "", fmt.Errorf("daily spending limit of $%.2f exceeded", dailyLimit)
+		return "", fmt.Errorf("daily spending limit exceeded")
 	}
 
 	// ── Security Check 4: Stellar address validation ──
