@@ -1,8 +1,6 @@
 package handler
 
 import (
-	"net/http"
-
 	"github.com/gin-gonic/gin"
 	"github.com/moistello/backend/pkg/jobqueue"
 	"github.com/moistello/backend/pkg/response"
@@ -49,7 +47,7 @@ func (h *AdminJobQueueHandler) RetryDeadLetterJob(c *gin.Context) {
 
 	err := h.queue.RetryDeadLetterJob(c.Request.Context(), jobID)
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error())
+		response.BadRequest(c, err.Error())
 		return
 	}
 

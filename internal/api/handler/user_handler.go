@@ -1,18 +1,18 @@
 package handler
 
 import (
-	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/moistello/backend/internal/api/middleware"
 	"github.com/moistello/backend/internal/domain/user"
 	"github.com/moistello/backend/pkg/response"
+	"github.com/redis/go-redis/v9"
 )
 
 type UserHandler struct {
 	userService user.Service
-	redisClient interface{}
+	redisClient *redis.Client
 }
 
 type publicUserProfile struct {
@@ -21,7 +21,7 @@ type publicUserProfile struct {
 	MoiScore    int     `json:"moiScore"`
 }
 
-func NewUserHandler(svc user.Service, redisClient interface{}) *UserHandler {
+func NewUserHandler(svc user.Service, redisClient *redis.Client) *UserHandler {
 	return &UserHandler{userService: svc, redisClient: redisClient}
 }
 

@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"crypto/sha256"
+	"crypto/subtle"
 	"fmt"
 	"net/http"
 	"strings"
@@ -89,14 +90,8 @@ func CSRFTokenValidator(redisClient *redis.Client) gin.HandlerFunc {
 }
 
 // compareTokens performs a constant-time comparison of two tokens to prevent
-// timing attacks.
+// timing attacks. Uses crypto/subtle to avoid leaking length or content
+// information via timing side-channels.
 func compareTokens(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	var diff byte
-	for i := 0; i < len(a); i++ {
-		diff |= a[i] ^ b[i]
-	}
-	return diff == 0
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }

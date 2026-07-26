@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
@@ -577,15 +578,7 @@ func VerifyPassword(password, encodedHash string) bool {
 
 	computed := argon2.IDKey([]byte(password), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
 
-	if len(computed) != len(expected) {
-		return false
-	}
-	for i := range computed {
-		if computed[i] != expected[i] {
-			return false
-		}
-	}
-	return true
+	return subtle.ConstantTimeCompare(computed, expected) == 1
 }
 
 // base64Encode encodes bytes to base64 without padding (matching argon2 standard format).

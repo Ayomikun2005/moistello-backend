@@ -34,7 +34,7 @@ func ExecuteWithBackoffConfig(ctx context.Context, opName string, cfg BackoffCon
 			// Calculate exponential backoff: BaseDelay * 2^(attempt-1)
 			backoff := cfg.BaseDelay * (1 << uint(attempt-1))
 			// Apply full jitter: random duration between 0 and backoff
-			jitter := time.Duration(rand.Int64n(int64(backoff) + 1))
+			jitter := time.Duration(rand.Int63n(int64(backoff) + 1))
 			
 			log.Warn().
 				Str("op", opName).
