@@ -108,6 +108,8 @@ func NewRouter(
 			authenticated.GET("/circles/:id", circleHandler.GetCircle)
 			authenticated.PATCH("/circles/:id", circleHandler.UpdateCircle)
 			authenticated.POST("/circles/:id/start", circleHandler.StartCircle)
+			authenticated.POST("/circles/:id/payout", circleHandler.TriggerPayout)
+			authenticated.POST("/circles/:id/close", circleHandler.CloseCircle)
 			authenticated.DELETE("/circles/:id", circleHandler.CancelCircle)
 			authenticated.POST("/circles/:id/join", circleHandler.JoinCircle)
 			authenticated.POST("/circles/:id/contribute", circleHandler.Contribute)

@@ -19,6 +19,7 @@ type Service interface {
 	Create(ctx context.Context, organizerID string, input CreateCircleInput) (*Circle, error)
 	Update(ctx context.Context, id, userID string, input UpdateCircleInput) (*Circle, error)
 	Start(ctx context.Context, id, userID string) error
+	Close(ctx context.Context, id, userID string) error
 	Cancel(ctx context.Context, id, userID string) error
 	Join(ctx context.Context, circleID, userID string, inviteCode string) error
 	Exit(ctx context.Context, circleID, userID string) error
@@ -89,8 +90,19 @@ type circleService struct {
 	tx               Transactor
 }
 
-func NewService(repo Repository, userRepo UserMOIFetcher, communityChecker CommunityMembershipChecker, broadcaster Broadcaster, tx Transactor) Service {
-	return &circleService{repo: repo, userRepo: userRepo, communityChecker: communityChecker, broadcaster: broadcaster, tx: tx}
+func NewService(repo Repository, userRepo UserMOIFetcher, dependencies ...any) Service {
+	service := &circleService{repo: repo, userRepo: userRepo}
+	for _, dependency := range dependencies {
+		switch value := dependency.(type) {
+		case CommunityMembershipChecker:
+			service.communityChecker = value
+		case Broadcaster:
+			service.broadcaster = value
+		case Transactor:
+			service.tx = value
+		}
+	}
+	return service
 }
 
 type circleTransactor struct {
@@ -117,6 +129,13 @@ func (t *circleTransactor) WithTransaction(ctx context.Context, fn func(repo Rep
 		return err
 	}
 	return tx.Commit()
+}
+
+func (s *circleService) withTransaction(ctx context.Context, fn func(repo Repository) error) error {
+	if s.tx == nil {
+		return fn(s.repo)
+	}
+	return s.tx.WithTransaction(ctx, fn)
 }
 
 func parseCommunityID(id string) *uuid.UUID {
@@ -291,7 +310,7 @@ func (s *circleService) Create(ctx context.Context, organizerID string, input Cr
 	}
 
 	var circle *Circle
-	err = s.tx.WithTransaction(ctx, func(repo Repository) error {
+	err = s.withTransaction(ctx, func(repo Repository) error {
 		c := buildCircle()
 		if err := repo.Create(ctx, c); err != nil {
 			if err == apperrors.ErrConflict {
@@ -371,7 +390,7 @@ func (s *circleService) Cancel(ctx context.Context, id, userID string) error {
 		return err
 	}
 
-	err = s.tx.WithTransaction(ctx, func(repo Repository) error {
+	err = s.withTransaction(ctx, func(repo Repository) error {
 		c, err := repo.FindByID(ctx, uid)
 		if err != nil {
 			return fmt.Errorf("finding circle for cancel: %w", err)
@@ -393,6 +412,39 @@ func (s *circleService) Cancel(ctx context.Context, id, userID string) error {
 		s.broadcaster.CircleStatusChanged(ctx, id, "cancelled")
 	}
 	return err
+}
+
+// Close completes an active circle after its final payout. Only the organizer
+// may close it; cancellation remains the separate pending-circle operation.
+func (s *circleService) Close(ctx context.Context, id, userID string) error {
+	cid, err := parseUUID(id)
+	if err != nil {
+		return err
+	}
+	organizerID, err := parseUUID(userID)
+	if err != nil {
+		return err
+	}
+
+	c, err := s.repo.FindByID(ctx, cid)
+	if err != nil {
+		return fmt.Errorf("finding circle for close: %w", err)
+	}
+	if c.OrganizerID != organizerID {
+		return ErrNotOrganizer
+	}
+	if c.Status != CircleStatusActive {
+		return ErrCircleNotActive
+	}
+	c.Status = CircleStatusCompleted
+	c.UpdatedAt = time.Now().UTC()
+	if err := s.repo.Update(ctx, c); err != nil {
+		return fmt.Errorf("closing circle: %w", err)
+	}
+	if s.broadcaster != nil {
+		s.broadcaster.CircleStatusChanged(ctx, id, string(CircleStatusCompleted))
+	}
+	return nil
 }
 
 func (s *circleService) Join(ctx context.Context, circleID, userID string, inviteCode string) error {
@@ -438,7 +490,7 @@ func (s *circleService) Join(ctx context.Context, circleID, userID string, invit
 		return ErrInvalidInvite
 	}
 
-	err = s.tx.WithTransaction(ctx, func(repo Repository) error {
+	err = s.withTransaction(ctx, func(repo Repository) error {
 		count, err := repo.GetMemberCount(ctx, cid)
 		if err != nil {
 			return fmt.Errorf("checking member count: %w", err)
