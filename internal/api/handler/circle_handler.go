@@ -156,6 +156,60 @@ func (h *CircleHandler) CancelCircle(c *gin.Context) {
 	response.OK(c, gin.H{"success": true})
 }
 
+// TriggerPayout records the payout for an active circle. Payout submission to
+// Stellar remains upstream of this endpoint; txnHash is the on-chain receipt.
+func (h *CircleHandler) TriggerPayout(c *gin.Context) {
+	circleID := c.Param("id")
+	userID := middleware.GetUserID(c)
+	cir, err := h.circleService.Get(c.Request.Context(), circleID)
+	if err != nil {
+		response.NotFound(c, "circle not found")
+		return
+	}
+	if cir.OrganizerID.String() != userID {
+		response.Forbidden(c, "only the organizer can trigger a payout")
+		return
+	}
+	if cir.Status != circle.CircleStatusActive {
+		response.BadRequest(c, "circle is not active")
+		return
+	}
+
+	var req payout.RecordInput
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	req.CircleID = circleID
+	record, err := h.payoutService.Record(c.Request.Context(), req)
+	if err != nil {
+		response.InternalError(c, "failed to record payout: "+err.Error())
+		return
+	}
+	response.Created(c, gin.H{"payout": record, "status": cir.Status})
+}
+
+func (h *CircleHandler) CloseCircle(c *gin.Context) {
+	circleID := c.Param("id")
+	userID := middleware.GetUserID(c)
+	_, payoutCount, err := h.payoutService.GetCircleHistory(
+		c.Request.Context(), circleID, 1, 1,
+	)
+	if err != nil {
+		response.InternalError(c, "failed to verify circle payouts")
+		return
+	}
+	if payoutCount == 0 {
+		response.BadRequest(c, "circle cannot close before its payout")
+		return
+	}
+	if err := h.circleService.Close(c.Request.Context(), circleID, userID); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	response.OK(c, gin.H{"status": circle.CircleStatusCompleted})
+}
+
 // @Summary Join a circle
 // @Description Joins an existing savings circle. Requires an invite code if the circle is private.
 // @Tags Circles
