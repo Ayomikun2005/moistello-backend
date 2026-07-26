@@ -12,8 +12,12 @@ func Parse(c *gin.Context) (page int, limit int, offset int) {
 	if p, err := strconv.Atoi(c.DefaultQuery("page", "1")); err == nil && p > 0 {
 		page = p
 	}
-	if l, err := strconv.Atoi(c.DefaultQuery("limit", "20")); err == nil && l > 0 && l <= 100 {
-		limit = l
+	rawSize := c.Query("page_size")
+	if rawSize == "" {
+		rawSize = c.DefaultQuery("limit", "20")
+	}
+	if size, err := strconv.Atoi(rawSize); err == nil && size > 0 {
+		limit = min(size, 100)
 	}
 	offset = (page - 1) * limit
 	return
@@ -23,8 +27,9 @@ func Defaults(page, limit int) (int, int) {
 	if page < 1 {
 		page = 1
 	}
-	if limit < 1 || limit > 100 {
+	if limit < 1 {
 		limit = 20
 	}
+	limit = min(limit, 100)
 	return page, limit
 }
