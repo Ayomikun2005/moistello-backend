@@ -2,7 +2,6 @@ package main
 
 import (
 	"database/sql"
-	"embed"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -12,12 +11,10 @@ import (
 
 	_ "github.com/lib/pq"
 	"github.com/moistello/backend/config"
+	"github.com/moistello/backend/internal/database"
 	"github.com/moistello/backend/pkg/logger"
 	"github.com/rs/zerolog/log"
 )
-
-//go:embed ../../internal/database/migrations/*.sql
-var migrationsFS embed.FS
 
 func main() {
 	direction := flag.String("direction", "up", "Migration direction: up or down")
@@ -106,7 +103,7 @@ func runMigrationsUp(db *sql.DB) error {
 			continue
 		}
 
-		content, err := fs.ReadFile(migrationsFS, f)
+		content, err := fs.ReadFile(database.MigrationsFS, f)
 		if err != nil {
 			return fmt.Errorf("reading migration %s: %w", f, err)
 		}
@@ -170,7 +167,7 @@ func runMigrationsDown(db *sql.DB) error {
 			continue
 		}
 
-		content, err := fs.ReadFile(migrationsFS, f)
+		content, err := fs.ReadFile(database.MigrationsFS, f)
 		if err != nil {
 			return fmt.Errorf("reading migration %s: %w", f, err)
 		}
@@ -212,7 +209,7 @@ func listMigrationFiles(direction string) ([]string, error) {
 	suffix := fmt.Sprintf(".%s.sql", direction)
 	var files []string
 
-	err := fs.WalkDir(migrationsFS, ".", func(path string, d fs.DirEntry, err error) error {
+	err := fs.WalkDir(database.MigrationsFS, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

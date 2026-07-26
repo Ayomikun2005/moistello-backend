@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
-	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"

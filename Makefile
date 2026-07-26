@@ -22,12 +22,6 @@ run:
 run-indexer:
 	go run ./cmd/indexer
 
-run-notification-worker:
-	go run ./cmd/notification-worker
-
-run-webhook-dispatcher:
-	go run ./cmd/webhook-dispatcher
-
 test:
 	go test ./... -count=1
 
@@ -49,8 +43,6 @@ seed:
 docker-build:
 	docker build -t moistello-api:latest .
 	docker build -f Dockerfile.indexer -t moistello-indexer:latest .
-	docker build -f Dockerfile.worker --build-arg TARGET=notification-worker -t moistello-notification-worker:latest .
-	docker build -f Dockerfile.worker --build-arg TARGET=webhook-dispatcher -t moistello-webhook-dispatcher:latest .
 
 docker-up:
 	docker compose up -d
