@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/crypto/argon2"
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -712,14 +714,17 @@ func emailToWalletAddr(email string) string {
 }
 
 // deriveWalletSeed derives a deterministic Stellar wallet seed from an email.
-// Uses SHA-256(email + ":" + pepper) for deterministic, recoverable wallets.
+// Uses Argon2id(email, salt=pepper) with fixed cost parameters so the output
+// is deterministic but resistant to offline brute-force if the pepper leaks.
 func deriveWalletSeed(email string) string {
 	pepper := os.Getenv("MOISTELLO_WALLET_PEPPER")
 	if pepper == "" {
 		log.Fatal("MOISTELLO_WALLET_PEPPER environment variable is not set")
 	}
-	seed := sha256.Sum256([]byte(email + ":" + pepper))
-	return hex.EncodeToString(seed[:])
+	// Fixed cost parameters: time=1, memory=64 MiB, parallelism=4, output=32 bytes.
+	// These are conservative defaults; production deployments can tune via env if needed.
+	key := argon2.IDKey([]byte(email), []byte(pepper), 1, 64*1024, 4, 32)
+	return hex.EncodeToString(key)
 }
 
 // getPasskeyPepper returns the passkey pepper for wallet seed derivation.
