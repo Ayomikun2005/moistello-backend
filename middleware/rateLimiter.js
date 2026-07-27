@@ -7,11 +7,10 @@ const MAX_REQUESTS_PER_WINDOW = 100;
  * Enforces rate limiting with a Fail-Closed policy during Redis outages.
  */
 export async function rateLimitMiddleware(req, res, next) {
-  const clientIp = req.ip || req.headers['x-forwarded-for'] || 'unknown_ip';
+  const clientIp = req.ip || req.headers?.['x-forwarded-for'] || 'unknown_ip';
   const redisKey = `ratelimit:${clientIp}`;
 
   try {
-    // Verify Redis connection status
     if (!redisService.client || !redisService.isAlive()) {
       console.error(
         `[RateLimiter] [FAIL-CLOSED] Redis client unreachable. Rejecting request from IP: ${clientIp}`

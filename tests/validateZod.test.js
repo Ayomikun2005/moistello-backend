@@ -51,6 +51,48 @@ test('validateRequest should return HTTP 400 with field-level details on failure
   assert.strictEqual(statusCode, 400);
   assert.strictEqual(sentPayload.error, 'Validation Error');
   assert.strictEqual(sentPayload.details[0].field, 'body.email');
+  assert.strictEqual(sentPayload.details[0].message, 'Invalid email');
+});
+
+test('validateRequest should validate query and params schemas and preserve malformed input errors', async () => {
+  let statusCode = 0;
+  let sentPayload = null;
+  const req = {
+    body: {},
+    query: { page: 'not-a-number' },
+    params: { id: 'abc' },
+  };
+  const res = {
+    status: (code) => {
+      statusCode = code;
+      return res;
+    },
+    json: (payload) => {
+      sentPayload = payload;
+      return res;
+    },
+  };
+
+  const middleware = validateRequest({
+    query: {
+      safeParse: () => ({
+        success: false,
+        error: { errors: [{ path: ['page'], message: 'Expected number, received string' }] },
+      }),
+    },
+    params: {
+      safeParse: () => ({
+        success: false,
+        error: { errors: [{ path: ['id'], message: 'Invalid id' }] },
+      }),
+    },
+  });
+
+  await middleware(req, res, () => { throw new Error('next should not be called'); });
+
+  assert.strictEqual(statusCode, 400);
+  assert.strictEqual(sentPayload.details.some((detail) => detail.field === 'query.page'), true);
+  assert.strictEqual(sentPayload.details.some((detail) => detail.field === 'params.id'), true);
 });
 
 test('zodValidationPlugin should decorate fastify instance', () => {

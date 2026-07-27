@@ -59,10 +59,37 @@ export function renderSwaggerUIHTML(spec = openapiSpec) {
 </html>`;
 }
 
+function applyCorsHeaders(res) {
+  if (res && typeof res.setHeader === 'function') {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  }
+}
+
 export function openapiHandler(req, res) {
-  if (req.url && req.url.endsWith('/openapi.json')) {
+  const url = req?.url ?? '';
+  const isJson = url.includes('/openapi.json') || url.endsWith('/openapi.json');
+  const isYaml = url.includes('/openapi.yaml') || url.endsWith('/openapi.yaml');
+
+  if (req?.method === 'OPTIONS') {
+    applyCorsHeaders(res);
+    if (res && typeof res.statusCode !== 'undefined') {
+      res.statusCode = 204;
+    }
+    if (res && typeof res.end === 'function') {
+      return res.end();
+    }
+  }
+
+  applyCorsHeaders(res);
+
+  if (isJson) {
     if (res && typeof res.type === 'function') {
-      return res.type('application/json').send(openapiSpec);
+      res.type('application/json');
+      if (res && typeof res.send === 'function') {
+        return res.send(openapiSpec);
+      }
     }
     if (res && typeof res.setHeader === 'function') {
       res.setHeader('Content-Type', 'application/json');
@@ -70,9 +97,19 @@ export function openapiHandler(req, res) {
     }
   }
 
+  if (isYaml) {
+    if (res && typeof res.setHeader === 'function') {
+      res.setHeader('Content-Type', 'application/x-yaml');
+      return res.end('openapi: 3.1.0\n');
+    }
+  }
+
   const html = renderSwaggerUIHTML();
   if (res && typeof res.type === 'function') {
-    return res.type('text/html').send(html);
+    res.type('text/html');
+    if (res && typeof res.send === 'function') {
+      return res.send(html);
+    }
   }
   if (res && typeof res.setHeader === 'function') {
     res.setHeader('Content-Type', 'text/html');
