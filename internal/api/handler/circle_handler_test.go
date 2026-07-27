@@ -335,3 +335,248 @@ func TestCircleHandler_CancelCircle_NotOrganizer(t *testing.T) {
 	assert.Equal(t, 400, w.Code)
 	repo.AssertExpectations(t)
 }
+
+func TestCircleHandler_ListCircles_WithSearch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	repo := new(circleMocks.Repository)
+	svc := circle.NewService(repo, nil)
+
+	circles := []circle.Circle{
+		{ID: uuid.New(), Name: "Savings Circle", Status: circle.CircleStatusActive},
+		{ID: uuid.New(), Name: "Savings Group", Status: circle.CircleStatusActive},
+	}
+	filter := circle.CircleFilter{Search: "savings", Page: 1, Limit: 20}
+	repo.On("List", mock.Anything, filter).Return(circles, nil)
+	repo.On("Count", mock.Anything, filter).Return(2, nil)
+
+	h := handler.NewCircleHandler(svc, nil, nil, nil)
+	r := gin.New()
+	r.GET("/circles", h.ListCircles)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/circles?search=savings", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.Contains(t, w.Body.String(), "Savings Circle")
+	assert.Contains(t, w.Body.String(), "Savings Group")
+	assert.Contains(t, w.Body.String(), `"total":2`)
+	repo.AssertExpectations(t)
+}
+
+func TestCircleHandler_ListCircles_WithStatusFilter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	repo := new(circleMocks.Repository)
+	svc := circle.NewService(repo, nil)
+
+	circles := []circle.Circle{
+		{ID: uuid.New(), Name: "Active Circle", Status: circle.CircleStatusActive},
+	}
+	filter := circle.CircleFilter{Status: circle.CircleStatusActive, Page: 1, Limit: 20}
+	repo.On("List", mock.Anything, filter).Return(circles, nil)
+	repo.On("Count", mock.Anything, filter).Return(1, nil)
+
+	h := handler.NewCircleHandler(svc, nil, nil, nil)
+	r := gin.New()
+	r.GET("/circles", h.ListCircles)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/circles?status=active", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.Contains(t, w.Body.String(), "Active Circle")
+	assert.Contains(t, w.Body.String(), `"total":1`)
+	repo.AssertExpectations(t)
+}
+
+func TestCircleHandler_ListCircles_WithTypeFilter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	repo := new(circleMocks.Repository)
+	svc := circle.NewService(repo, nil)
+
+	circles := []circle.Circle{
+		{ID: uuid.New(), Name: "Public Circle", Status: circle.CircleStatusPending, CircleType: circle.CircleTypePublic},
+	}
+	filter := circle.CircleFilter{Type: circle.CircleTypePublic, Page: 1, Limit: 20}
+	repo.On("List", mock.Anything, filter).Return(circles, nil)
+	repo.On("Count", mock.Anything, filter).Return(1, nil)
+
+	h := handler.NewCircleHandler(svc, nil, nil, nil)
+	r := gin.New()
+	r.GET("/circles", h.ListCircles)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/circles?type=public", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.Contains(t, w.Body.String(), "Public Circle")
+	repo.AssertExpectations(t)
+}
+
+func TestCircleHandler_ListCircles_WithPagination(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	repo := new(circleMocks.Repository)
+	svc := circle.NewService(repo, nil)
+
+	circles := []circle.Circle{
+		{ID: uuid.New(), Name: "Circle 3"},
+		{ID: uuid.New(), Name: "Circle 4"},
+	}
+	filter := circle.CircleFilter{Page: 2, Limit: 2}
+	repo.On("List", mock.Anything, filter).Return(circles, nil)
+	repo.On("Count", mock.Anything, filter).Return(10, nil)
+
+	h := handler.NewCircleHandler(svc, nil, nil, nil)
+	r := gin.New()
+	r.GET("/circles", h.ListCircles)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/circles?page=2&page_size=2", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.Contains(t, w.Body.String(), "Circle 3")
+	assert.Contains(t, w.Body.String(), "Circle 4")
+	assert.Contains(t, w.Body.String(), `"total":10`)
+	assert.Contains(t, w.Body.String(), `"page":2`)
+	assert.Contains(t, w.Body.String(), `"totalPages":5`)
+	repo.AssertExpectations(t)
+}
+
+func TestCircleHandler_ListCircles_DefaultPagination(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	repo := new(circleMocks.Repository)
+	svc := circle.NewService(repo, nil)
+
+	filter := circle.CircleFilter{Page: 1, Limit: 20}
+	repo.On("List", mock.Anything, filter).Return([]circle.Circle{}, nil)
+	repo.On("Count", mock.Anything, filter).Return(0, nil)
+
+	h := handler.NewCircleHandler(svc, nil, nil, nil)
+	r := gin.New()
+	r.GET("/circles", h.ListCircles)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/circles", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.Contains(t, w.Body.String(), `"page":1`)
+	assert.Contains(t, w.Body.String(), `"total":0`)
+	repo.AssertExpectations(t)
+}
+
+func TestCircleHandler_ListCircles_CombinedFilters(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	repo := new(circleMocks.Repository)
+	svc := circle.NewService(repo, nil)
+
+	circles := []circle.Circle{
+		{ID: uuid.New(), Name: "My Savings Circle", Status: circle.CircleStatusActive, CircleType: circle.CircleTypePublic},
+	}
+	orgID := uuid.New()
+	filter := circle.CircleFilter{
+		Search:      "savings",
+		Status:      circle.CircleStatusActive,
+		Type:        circle.CircleTypePublic,
+		OrganizerID: &orgID,
+		Page:        1,
+		Limit:       10,
+	}
+	repo.On("List", mock.Anything, filter).Return(circles, nil)
+	repo.On("Count", mock.Anything, filter).Return(1, nil)
+
+	h := handler.NewCircleHandler(svc, nil, nil, nil)
+	r := gin.New()
+	r.GET("/circles", h.ListCircles)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/circles?search=savings&status=active&type=public&organizerId="+orgID.String()+"&limit=10", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.Contains(t, w.Body.String(), "My Savings Circle")
+	assert.Contains(t, w.Body.String(), `"total":1`)
+	repo.AssertExpectations(t)
+}
+
+func TestCircleHandler_ListCircles_WithCommunityFilter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	repo := new(circleMocks.Repository)
+	svc := circle.NewService(repo, nil)
+
+	communityID := uuid.New()
+	circles := []circle.Circle{
+		{ID: uuid.New(), Name: "Community Circle", CommunityID: &communityID},
+	}
+	filter := circle.CircleFilter{CommunityID: &communityID, Page: 1, Limit: 20}
+	repo.On("List", mock.Anything, filter).Return(circles, nil)
+	repo.On("Count", mock.Anything, filter).Return(1, nil)
+
+	h := handler.NewCircleHandler(svc, nil, nil, nil)
+	r := gin.New()
+	r.GET("/circles", h.ListCircles)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/circles?communityId="+communityID.String(), nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.Contains(t, w.Body.String(), "Community Circle")
+	repo.AssertExpectations(t)
+}
+
+func TestCircleHandler_ListCircles_PageSizeExceedsMax(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	repo := new(circleMocks.Repository)
+	svc := circle.NewService(repo, nil)
+
+	filter := circle.CircleFilter{Page: 1, Limit: 100}
+	repo.On("List", mock.Anything, filter).Return([]circle.Circle{}, nil)
+	repo.On("Count", mock.Anything, filter).Return(0, nil)
+
+	h := handler.NewCircleHandler(svc, nil, nil, nil)
+	r := gin.New()
+	r.GET("/circles", h.ListCircles)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/circles?page_size=500", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.Contains(t, w.Body.String(), `"limit":100`)
+	repo.AssertExpectations(t)
+}
+
+func TestCircleHandler_ListCircles_NilSliceReturned(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	repo := new(circleMocks.Repository)
+	svc := circle.NewService(repo, nil)
+
+	filter := circle.CircleFilter{Page: 1, Limit: 20}
+	repo.On("List", mock.Anything, filter).Return([]circle.Circle{}, nil)
+	repo.On("Count", mock.Anything, filter).Return(0, nil)
+
+	h := handler.NewCircleHandler(svc, nil, nil, nil)
+	r := gin.New()
+	r.GET("/circles", h.ListCircles)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/circles", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.Contains(t, w.Body.String(), "[]")
+	repo.AssertExpectations(t)
+}
