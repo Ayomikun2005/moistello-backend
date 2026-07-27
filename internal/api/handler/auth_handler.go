@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -758,12 +759,12 @@ func deriveWalletSeed(email string) (string, error) {
 }
 
 // getPasskeyPepper returns the passkey pepper for wallet seed derivation.
-func getPasskeyPepper() string {
+func getPasskeyPepper() (string, error) {
 	p := os.Getenv("MOISTELLO_PASSKEY_PEPPER")
 	if p == "" {
-		log.Fatal("MOISTELLO_PASSKEY_PEPPER environment variable is not set")
+		return "", errors.New("MOISTELLO_PASSKEY_PEPPER environment variable is not set")
 	}
-	return p
+	return p, nil
 }
 
 // sha256HashForLogout computes SHA-256 for refresh token session lookup.
