@@ -166,3 +166,25 @@ func parseRSAPublicKey(pemBytes []byte) (*rsa.PublicKey, error) {
 	}
 	return rsaKey, nil
 }
+
+// AdminAPIKeyMiddleware validates the X-Admin-API-Key header against the
+// configured admin API key. Used to protect internal endpoints like /metrics.
+func AdminAPIKeyMiddleware(apiKey string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if apiKey == "" {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"success": false,
+				"error":   "admin API key not configured",
+			})
+			return
+		}
+		if c.GetHeader("X-Admin-API-Key") != apiKey {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"error":   "invalid admin API key",
+			})
+			return
+		}
+		c.Next()
+	}
+}

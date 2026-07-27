@@ -360,3 +360,66 @@ func TestGetRole(t *testing.T) {
 	assert.Equal(t, 200, w.Code)
 	assert.Contains(t, w.Body.String(), "admin")
 }
+
+func TestAdminAPIKeyMiddleware_ValidKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	r := gin.New()
+	r.Use(middleware.AdminAPIKeyMiddleware("test-admin-key-123"))
+	r.GET("/test", func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/test", nil)
+	req.Header.Set("X-Admin-API-Key", "test-admin-key-123")
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.Contains(t, w.Body.String(), "ok")
+}
+
+func TestAdminAPIKeyMiddleware_InvalidKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	r := gin.New()
+	r.Use(middleware.AdminAPIKeyMiddleware("test-admin-key-123"))
+	r.GET("/test", func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/test", nil)
+	req.Header.Set("X-Admin-API-Key", "wrong-key")
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, 401, w.Code)
+	assert.Contains(t, w.Body.String(), "invalid admin API key")
+}
+
+func TestAdminAPIKeyMiddleware_MissingKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	r := gin.New()
+	r.Use(middleware.AdminAPIKeyMiddleware("test-admin-key-123"))
+	r.GET("/test", func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/test", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, 401, w.Code)
+	assert.Contains(t, w.Body.String(), "invalid admin API key")
+}
+
+func TestAdminAPIKeyMiddleware_KeyNotConfigured(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	r := gin.New()
+	r.Use(middleware.AdminAPIKeyMiddleware(""))
+	r.GET("/test", func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/test", nil)
+	req.Header.Set("X-Admin-API-Key", "any-key")
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, 403, w.Code)
+	assert.Contains(t, w.Body.String(), "admin API key not configured")
+}

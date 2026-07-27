@@ -272,3 +272,277 @@ func TestCircleLifecycleEndpoints(t *testing.T) {
 	assert.Equal(t, "completed", response["data"].(map[string]any)["status"])
 	assert.Equal(t, circle.CircleStatusCompleted, store.circle.Status)
 }
+
+func TestCircleLifecycle_DisputeEndpoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := newLifecycleStore()
+	organizer := uuid.New()
+
+	circleService := &lifecycleCircleService{store: store}
+	h := handler.NewCircleHandler(circleService, nil, nil, nil)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("userID", c.GetHeader("X-Test-User"))
+		c.Next()
+	})
+	router.POST("/circles", h.CreateCircle)
+	router.POST("/circles/:id/dispute", h.Dispute)
+
+	code, response := lifecycleRequest(t, router, http.MethodPost, "/circles", organizer.String(), map[string]any{
+		"name": "Dispute Circle", "circleType": "public", "payoutType": "random",
+		"contributionAmount": 100, "currency": "USDC", "frequency": "weekly",
+		"maxMembers": 5, "maxStrikes": 3,
+	})
+	require.Equal(t, http.StatusCreated, code)
+	circleID := response["data"].(map[string]any)["circle"].(map[string]any)["id"].(string)
+
+	code, _ = lifecycleRequest(t, router, http.MethodPost, "/circles/"+circleID+"/dispute", organizer.String(), map[string]any{
+		"reason":  "Suspicious activity",
+		"details": "Member X did not contribute",
+	})
+	assert.Equal(t, http.StatusNotImplemented, code)
+}
+
+func TestCircleLifecycle_DisputeEndpoint_MissingReason(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := newLifecycleStore()
+	organizer := uuid.New()
+
+	circleService := &lifecycleCircleService{store: store}
+	h := handler.NewCircleHandler(circleService, nil, nil, nil)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("userID", c.GetHeader("X-Test-User"))
+		c.Next()
+	})
+	router.POST("/circles", h.CreateCircle)
+	router.POST("/circles/:id/dispute", h.Dispute)
+
+	code, _ := lifecycleRequest(t, router, http.MethodPost, "/circles", organizer.String(), map[string]any{
+		"name": "Dispute Circle", "circleType": "public", "payoutType": "random",
+		"contributionAmount": 100, "currency": "USDC", "frequency": "weekly",
+		"maxMembers": 5, "maxStrikes": 3,
+	})
+	require.Equal(t, http.StatusCreated, code)
+
+	code, _ = lifecycleRequest(t, router, http.MethodPost, "/circles/"+store.circle.ID.String()+"/dispute", organizer.String(), map[string]any{
+		"details": "Missing reason",
+	})
+	assert.Equal(t, http.StatusBadRequest, code)
+}
+
+func TestCircleLifecycle_VoteEndpoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := newLifecycleStore()
+	organizer, member := uuid.New(), uuid.New()
+
+	circleService := &lifecycleCircleService{store: store}
+	h := handler.NewCircleHandler(circleService, nil, nil, nil)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("userID", c.GetHeader("X-Test-User"))
+		c.Next()
+	})
+	router.POST("/circles", h.CreateCircle)
+	router.POST("/circles/:id/vote", h.Vote)
+
+	code, _ := lifecycleRequest(t, router, http.MethodPost, "/circles", organizer.String(), map[string]any{
+		"name": "Vote Circle", "circleType": "public", "payoutType": "vote",
+		"contributionAmount": 100, "currency": "USDC", "frequency": "weekly",
+		"maxMembers": 5, "maxStrikes": 3,
+	})
+	require.Equal(t, http.StatusCreated, code)
+
+	code, _ = lifecycleRequest(t, router, http.MethodPost, "/circles/"+store.circle.ID.String()+"/vote", member.String(), map[string]any{
+		"recipientId": organizer.String(),
+	})
+	assert.Equal(t, http.StatusNotImplemented, code)
+}
+
+func TestCircleLifecycle_VoteEndpoint_MissingRecipient(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := newLifecycleStore()
+	organizer := uuid.New()
+
+	circleService := &lifecycleCircleService{store: store}
+	h := handler.NewCircleHandler(circleService, nil, nil, nil)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("userID", c.GetHeader("X-Test-User"))
+		c.Next()
+	})
+	router.POST("/circles", h.CreateCircle)
+	router.POST("/circles/:id/vote", h.Vote)
+
+	code, _ := lifecycleRequest(t, router, http.MethodPost, "/circles", organizer.String(), map[string]any{
+		"name": "Vote Circle", "circleType": "public", "payoutType": "vote",
+		"contributionAmount": 100, "currency": "USDC", "frequency": "weekly",
+		"maxMembers": 5, "maxStrikes": 3,
+	})
+	require.Equal(t, http.StatusCreated, code)
+
+	code, _ = lifecycleRequest(t, router, http.MethodPost, "/circles/"+store.circle.ID.String()+"/vote", organizer.String(), map[string]any{})
+	assert.Equal(t, http.StatusBadRequest, code)
+}
+
+func TestCircleLifecycle_AuctionBidEndpoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := newLifecycleStore()
+	organizer, bidder := uuid.New(), uuid.New()
+
+	circleService := &lifecycleCircleService{store: store}
+	h := handler.NewCircleHandler(circleService, nil, nil, nil)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("userID", c.GetHeader("X-Test-User"))
+		c.Next()
+	})
+	router.POST("/circles", h.CreateCircle)
+	router.POST("/circles/:id/auction-bid", h.AuctionBid)
+
+	code, _ := lifecycleRequest(t, router, http.MethodPost, "/circles", organizer.String(), map[string]any{
+		"name": "Auction Circle", "circleType": "public", "payoutType": "auction",
+		"contributionAmount": 100, "currency": "USDC", "frequency": "weekly",
+		"maxMembers": 5, "maxStrikes": 3,
+	})
+	require.Equal(t, http.StatusCreated, code)
+
+	code, _ = lifecycleRequest(t, router, http.MethodPost, "/circles/"+store.circle.ID.String()+"/auction-bid", bidder.String(), map[string]any{
+		"bidAmount": 150,
+	})
+	assert.Equal(t, http.StatusNotImplemented, code)
+}
+
+func TestCircleLifecycle_AuctionBidEndpoint_MissingAmount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := newLifecycleStore()
+	organizer := uuid.New()
+
+	circleService := &lifecycleCircleService{store: store}
+	h := handler.NewCircleHandler(circleService, nil, nil, nil)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("userID", c.GetHeader("X-Test-User"))
+		c.Next()
+	})
+	router.POST("/circles", h.CreateCircle)
+	router.POST("/circles/:id/auction-bid", h.AuctionBid)
+
+	code, _ := lifecycleRequest(t, router, http.MethodPost, "/circles", organizer.String(), map[string]any{
+		"name": "Auction Circle", "circleType": "public", "payoutType": "auction",
+		"contributionAmount": 100, "currency": "USDC", "frequency": "weekly",
+		"maxMembers": 5, "maxStrikes": 3,
+	})
+	require.Equal(t, http.StatusCreated, code)
+
+	code, _ = lifecycleRequest(t, router, http.MethodPost, "/circles/"+store.circle.ID.String()+"/auction-bid", organizer.String(), map[string]any{})
+	assert.Equal(t, http.StatusBadRequest, code)
+}
+
+func TestCircleLifecycle_Contribute_MissingFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := newLifecycleStore()
+	organizer := uuid.New()
+
+	circleService := &lifecycleCircleService{store: store}
+	contributionService := &lifecycleContributionService{store: store}
+	h := handler.NewCircleHandler(circleService, nil, contributionService, nil)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("userID", c.GetHeader("X-Test-User"))
+		c.Next()
+	})
+	router.POST("/circles", h.CreateCircle)
+	router.POST("/circles/:id/contribute", h.Contribute)
+
+	code, _ := lifecycleRequest(t, router, http.MethodPost, "/circles", organizer.String(), map[string]any{
+		"name": "Contrib Circle", "circleType": "public", "payoutType": "random",
+		"contributionAmount": 100, "currency": "USDC", "frequency": "weekly",
+		"maxMembers": 5, "maxStrikes": 3,
+	})
+	require.Equal(t, http.StatusCreated, code)
+
+	code, _ = lifecycleRequest(t, router, http.MethodPost, "/circles/"+store.circle.ID.String()+"/contribute", organizer.String(), map[string]any{})
+	assert.Equal(t, http.StatusBadRequest, code)
+}
+
+func TestCircleLifecycle_TriggerPayout_NonOrganizer(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := newLifecycleStore()
+	organizer, member := uuid.New(), uuid.New()
+
+	circleService := &lifecycleCircleService{store: store}
+	payoutService := &lifecyclePayoutService{store: store}
+	h := handler.NewCircleHandler(circleService, nil, nil, payoutService)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("userID", c.GetHeader("X-Test-User"))
+		c.Next()
+	})
+	router.POST("/circles", h.CreateCircle)
+	router.POST("/circles/:id/join", h.JoinCircle)
+	router.POST("/circles/:id/start", h.StartCircle)
+	router.POST("/circles/:id/payout", h.TriggerPayout)
+
+	code, _ := lifecycleRequest(t, router, http.MethodPost, "/circles", organizer.String(), map[string]any{
+		"name": "Payout Circle", "circleType": "public", "payoutType": "fixed",
+		"contributionAmount": 100, "currency": "USDC", "frequency": "weekly",
+		"maxMembers": 2, "maxStrikes": 3,
+	})
+	require.Equal(t, http.StatusCreated, code)
+	circleID := store.circle.ID.String()
+
+	code, _ = lifecycleRequest(t, router, http.MethodPost, "/circles/"+circleID+"/join", member.String(), map[string]any{})
+	require.Equal(t, http.StatusOK, code)
+
+	code, _ = lifecycleRequest(t, router, http.MethodPost, "/circles/"+circleID+"/start", organizer.String(), nil)
+	require.Equal(t, http.StatusOK, code)
+
+	code, _ = lifecycleRequest(t, router, http.MethodPost, "/circles/"+circleID+"/payout", member.String(), map[string]any{
+		"recipientId": member.String(), "roundNumber": 1, "amount": 100,
+		"feeAmount": 0, "txnHash": "payout-hash", "payoutType": "fixed",
+	})
+	assert.Equal(t, http.StatusForbidden, code)
+}
+
+func TestCircleLifecycle_GetCircle_NotFound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := newLifecycleStore()
+
+	circleService := &lifecycleCircleService{store: store}
+	h := handler.NewCircleHandler(circleService, nil, nil, nil)
+
+	router := gin.New()
+	router.GET("/circles/:id", h.GetCircle)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/circles/"+uuid.New().String(), nil)
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestCircleLifecycle_GetMembers_Empty(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := newLifecycleStore()
+
+	circleService := &lifecycleCircleService{store: store}
+	h := handler.NewCircleHandler(circleService, nil, nil, nil)
+
+	router := gin.New()
+	router.GET("/circles/:id/members", h.GetMembers)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/circles/"+uuid.New().String(), nil)
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}

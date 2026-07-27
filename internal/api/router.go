@@ -37,8 +37,9 @@ func NewRouter(
 	r.Use(middleware.CORSMiddleware(cfg.CORS))
 	r.Use(middleware.PrometheusMiddleware())
 
-	// Prometheus metrics endpoint — un-rate-limited
-	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
+	// Prometheus metrics endpoint — protected by admin API key, un-rate-limited
+	metricsKey := cfg.Auth.AdminAPIKey
+	r.GET("/metrics", middleware.AdminAPIKeyMiddleware(metricsKey), gin.WrapH(promhttp.Handler()))
 
 	r.Use(middleware.RateLimitMiddleware(redisClient, cfg.RateLimit))
 	r.Use(middleware.IdempotencyMiddleware(redisClient))

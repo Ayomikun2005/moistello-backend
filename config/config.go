@@ -84,6 +84,7 @@ type AuthConfig struct {
 	AccessTokenTTL    time.Duration `mapstructure:"access_token_ttl"`
 	RefreshTokenTTL   time.Duration `mapstructure:"refresh_token_ttl"`
 	NonceTTL          time.Duration `mapstructure:"nonce_ttl"`
+	AdminAPIKey       string        `mapstructure:"admin_api_key"`
 }
 
 type BrevoConfig struct {
