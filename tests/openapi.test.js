@@ -18,21 +18,53 @@ test('renderSwaggerUIHTML should return HTML string with Embedded Swagger UI', (
   assert.ok(html.includes('SwaggerUIBundle'));
 });
 
-test('openapiHandler should handle JSON and HTML requests', () => {
-  let jsonSent = null;
-  let htmlSent = null;
-
+test('openapiHandler should serve JSON for /api/docs/openapi.json and preserve CORS headers', () => {
+  let payload = null;
+  let contentType = null;
+  const headers = {};
   const jsonRes = {
-    type: (t) => jsonRes,
-    send: (payload) => { jsonSent = payload; return jsonRes; }
+    type: (t) => {
+      contentType = t;
+      return jsonRes;
+    },
+    setHeader: (name, value) => {
+      headers[name] = value;
+    },
+    send: (payloadValue) => {
+      payload = payloadValue;
+      return jsonRes;
+    },
   };
-  openapiHandler({ url: '/api-docs/openapi.json' }, jsonRes);
-  assert.strictEqual(jsonSent.openapi, '3.1.0');
 
+  openapiHandler({ url: '/api/docs/openapi.json', method: 'GET' }, jsonRes);
+
+  assert.strictEqual(payload.openapi, '3.1.0');
+  assert.strictEqual(contentType, 'application/json');
+  assert.strictEqual(headers['Access-Control-Allow-Origin'], '*');
+});
+
+test('openapiHandler should return HTML for /api/docs and support preflight OPTIONS', () => {
+  let htmlSent = null;
+  let ended = false;
+  const headers = {};
   const htmlRes = {
-    type: (t) => htmlRes,
-    send: (payload) => { htmlSent = payload; return htmlRes; }
+    type: (t) => {
+      return htmlRes;
+    },
+    setHeader: (name, value) => {
+      headers[name] = value;
+    },
+    end: (payload) => {
+      htmlSent = payload;
+      ended = true;
+      return htmlRes;
+    },
   };
-  openapiHandler({ url: '/api-docs' }, htmlRes);
+
+  openapiHandler({ url: '/api/docs', method: 'OPTIONS' }, htmlRes);
+  assert.strictEqual(ended, true);
+  assert.strictEqual(headers['Access-Control-Allow-Origin'], '*');
+
+  openapiHandler({ url: '/api/docs', method: 'GET' }, htmlRes);
   assert.ok(htmlSent.includes('<!DOCTYPE html>'));
 });
