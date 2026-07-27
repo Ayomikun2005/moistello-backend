@@ -4,11 +4,14 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
-	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/argon2"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -226,7 +229,11 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	walletSeed := deriveWalletSeed(req.Email)
+	walletSeed, err := deriveWalletSeed(req.Email)
+	if err != nil {
+		response.InternalError(c, "wallet seed derivation failed: "+err.Error())
+		return
+	}
 
 	// Store in Redis — NOT in PostgreSQL. User is only created after email verification.
 	pendingData := &verification.PendingRegistration{
@@ -591,7 +598,11 @@ func (h *AuthHandler) InitWallet(c *gin.Context) {
 		return
 	}
 
-	walletSeed := deriveWalletSeed(email)
+	walletSeed, err := deriveWalletSeed(email)
+	if err != nil {
+		response.InternalError(c, "wallet seed derivation failed: "+err.Error())
+		return
+	}
 	w, err := h.walletSvc.CreateWallet(c.Request.Context(), userID, []byte(walletSeed))
 	if err != nil {
 		response.InternalError(c, "wallet creation failed: "+err.Error())
@@ -712,14 +723,38 @@ func emailToWalletAddr(email string) string {
 }
 
 // deriveWalletSeed derives a deterministic Stellar wallet seed from an email.
-// Uses SHA-256(email + ":" + pepper) for deterministic, recoverable wallets.
-func deriveWalletSeed(email string) string {
+// Uses Argon2id(email, salt=pepper+email) so the output is both deterministic
+// (recoverable given the same email and pepper) and unique per user — if the
+// pepper is ever compromised, an attacker still cannot precompute seeds for
+// all users because the email acts as a per-user salt component.
+//
+// Cost parameters are configurable via env vars (MOISTELLO_ARGON2_TIME,
+// MOISTELLO_ARGON2_MEMORY, MOISTELLO_ARGON2_THREADS) with conservative
+// defaults (time=1, memory=64 MiB, threads=4). Tune for your deployment's
+// CPU/memory budget.
+func deriveWalletSeed(email string) (string, error) {
 	pepper := os.Getenv("MOISTELLO_WALLET_PEPPER")
 	if pepper == "" {
-		log.Fatal("MOISTELLO_WALLET_PEPPER environment variable is not set")
+		return "", errors.New("MOISTELLO_WALLET_PEPPER environment variable is not set")
 	}
-	seed := sha256.Sum256([]byte(email + ":" + pepper))
-	return hex.EncodeToString(seed[:])
+
+	argonTime, _ := strconv.Atoi(os.Getenv("MOISTELLO_ARGON2_TIME"))
+	if argonTime <= 0 {
+		argonTime = 1
+	}
+	argonMemory, _ := strconv.Atoi(os.Getenv("MOISTELLO_ARGON2_MEMORY"))
+	if argonMemory <= 0 {
+		argonMemory = 64 * 1024 // 64 MiB
+	}
+	argonThreads, _ := strconv.Atoi(os.Getenv("MOISTELLO_ARGON2_THREADS"))
+	if argonThreads <= 0 {
+		argonThreads = 4
+	}
+
+	// Use pepper+email as the salt so each user has a unique salt.
+	salt := []byte(pepper + email)
+	key := argon2.IDKey([]byte(email), salt, uint32(argonTime), uint32(argonMemory), uint8(argonThreads), 32)
+	return hex.EncodeToString(key), nil
 }
 
 // getPasskeyPepper returns the passkey pepper for wallet seed derivation.
