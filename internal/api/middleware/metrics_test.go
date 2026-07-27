@@ -58,3 +58,34 @@ func TestPrometheusMiddleware_RecordsMetrics(t *testing.T) {
 	assert.Contains(t, body, "moistello_db_pool_utilization")
 	assert.Contains(t, body, "moistello_rpc_latency_seconds")
 }
+
+func TestMetricsEndpoint_RequiresAdminAPIKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	adminKey := "test-admin-api-key"
+
+	r := gin.New()
+	r.Use(middleware.AdminAPIKeyMiddleware(adminKey))
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
+
+	// Request without API key should be rejected
+	w1 := httptest.NewRecorder()
+	req1, _ := http.NewRequest("GET", "/metrics", nil)
+	r.ServeHTTP(w1, req1)
+	assert.Equal(t, http.StatusUnauthorized, w1.Code)
+
+	// Request with wrong API key should be rejected
+	w2 := httptest.NewRecorder()
+	req2, _ := http.NewRequest("GET", "/metrics", nil)
+	req2.Header.Set("X-Admin-API-Key", "wrong-key")
+	r.ServeHTTP(w2, req2)
+	assert.Equal(t, http.StatusUnauthorized, w2.Code)
+
+	// Request with correct API key should succeed
+	w3 := httptest.NewRecorder()
+	req3, _ := http.NewRequest("GET", "/metrics", nil)
+	req3.Header.Set("X-Admin-API-Key", adminKey)
+	r.ServeHTTP(w3, req3)
+	assert.Equal(t, http.StatusOK, w3.Code)
+	assert.Contains(t, w3.Body.String(), "moistello_http_requests_total")
+}
