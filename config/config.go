@@ -24,6 +24,7 @@ type Config struct {
 	Logging      LoggingConfig
 	Environment  string
 	YellowCard   YellowCardConfig `mapstructure:"yellow_card"`
+	Tracing      TracingConfig
 }
 
 type ServerConfig struct {
@@ -136,6 +137,13 @@ type LoggingConfig struct {
 	Output string `mapstructure:"output"`
 }
 
+type TracingConfig struct {
+	Enabled          bool          `mapstructure:"enabled"`
+	CollectorEndpoint string       `mapstructure:"collector_endpoint"`
+	ServiceName      string       `mapstructure:"service_name"`
+	SampleRate       float64      `mapstructure:"sample_rate"`
+}
+
 func Load(path string) (*Config, error) {
 	v := viper.New()
 	v.SetConfigName("config")
@@ -189,6 +197,10 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("logging.level", "debug")
 	v.SetDefault("logging.format", "json")
 	v.SetDefault("logging.output", "stdout")
+	v.SetDefault("tracing.enabled", false)
+	v.SetDefault("tracing.collector_endpoint", "localhost:4317")
+	v.SetDefault("tracing.service_name", "moistello-api")
+	v.SetDefault("tracing.sample_rate", 1.0)
 	v.SetDefault("environment", "development")
 
 	if err := v.ReadInConfig(); err != nil {
