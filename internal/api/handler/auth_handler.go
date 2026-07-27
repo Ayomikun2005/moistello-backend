@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -758,6 +760,15 @@ func (h *AuthHandler) deriveWalletSeed(email string) (string, error) {
 	salt := []byte(pepper + email)
 	key := argon2.IDKey([]byte(email), salt, uint32(argonTime), uint32(argonMemory), uint8(argonThreads), 32)
 	return hex.EncodeToString(key), nil
+}
+
+// getPasskeyPepper returns the passkey pepper for wallet seed derivation.
+func getPasskeyPepper() (string, error) {
+	p := os.Getenv("MOISTELLO_PASSKEY_PEPPER")
+	if p == "" {
+		return "", errors.New("MOISTELLO_PASSKEY_PEPPER environment variable is not set")
+	}
+	return p, nil
 }
 
 // sha256HashForLogout computes SHA-256 for refresh token session lookup.
