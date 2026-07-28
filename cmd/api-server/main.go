@@ -35,11 +35,14 @@ import (
 	"github.com/moistello/backend/internal/domain/payout"
 	"github.com/moistello/backend/internal/domain/reputation"
 	"github.com/moistello/backend/internal/domain/savings"
+	"github.com/moistello/backend/internal/domain/swap"
 	"github.com/moistello/backend/internal/domain/totp"
 	"github.com/moistello/backend/internal/domain/verification"
 	"github.com/moistello/backend/internal/domain/user"
 	"github.com/moistello/backend/internal/domain/wallet"
 	"github.com/moistello/backend/internal/domain/yellowcard"
+	"github.com/moistello/backend/pkg/stellar"
+	"github.com/moistello/backend/pkg/stellar/soroban"
 	ws "github.com/moistello/backend/internal/websocket"
 	"github.com/moistello/backend/pkg/logger"
 	"github.com/moistello/backend/pkg/postgres"
@@ -171,7 +174,27 @@ func main() {
 	savingsSvc := savings.NewService(savingsRepo)
 	savingsH := handler.NewSavingsGoalHandler(savingsSvc)
 
-	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, communityH, wsH, savingsH, jwtPublicKey)
+	// Initialize Soroban client for escrow swap contract
+	sorobanClient := soroban.NewClient(cfg.Stellar.SorobanRPCURL)
+	signer, err := stellar.NewSigner(cfg.Stellar.MasterSecretKey)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to create stellar signer")
+	}
+	accountMgr, err := stellar.NewAccountManager(cfg.Stellar.MasterPublicKey, cfg.Stellar.HorizonURL)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to create account manager")
+	}
+
+	// Create escrow swap contract invoker and client
+	escrowSwapInvoker := soroban.NewContractInvoker(sorobanClient, signer, accountMgr, cfg.Stellar.EscrowSwapContractID)
+	escrowSwapClient := soroban.NewEscrowSwapClient(escrowSwapInvoker)
+
+	// Swap service and handler
+	swapRepo := swap.NewPostgresRepository(db.DB)
+	swapSvc := swap.NewService(swapRepo, circleSvc, userSvc, escrowSwapClient)
+	swapH := handler.NewSwapHandler(swapSvc)
+
+	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, communityH, wsH, savingsH, swapH, jwtPublicKey)
 
 	if err := api.RunServer(router, cfg.Server); err != nil {
 		log.Fatal().Err(err).Msg("server error")

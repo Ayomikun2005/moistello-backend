@@ -28,6 +28,7 @@ func NewRouter(
 	communityHandler *handler.CommunityHandler,
 	wsHandler *handler.WebSocketHandler,
 	savingsGoalHandler *handler.SavingsGoalHandler,
+	swapHandler *handler.SwapHandler,
 	jwtPublicKey []byte,
 ) *gin.Engine {
 	r := gin.New()
@@ -174,6 +175,11 @@ func NewRouter(
 			authenticated.PATCH("/savings/goals/:id", savingsGoalHandler.Update)
 			authenticated.DELETE("/savings/goals/:id", savingsGoalHandler.Delete)
 			authenticated.POST("/savings/goals/:id/complete", savingsGoalHandler.Complete)
+
+			// Swap endpoints
+			authenticated.POST("/swap/offer", swapHandler.CreateSwapOffer)
+			authenticated.POST("/swap/accept", swapHandler.AcceptSwapOffer)
+			authenticated.GET("/swap/history", swapHandler.GetSwapHistory)
 
 			authenticated.POST("/webhooks", webhookHandler.RegisterWebhook)
 			authenticated.GET("/webhooks", webhookHandler.ListWebhooks)
