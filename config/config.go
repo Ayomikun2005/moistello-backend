@@ -74,6 +74,18 @@ type StellarConfig struct {
 	GovernanceTokenContractID string `mapstructure:"governance_token_contract_id"`
 }
 
+func (s StellarConfig) MarshalJSON() ([]byte, error) {
+	type alias StellarConfig
+	return json.Marshal(&struct{ alias }{alias: alias(s)})
+}
+
+func (s StellarConfig) String() string {
+	if s.MasterSecretKey != "" {
+		return "{... redacted ...}"
+	}
+	return "{...}"
+}
+
 type YellowCardConfig struct {
 	APIKey    string `mapstructure:"api_key"`
 	APISecret string `mapstructure:"api_secret"`
