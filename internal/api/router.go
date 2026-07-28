@@ -28,6 +28,7 @@ func NewRouter(
 	communityHandler *handler.CommunityHandler,
 	wsHandler *handler.WebSocketHandler,
 	savingsGoalHandler *handler.SavingsGoalHandler,
+	tokenHandler *handler.TokenHandler,
 	jwtPublicKey []byte,
 ) *gin.Engine {
 	r := gin.New()
@@ -174,6 +175,12 @@ func NewRouter(
 			authenticated.PATCH("/savings/goals/:id", savingsGoalHandler.Update)
 			authenticated.DELETE("/savings/goals/:id", savingsGoalHandler.Delete)
 			authenticated.POST("/savings/goals/:id/complete", savingsGoalHandler.Complete)
+
+			// Token routes
+			authenticated.GET("/token/balance/:address", tokenHandler.GetBalance)
+			authenticated.POST("/token/stake", tokenHandler.Stake)
+			authenticated.POST("/token/unstake", tokenHandler.Unstake)
+			authenticated.GET("/token/stakes/:address", tokenHandler.GetStakes)
 
 			authenticated.POST("/webhooks", webhookHandler.RegisterWebhook)
 			authenticated.GET("/webhooks", webhookHandler.ListWebhooks)
