@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -21,7 +20,6 @@ import (
 	"github.com/moistello/backend/internal/api/middleware"
 	"github.com/moistello/backend/config"
 	"github.com/moistello/backend/internal/domain/auth"
-	"github.com/moistello/backend/internal/domain/email"
 	"github.com/moistello/backend/internal/domain/totp"
 	"github.com/moistello/backend/internal/domain/user"
 	"github.com/moistello/backend/internal/domain/verification"
@@ -55,12 +53,12 @@ func NewAuthHandler(authSvc auth.Service, userSvc user.Service, walletSvc wallet
 		walletSvc:       walletSvc,
 		totpService:     totpSvc,
 		verificationSvc: verificationSvc,
-		emailSvc:        emailSvc,
 		redisClient:     redisClient,
 		userRepo:        userRepo,
 		security:        securityCfg,
 	}
 }
+
 // @Summary Get authentication nonce
 // @Description Returns a signed nonce for wallet authentication. The nonce must be signed with the wallet's private key and sent to /auth/verify.
 // @Tags Authentication
@@ -255,21 +253,15 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	// Send OTP
-	code, err := h.verificationSvc.SendOTP(c.Request.Context(), req.Email)
-	if err != nil {
+	if err := h.verificationSvc.SendOTP(c.Request.Context(), req.Email); err != nil {
 		response.InternalError(c, "failed to send verification code")
 		return
 	}
-	if h.emailSvc != nil {
-		h.emailSvc.SendOTP(req.Email, code)
-	} else {
-		log.Printf("[auth] verification code for %s: %s", req.Email, code)
-	}
 
 	response.Created(c, gin.H{
-		"message": "verification code sent",
+		"message":    "verification code sent",
 		"walletSeed": walletSeed,
-		"expiresIn": 300,
+		"expiresIn":  300,
 	})
 }
 
@@ -311,15 +303,15 @@ func (h *AuthHandler) RegisterVerify(c *gin.Context) {
 
 	// Create the user NOW — only after email is verified
 	u := &user.User{
-		ID:               uuid.New(),
-		WalletAddress:    pending.WalletAddr,
-		PasswordHash:     passwordHashStruct(pending.PasswordHash),
-		Email:            &pending.Email,
-		EmailVerified:    true,
+		ID:                uuid.New(),
+		WalletAddress:     pending.WalletAddr,
+		PasswordHash:      passwordHashStruct(pending.PasswordHash),
+		Email:             &pending.Email,
+		EmailVerified:     true,
 		PreferredLanguage: "en",
-		Role:             user.RoleUser,
-		CreatedAt:        time.Now().UTC(),
-		UpdatedAt:        time.Now().UTC(),
+		Role:              user.RoleUser,
+		CreatedAt:         time.Now().UTC(),
+		UpdatedAt:         time.Now().UTC(),
 	}
 	if err := h.userRepo.Create(c.Request.Context(), u); err != nil {
 		response.InternalError(c, "failed to create account")
@@ -374,15 +366,9 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	if !u.EmailVerified {
-		code, err := h.verificationSvc.SendOTP(c.Request.Context(), req.Email)
-		if err != nil {
+		if err := h.verificationSvc.SendOTP(c.Request.Context(), req.Email); err != nil {
 			response.InternalError(c, "failed to send verification code")
 			return
-		}
-		if h.emailSvc != nil {
-			h.emailSvc.SendOTP(req.Email, code)
-		} else {
-			log.Printf("[auth] verification code for %s: %s", req.Email, code)
 		}
 		response.OK(c, gin.H{"needsVerification": true, "message": "email not verified. code sent."})
 		return

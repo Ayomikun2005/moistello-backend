@@ -16,8 +16,8 @@ import (
 	"github.com/moistello/backend/internal/api/handler"
 	"github.com/moistello/backend/config"
 	"github.com/moistello/backend/internal/domain/auth"
-	userMocks "github.com/moistello/backend/internal/domain/user/mocks"
 	"github.com/moistello/backend/internal/domain/user"
+	userMocks "github.com/moistello/backend/internal/domain/user/mocks"
 	"github.com/moistello/backend/pkg/apperrors"
 	"github.com/moistello/backend/pkg/validator"
 )
