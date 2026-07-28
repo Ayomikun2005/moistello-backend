@@ -16,8 +16,8 @@ const (
 type Withdrawal struct {
 	ID              string          `json:"id" db:"id"`
 	UserID          string          `json:"userId" db:"user_id"`
-	AmountUSDC      float64         `json:"amountUsdc" db:"amount_usdc"`
-	EstimatedNGN    float64         `json:"estimatedNgn" db:"estimated_ngn"`
+	AmountUSDC      int64           `json:"amountUsdc" db:"amount_usdc"`
+	EstimatedNGN    int64           `json:"estimatedNgn" db:"estimated_ngn"`
 	BankCode        string          `json:"bankCode" db:"bank_code"`
 	AccountNumber   string          `json:"accountNumber" db:"account_number"`
 	AccountName     string          `json:"accountName" db:"account_name"`
@@ -43,8 +43,8 @@ type Withdrawal struct {
 }
 
 type WithdrawalRequest struct {
-	AmountUSDC    float64 `json:"amountUsdc" binding:"required,gt=0"`
-	BankCode      string  `json:"bankCode" binding:"required"`
-	AccountNumber string  `json:"accountNumber" binding:"required"`
-	AccountName   string  `json:"accountName" binding:"required"`
+	AmountUSDC    int64  `json:"amountUsdc" binding:"required,gt=0"`
+	BankCode      string `json:"bankCode" binding:"required"`
+	AccountNumber string `json:"accountNumber" binding:"required"`
+	AccountName   string `json:"accountName" binding:"required"`
 }
