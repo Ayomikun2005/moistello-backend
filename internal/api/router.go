@@ -34,6 +34,7 @@ func NewRouter(
 	r := gin.New()
 
 	r.Use(middleware.RecoveryMiddleware())
+	r.Use(middleware.TracingMiddleware(cfg.Tracing.ServiceName))
 	r.Use(middleware.LoggingMiddleware())
 	r.Use(middleware.CORSMiddleware(cfg.CORS))
 	r.Use(middleware.PrometheusMiddleware())

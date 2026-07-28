@@ -43,6 +43,7 @@ import (
 	"github.com/moistello/backend/pkg/logger"
 	"github.com/moistello/backend/pkg/postgres"
 	"github.com/moistello/backend/pkg/redis"
+	"github.com/moistello/backend/pkg/tracing"
 	"github.com/moistello/backend/pkg/validator"
 	"github.com/rs/zerolog/log"
 )
@@ -72,6 +73,12 @@ func main() {
 
 	logger.Init(cfg.Logging.Level, cfg.Logging.Format)
 	validator.Init()
+
+	// Initialize OpenTelemetry tracing
+	if err := tracing.Init(cfg.Tracing); err != nil {
+		log.Fatal().Err(err).Msg("failed to initialize tracing")
+	}
+
 	log.Info().Msg("starting Moistello API server")
 
 	db, err := postgres.New(cfg.Database)

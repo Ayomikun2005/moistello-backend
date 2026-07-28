@@ -3,10 +3,12 @@ package config
 import (
 	"bufio"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 	"time"
+
 	"github.com/spf13/viper"
 )
 
@@ -26,6 +28,7 @@ type Config struct {
 	Logging      LoggingConfig
 	Environment  string
 	YellowCard   YellowCardConfig `mapstructure:"yellow_card"`
+	Tracing      TracingConfig
 }
 
 type ServerConfig struct {
@@ -86,7 +89,6 @@ func (s StellarConfig) String() string {
 		return "{... redacted ...}"
 	}
 	return "{...}"
->>>>>>> pr-142-fix
 }
 
 type YellowCardConfig struct {
@@ -166,6 +168,14 @@ type LoggingConfig struct {
 func Load() *Config {
 	loadDotEnv()
 
+type TracingConfig struct {
+	Enabled          bool          `mapstructure:"enabled"`
+	CollectorEndpoint string       `mapstructure:"collector_endpoint"`
+	ServiceName      string       `mapstructure:"service_name"`
+	SampleRate       float64      `mapstructure:"sample_rate"`
+}
+
+func Load(path string) (*Config, error) {
 	v := viper.New()
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
@@ -176,7 +186,6 @@ func Load() *Config {
 	v.AutomaticEnv()
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 
-<<<<<<< HEAD
 	setDefault(v, "server.port", 1100)
 	setDefault(v, "server.host", "0.0.0.0")
 	setDefault(v, "server.read_timeout", "10s")
@@ -252,7 +261,6 @@ func Load() *Config {
 	mustBindEnv(v, "brevo.from_name", "MOISTELLO_BREVO_FROM_NAME", "MOISTELLO_NOTIFICATION_EMAIL_FROM_NAME")
 	mustBindEnv(v, "yellow_card.api_key", "YELLOW_CARD_API_KEY")
 	mustBindEnv(v, "yellow_card.api_secret", "YELLOW_CARD_API_SECRET")
-=======
 	v.SetDefault("server.port", 1100)
 	v.SetDefault("server.host", "0.0.0.0")
 	v.SetDefault("server.read_timeout", "10s")
@@ -296,8 +304,11 @@ func Load() *Config {
 	v.SetDefault("logging.level", "debug")
 	v.SetDefault("logging.format", "json")
 	v.SetDefault("logging.output", "stdout")
+	v.SetDefault("tracing.enabled", false)
+	v.SetDefault("tracing.collector_endpoint", "localhost:4317")
+	v.SetDefault("tracing.service_name", "moistello-api")
+	v.SetDefault("tracing.sample_rate", 0.1)
 	v.SetDefault("environment", "development")
->>>>>>> pr-142-fix
 
 	if err := v.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
@@ -330,7 +341,6 @@ func Load() *Config {
 		panic(fmt.Errorf("database.url must not use sslmode=disable outside development; use sslmode=require or stronger"))
 	}
 
-<<<<<<< HEAD
 	return &cfg
 }
 
@@ -426,7 +436,6 @@ func validateDuration(name string, ok bool) {
 		panic(fmt.Errorf("config: %s must be greater than zero", name))
 	}
 }
-=======
 	if os.Getenv("MOISTELLO_WALLET_PEPPER") == "" {
 		return nil, fmt.Errorf("MOISTELLO_WALLET_PEPPER environment variable is required")
 	}
@@ -436,4 +445,3 @@ func validateDuration(name string, ok bool) {
 
 	return &cfg, nil
 }
->>>>>>> pr-142-fix
