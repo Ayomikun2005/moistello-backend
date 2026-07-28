@@ -18,7 +18,6 @@ package main
 
 import (
 	"context"
-	"os"
 
 	"github.com/google/uuid"
 	"github.com/moistello/backend/config"
@@ -69,10 +68,7 @@ func (a *communityAdapter) IsMember(ctx context.Context, communityID, userID uui
 }
 
 func main() {
-	cfg, err := config.Load(".")
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to load config")
-	}
+	cfg := config.Load()
 
 	logger.Init(cfg.Logging.Level, cfg.Logging.Format)
 	validator.Init()
@@ -111,14 +107,18 @@ func main() {
 	payoutSvc := payout.NewService(payoutRepo)
 	reputationSvc := reputation.NewService(reputationRepo)
 	notificationSvc := notification.NewService(notificationRepo, nil, wsBroadcaster)
-	authSvc, err := auth.NewService(redisClient, cfg.Auth.NonceTTL, cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL, cfg.Auth.JWTPrivateKeyPath, cfg.Auth.JWTPublicKeyPath)
+	authSvc, err := auth.NewService(redisClient, cfg.Auth.NonceTTL, cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL, cfg.Auth.JWTPrivateKeyPEM, cfg.Auth.JWTPublicKeyPEM)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to initialize auth service")
 	}
 
 	totpSvc := totp.NewService()
 	verificationSvc := verification.NewService(redisClient)
-	emailSvc := email.NewService(email.ConfigFromEnv())
+	emailSvc := email.NewService(email.Config{
+		APIKey:      cfg.Brevo.APIKey,
+		FromAddress: cfg.Brevo.FromEmail,
+		FromName:    cfg.Brevo.FromName,
+	})
 
 	inviteSvc := invite.NewService(inviteRepo)
 	_ = reputationSvc
@@ -138,14 +138,11 @@ func main() {
 		log.Fatal().Err(err).Msg("failed to initialize wallet service")
 	}
 
-	jwtPublicKey, err := os.ReadFile(cfg.Auth.JWTPublicKeyPath)
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to load JWT public key")
-	}
+	jwtPublicKey := []byte(cfg.Auth.JWTPublicKeyPEM)
 
 	wsH := handler.NewWebSocketHandler(wsHub, cfg.CORS.AllowedOrigins)
 
-	authH := handler.NewAuthHandler(authSvc, userSvc, walletSvc, totpSvc, verificationSvc, emailSvc, redisClient, userRepo)
+	authH := handler.NewAuthHandler(authSvc, userSvc, walletSvc, totpSvc, verificationSvc, emailSvc, redisClient, userRepo, cfg.Security)
 	userH := handler.NewUserHandler(userSvc, redisClient)
 	circleH := handler.NewCircleHandler(circleSvc, inviteSvc, contribSvc, payoutSvc)
 	contribH := handler.NewContributionHandler(contribSvc, contribRepo)
