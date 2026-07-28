@@ -89,6 +89,15 @@ func (s StellarConfig) String() string {
 		return "{... redacted ...}"
 	}
 	return "{...}"
+	Network              string `mapstructure:"network"`
+	HorizonURL           string `mapstructure:"horizon_url"`
+	SorobanRPCURL        string `mapstructure:"soroban_rpc_url"`
+	NetworkPassphrase    string `mapstructure:"network_passphrase"`
+	MasterPublicKey      string `mapstructure:"master_public_key"`
+	MasterSecretKey      string `mapstructure:"master_secret_key"`
+	USDCIssuer           string `mapstructure:"usdc_issuer"`
+	WalletMinBalance     float64 `mapstructure:"wallet_min_balance"`
+	EscrowSwapContractID string `mapstructure:"escrow_swap_contract_id"`
 }
 
 type YellowCardConfig struct {
@@ -285,6 +294,7 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("stellar.soroban_rpc_url", "https://soroban-testnet.stellar.org")
 	v.SetDefault("stellar.network_passphrase", "Test SDF Network ; September 2015")
 	v.SetDefault("stellar.governance_token_contract_id", "")
+	v.SetDefault("stellar.escrow_swap_contract_id", "")
 	v.SetDefault("auth.access_token_ttl", "15m")
 	v.SetDefault("auth.refresh_token_ttl", "168h")
 	v.SetDefault("auth.nonce_ttl", "5m")
