@@ -200,7 +200,7 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("tracing.enabled", false)
 	v.SetDefault("tracing.collector_endpoint", "localhost:4317")
 	v.SetDefault("tracing.service_name", "moistello-api")
-	v.SetDefault("tracing.sample_rate", 1.0)
+	v.SetDefault("tracing.sample_rate", 0.1)
 	v.SetDefault("environment", "development")
 
 	if err := v.ReadInConfig(); err != nil {
