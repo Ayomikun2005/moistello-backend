@@ -29,6 +29,8 @@ import (
 	"github.com/moistello/backend/internal/domain/community"
 	"github.com/moistello/backend/internal/domain/contribution"
 	"github.com/moistello/backend/internal/domain/email"
+	"github.com/moistello/backend/internal/domain/governance"
+	"github.com/moistello/backend/internal/domain/incentives"
 	"github.com/moistello/backend/internal/domain/invite"
 	"github.com/moistello/backend/internal/domain/notification"
 	"github.com/moistello/backend/internal/domain/payout"
@@ -131,7 +133,6 @@ func main() {
 	})
 
 	inviteSvc := invite.NewService(inviteRepo)
-	_ = reputationSvc
 	_ = auditRepo
 
 	// Wallet service (needed before auth handler for wallet creation)
@@ -199,6 +200,15 @@ func main() {
 	swapH := handler.NewSwapHandler(swapSvc)
 
 	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, communityH, wsH, savingsH, swapH, jwtPublicKey)
+	governanceSvc := governance.NewService()
+	governanceH := handler.NewGovernanceHandler(governanceSvc)
+
+	incentivesRepo := incentives.NewRepository(db)
+	incentivesSvc := incentives.NewService(incentivesRepo)
+	reputationH := handler.NewReputationHandler(reputationSvc)
+	referralH := handler.NewReferralHandler(incentivesSvc)
+
+	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, communityH, wsH, savingsH, governanceH, reputationH, referralH, jwtPublicKey)
 
 	if err := api.RunServer(router, cfg.Server); err != nil {
 		log.Fatal().Err(err).Msg("server error")

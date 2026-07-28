@@ -30,6 +30,9 @@ func NewRouter(
 	savingsGoalHandler *handler.SavingsGoalHandler,
 	tokenHandler *handler.TokenHandler,
 	swapHandler *handler.SwapHandler,
+	governanceHandler *handler.GovernanceHandler,
+	reputationHandler *handler.ReputationHandler,
+	referralHandler *handler.ReferralHandler,
 	jwtPublicKey []byte,
 ) *gin.Engine {
 	r := gin.New()
@@ -131,6 +134,7 @@ func NewRouter(
 			authenticated.POST("/circles/:id/dispute", circleHandler.Dispute)
 			authenticated.POST("/circles/:id/vote", circleHandler.Vote)
 			authenticated.POST("/circles/:id/auction-bid", circleHandler.AuctionBid)
+			authenticated.POST("/circles/:id/members/:address/remove", circleHandler.RemoveMember)
 
 			authenticated.GET("/circles/:id/invites", inviteHandler.ListInvites)
 			authenticated.POST("/circles/:id/invites", inviteHandler.CreateInvite)
@@ -141,6 +145,22 @@ func NewRouter(
 
 			authenticated.GET("/payouts", payoutHandler.ListPayouts)
 			authenticated.GET("/payouts/:id", payoutHandler.GetPayout)
+
+			// Governance
+			authenticated.POST("/governance/proposals", governanceHandler.CreateProposal)
+			authenticated.GET("/governance/proposals", governanceHandler.ListProposals)
+			authenticated.GET("/governance/proposals/:id", governanceHandler.GetProposal)
+			authenticated.POST("/governance/proposals/:id/vote", governanceHandler.VoteProposal)
+			authenticated.POST("/governance/proposals/:id/execute", governanceHandler.ExecuteProposal)
+
+			// Reputation tiers
+			authenticated.GET("/reputation/tiers", reputationHandler.GetTiers)
+			authenticated.GET("/reputation/tier/:address", reputationHandler.GetTierByAddress)
+
+			// Referral system
+			authenticated.POST("/referral/code", referralHandler.GenerateCode)
+			authenticated.GET("/referral/stats", referralHandler.GetStats)
+			authenticated.GET("/referral/history", referralHandler.GetHistory)
 
 			// Communities
 			authenticated.POST("/communities", communityHandler.Create)
