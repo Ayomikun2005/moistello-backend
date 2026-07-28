@@ -65,14 +65,28 @@ type RabbitMQConfig struct {
 }
 
 type StellarConfig struct {
-	Network           string  `mapstructure:"network"`
-	HorizonURL        string  `mapstructure:"horizon_url"`
-	SorobanRPCURL     string  `mapstructure:"soroban_rpc_url"`
-	NetworkPassphrase string  `mapstructure:"network_passphrase"`
-	MasterPublicKey   string  `mapstructure:"master_public_key"`
-	MasterSecretKey   string  `mapstructure:"master_secret_key"`
-	USDCIssuer        string  `mapstructure:"usdc_issuer"`
-	WalletMinBalance  float64 `mapstructure:"wallet_min_balance"`
+	Network                 string  `mapstructure:"network"`
+	HorizonURL              string  `mapstructure:"horizon_url"`
+	SorobanRPCURL           string  `mapstructure:"soroban_rpc_url"`
+	NetworkPassphrase       string  `mapstructure:"network_passphrase"`
+	MasterPublicKey         string  `mapstructure:"master_public_key"`
+	MasterSecretKey         string  `mapstructure:"master_secret_key"`
+	USDCIssuer              string  `mapstructure:"usdc_issuer"`
+	WalletMinBalance        float64 `mapstructure:"wallet_min_balance"`
+	GovernanceTokenContractID string `mapstructure:"governance_token_contract_id"`
+}
+
+func (s StellarConfig) MarshalJSON() ([]byte, error) {
+	type alias StellarConfig
+	return json.Marshal(&struct{ alias }{alias: alias(s)})
+}
+
+func (s StellarConfig) String() string {
+	if s.MasterSecretKey != "" {
+		return "{... redacted ...}"
+	}
+	return "{...}"
+>>>>>>> pr-142-fix
 }
 
 type YellowCardConfig struct {
@@ -162,6 +176,7 @@ func Load() *Config {
 	v.AutomaticEnv()
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 
+<<<<<<< HEAD
 	setDefault(v, "server.port", 1100)
 	setDefault(v, "server.host", "0.0.0.0")
 	setDefault(v, "server.read_timeout", "10s")
@@ -237,6 +252,52 @@ func Load() *Config {
 	mustBindEnv(v, "brevo.from_name", "MOISTELLO_BREVO_FROM_NAME", "MOISTELLO_NOTIFICATION_EMAIL_FROM_NAME")
 	mustBindEnv(v, "yellow_card.api_key", "YELLOW_CARD_API_KEY")
 	mustBindEnv(v, "yellow_card.api_secret", "YELLOW_CARD_API_SECRET")
+=======
+	v.SetDefault("server.port", 1100)
+	v.SetDefault("server.host", "0.0.0.0")
+	v.SetDefault("server.read_timeout", "10s")
+	v.SetDefault("server.write_timeout", "30s")
+	v.SetDefault("server.max_header_bytes", 1048576)
+	v.SetDefault("server.tls_enabled", false)
+	v.SetDefault("server.http_redirect_port", 80)
+	// No default DATABASE_URL: the env var DATABASE_URL (mapped to MOISTELLO_DATABASE_URL)
+	// must be set explicitly. An empty URL will cause a clear startup failure rather than
+	// silently connecting with plaintext credentials and SSL disabled.
+	v.SetDefault("database.max_open_conns", 50)
+	v.SetDefault("database.max_idle_conns", 10)
+	v.SetDefault("database.conn_max_lifetime", "30m")
+	v.SetDefault("redis.url", "redis://localhost:6379")
+	v.SetDefault("redis.pool_size", 20)
+	v.SetDefault("rabbitmq.url", "amqp://guest:guest@localhost:5672/")
+	v.SetDefault("rabbitmq.exchange", "moistello.events")
+	v.SetDefault("rabbitmq.queues.notifications", "moistello.notifications")
+	v.SetDefault("rabbitmq.queues.webhooks", "moistello.webhooks")
+	v.SetDefault("stellar.network", "testnet")
+	v.SetDefault("stellar.horizon_url", "https://horizon-testnet.stellar.org")
+	v.SetDefault("stellar.soroban_rpc_url", "https://soroban-testnet.stellar.org")
+	v.SetDefault("stellar.network_passphrase", "Test SDF Network ; September 2015")
+	v.SetDefault("stellar.governance_token_contract_id", "")
+	v.SetDefault("auth.access_token_ttl", "15m")
+	v.SetDefault("auth.refresh_token_ttl", "168h")
+	v.SetDefault("auth.nonce_ttl", "5m")
+	v.SetDefault("brevo.api_key", "")
+	v.SetDefault("brevo.from_email", "noreply@moistello.com")
+	v.SetDefault("brevo.from_name", "Moistello")
+	v.SetDefault("indexer.poll_interval", "3s")
+	v.SetDefault("indexer.batch_size", 50)
+	v.SetDefault("cors.allowed_origins", []string{"http://localhost:1110"})
+	v.SetDefault("cors.allowed_methods", []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"})
+	v.SetDefault("cors.allowed_headers", []string{"Authorization", "Content-Type", "X-Request-ID"})
+	v.SetDefault("cors.allow_credentials", true)
+	v.SetDefault("cors.max_age", "24h")
+	v.SetDefault("rate_limit.global", 100)
+	v.SetDefault("rate_limit.authenticated", 300)
+	v.SetDefault("rate_limit.auth", 10)
+	v.SetDefault("logging.level", "debug")
+	v.SetDefault("logging.format", "json")
+	v.SetDefault("logging.output", "stdout")
+	v.SetDefault("environment", "development")
+>>>>>>> pr-142-fix
 
 	if err := v.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
@@ -269,6 +330,7 @@ func Load() *Config {
 		panic(fmt.Errorf("database.url must not use sslmode=disable outside development; use sslmode=require or stronger"))
 	}
 
+<<<<<<< HEAD
 	return &cfg
 }
 
@@ -364,3 +426,14 @@ func validateDuration(name string, ok bool) {
 		panic(fmt.Errorf("config: %s must be greater than zero", name))
 	}
 }
+=======
+	if os.Getenv("MOISTELLO_WALLET_PEPPER") == "" {
+		return nil, fmt.Errorf("MOISTELLO_WALLET_PEPPER environment variable is required")
+	}
+	if os.Getenv("MOISTELLO_PASSKEY_PEPPER") == "" {
+		return nil, fmt.Errorf("MOISTELLO_PASSKEY_PEPPER environment variable is required")
+	}
+
+	return &cfg, nil
+}
+>>>>>>> pr-142-fix
