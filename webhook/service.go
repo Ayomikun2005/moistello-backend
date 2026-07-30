@@ -3,7 +3,11 @@ package webhook
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -22,6 +26,7 @@ type WebhookRepository interface {
 	Register(ctx context.Context, wh *WebhookRegistration) error
 	GetByUserID(ctx context.Context, userID string) ([]WebhookRegistration, error)
 	GetActiveWebhooks(ctx context.Context) ([]WebhookRegistration, error)
+	GetByID(ctx context.Context, id string) (*WebhookRegistration, error)
 }
 
 type PostgresRepository struct {
@@ -60,6 +65,18 @@ func (r *PostgresRepository) GetActiveWebhooks(ctx context.Context) ([]WebhookRe
 	return list, nil
 }
 
+func (r *PostgresRepository) GetByID(ctx context.Context, id string) (*WebhookRegistration, error) {
+	query := `SELECT id, user_id, target_url, secret, created_at FROM webhooks WHERE id = $1`
+	var wh WebhookRegistration
+	if err := r.db.QueryRowContext(ctx, query, id).Scan(&wh.ID, &wh.UserID, &wh.TargetURL, &wh.Secret, &wh.CreatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &wh, nil
+}
+
 type Dispatcher struct {
 	repo       WebhookRepository
 	httpClient *http.Client
@@ -87,26 +104,29 @@ func (d *Dispatcher) DispatchPayload(ctx context.Context, payload interface{}, m
 	}
 
 	for _, wh := range webhooks {
-		go d.deliverWithRetry(wh.TargetURL, body, maxRetries)
+		go d.deliverWithRetry(ctx, wh, body, maxRetries)
 	}
 
 	return nil
 }
 
-func (d *Dispatcher) deliverWithRetry(targetURL string, body []byte, maxRetries int) {
+func (d *Dispatcher) deliverWithRetry(ctx context.Context, wh WebhookRegistration, body []byte, maxRetries int) {
 	backoff := 100 * time.Millisecond
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		req, err := http.NewRequest("POST", targetURL, bytes.NewBuffer(body))
+		req, err := http.NewRequestWithContext(ctx, "POST", wh.TargetURL, bytes.NewBuffer(body))
 		if err != nil {
 			return
 		}
 		req.Header.Set("Content-Type", "application/json")
+		if reqID, ok := ctx.Value("requestID").(string); ok && reqID != "" {
+			req.Header.Set("X-Request-ID", reqID)
+		}
 
 		resp, err := d.httpClient.Do(req)
 		if err == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			resp.Body.Close()
-			return // Delivery succeeded
+			return
 		}
 
 		if resp != nil {
@@ -115,7 +135,25 @@ func (d *Dispatcher) deliverWithRetry(targetURL string, body []byte, maxRetries 
 
 		if attempt < maxRetries {
 			time.Sleep(backoff)
-			backoff *= 2 // Exponential backoff delay
+			backoff *= 2
 		}
 	}
+}
+
+// SignWebhookPayload computes an HMAC-SHA256 signature for the given payload
+// using the webhook secret. The signature is returned as a hex string.
+func SignWebhookPayload(payload []byte, secret string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(payload)
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// VerifyWebhookSignature verifies the HMAC-SHA256 signature of a webhook payload
+// using constant-time comparison to prevent timing attacks.
+func VerifyWebhookSignature(payload []byte, signature, secret string) bool {
+	if len(signature) == 0 {
+		return false
+	}
+	expected := SignWebhookPayload(payload, secret)
+	return subtle.ConstantTimeCompare([]byte(expected), []byte(signature)) == 1
 }

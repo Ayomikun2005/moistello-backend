@@ -7,6 +7,7 @@ import (
 	"github.com/moistello/backend/config"
 	"github.com/moistello/backend/internal/api/handler"
 	"github.com/moistello/backend/internal/api/middleware"
+	"github.com/moistello/backend/webhook"
 )
 
 func NewRouter(
@@ -34,6 +35,7 @@ func NewRouter(
 	reputationHandler *handler.ReputationHandler,
 	referralHandler *handler.ReferralHandler,
 	consentHandler *handler.ConsentHandler,
+	webhookRepo webhook.WebhookRepository,
 	jwtPublicKey []byte,
 ) *gin.Engine {
 	r := gin.New()
@@ -209,11 +211,15 @@ func NewRouter(
 			authenticated.POST("/swap/accept", swapHandler.AcceptSwapOffer)
 			authenticated.GET("/swap/history", swapHandler.GetSwapHistory)
 
-			authenticated.POST("/webhooks", webhookHandler.RegisterWebhook)
-			authenticated.GET("/webhooks", webhookHandler.ListWebhooks)
-			authenticated.DELETE("/webhooks/:id", webhookHandler.DeleteWebhook)
+		authenticated.POST("/webhooks", webhookHandler.RegisterWebhook)
+		authenticated.GET("/webhooks", webhookHandler.ListWebhooks)
+		authenticated.DELETE("/webhooks/:id", webhookHandler.DeleteWebhook)
+	}
 
-			admin := authenticated.Group("/admin")
+	incomingWebhookH := handler.NewIncomingWebhookHandler(webhookRepo)
+	r.POST("/webhooks/incoming/:id", incomingWebhookH.ReceiveWebhook)
+
+	admin := authenticated.Group("/admin")
 			admin.Use(middleware.AdminMiddleware())
 			{
 				admin.GET("/users", adminHandler.ListUsers)
