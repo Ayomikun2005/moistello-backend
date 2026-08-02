@@ -23,15 +23,15 @@ func newRateLimitConfig() config.RateLimitConfig {
 }
 
 // newUnreachableRedis returns a Redis client that will always fail (no server at
-// that address), used to exercise the fail-closed path.
+// that address), used to exercise the in-memory fallback path.
 func newUnreachableRedis() *redis.Client {
 	return redis.NewClient(&redis.Options{Addr: "localhost:19999", DB: 0})
 }
 
-// TestRateLimitMiddleware_FailsClosedWhenRedisDown verifies that the middleware
-// returns 503 (not 200 or 429) when Redis is unreachable — closing the door
-// against DoS-induced rate-limit bypass.
-func TestRateLimitMiddleware_FailsClosedWhenRedisDown(t *testing.T) {
+// TestRateLimitMiddleware_FallsBackToInMemoryWhenRedisDown verifies that the
+// middleware falls back to an in-memory rate limiter instead of failing closed
+// with 503 when Redis is unreachable.
+func TestRateLimitMiddleware_FallsBackToInMemoryWhenRedisDown(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rdb := newUnreachableRedis()
 	defer rdb.Close()
@@ -47,18 +47,13 @@ func TestRateLimitMiddleware_FailsClosedWhenRedisDown(t *testing.T) {
 	req, _ := http.NewRequest("GET", "/test", nil)
 	r.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-
-	var resp map[string]any
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	assert.NoError(t, err)
-	assert.Equal(t, false, resp["success"])
-	assert.Contains(t, resp["error"], "unavailable")
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "100", w.Header().Get("X-RateLimit-Limit"))
 }
 
-// TestAuthRateLimitMiddleware_FailsClosedWhenRedisDown verifies the same
-// fail-closed behaviour for the auth-specific rate limit middleware.
-func TestAuthRateLimitMiddleware_FailsClosedWhenRedisDown(t *testing.T) {
+// TestAuthRateLimitMiddleware_FallsBackToInMemoryWhenRedisDown verifies the
+// same in-memory fallback behaviour for the auth-specific rate limit middleware.
+func TestAuthRateLimitMiddleware_FallsBackToInMemoryWhenRedisDown(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rdb := newUnreachableRedis()
 	defer rdb.Close()
@@ -74,12 +69,8 @@ func TestAuthRateLimitMiddleware_FailsClosedWhenRedisDown(t *testing.T) {
 	req, _ := http.NewRequest("POST", "/auth/login", nil)
 	r.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-
-	var resp map[string]any
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	assert.NoError(t, err)
-	assert.Equal(t, false, resp["success"])
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "20", w.Header().Get("X-RateLimit-Limit"))
 }
 
 // TestRateLimitMiddleware_SetsHeaders verifies that rate-limit headers are set
@@ -102,14 +93,11 @@ func TestRateLimitMiddleware_SetsHeaders(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	// If Redis is available this should pass and set headers.
-	// If Redis is unavailable this will return 503 — both outcomes are correct
-	// (fail-closed); the header assertions only apply when Redis is up.
+	// If Redis is unavailable this falls back to in-memory and still sets headers.
 	if w.Code == http.StatusOK {
 		assert.Equal(t, "100", w.Header().Get("X-RateLimit-Limit"))
 		assert.NotEmpty(t, w.Header().Get("X-RateLimit-Remaining"))
 		assert.NotEmpty(t, w.Header().Get("X-RateLimit-Reset"))
-	} else {
-		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 	}
 }
 
@@ -133,8 +121,6 @@ func TestAuthRateLimitMiddleware_SetsAuthLimit(t *testing.T) {
 
 	if w.Code == http.StatusOK {
 		assert.Equal(t, "20", w.Header().Get("X-RateLimit-Limit"))
-	} else {
-		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 	}
 }
 
@@ -167,8 +153,6 @@ func TestRateLimitMiddleware_AuthenticatedUserLimit(t *testing.T) {
 
 	if w.Code == http.StatusOK {
 		assert.Equal(t, "200", w.Header().Get("X-RateLimit-Limit"))
-	} else {
-		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 	}
 }
 
@@ -191,6 +175,5 @@ func TestRateLimitMiddleware_MultipleMiddlewareChain(t *testing.T) {
 	req, _ := http.NewRequest("GET", "/test", nil)
 	r.ServeHTTP(w, req)
 
-	// Any deterministic response (200 or 503) is acceptable.
-	assert.True(t, w.Code == http.StatusOK || w.Code == http.StatusServiceUnavailable)
+	assert.Equal(t, http.StatusOK, w.Code)
 }

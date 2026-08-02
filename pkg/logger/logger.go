@@ -27,6 +27,21 @@ func (h traceIDHook) Run(e *zerolog.Event, level zerolog.Level, msg string) {
 	}
 }
 
+// Ctx extracts a zerolog.Logger from context, enriched with request-scoped fields.
+func Ctx(ctx context.Context) zerolog.Logger {
+	if ctx == nil {
+		return log.Logger
+	}
+	logger := log.Logger.With()
+	if reqID, ok := ctx.Value("requestID").(string); ok && reqID != "" {
+		logger = logger.Str("requestID", reqID)
+	}
+	if userID, ok := ctx.Value("userID").(string); ok && userID != "" {
+		logger = logger.Str("userID", userID)
+	}
+	return logger.Logger()
+}
+
 func Init(level string, format string) {
 	switch level {
 	case "debug":

@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/moistello/backend/internal/api/middleware"
 	"github.com/moistello/backend/pkg/response"
+	"github.com/moistello/backend/webhook"
 )
 
 type webhookRecord struct {
@@ -67,7 +68,7 @@ func (h *WebhookHandler) RegisterWebhook(c *gin.Context) {
 // @Tags Webhooks
 // @Produce json
 // @Security BearerAuth
-// @Success 200 {object} response.Envelope{data=object{webhooks=array}}
+// @Success 200 {object} response.Envelope{data=object{webhooks:array}}
 // @Router /webhooks [get]
 func (h *WebhookHandler) ListWebhooks(c *gin.Context) {
 	userID := middleware.GetUserID(c)
@@ -107,4 +108,58 @@ func (h *WebhookHandler) DeleteWebhook(c *gin.Context) {
 	delete(h.webhooks, id)
 	h.mu.Unlock()
 	response.OK(c, gin.H{"success": true})
+}
+
+// IncomingWebhookHandler receives and verifies incoming webhook deliveries.
+type IncomingWebhookHandler struct {
+	repo webhook.WebhookRepository
+}
+
+func NewIncomingWebhookHandler(repo webhook.WebhookRepository) *IncomingWebhookHandler {
+	return &IncomingWebhookHandler{repo: repo}
+}
+
+// ReceiveWebhook verifies the webhook signature and returns 200 on success.
+// @Summary Receive incoming webhook
+// @Description Accepts an incoming webhook delivery and validates its HMAC-SHA256 signature.
+// @Tags Webhooks
+// @Accept json
+// @Produce json
+// @Param id path string true "Webhook ID"
+// @Param X-Moistello-Signature header string true "HMAC-SHA256 hex signature"
+// @Success 200 {object} response.Envelope
+// @Failure 400 {object} response.Envelope
+// @Failure 401 {object} response.Envelope
+// @Failure 404 {object} response.Envelope
+// @Router /webhooks/incoming/{id} [post]
+func (h *IncomingWebhookHandler) ReceiveWebhook(c *gin.Context) {
+	id := c.Param("id")
+	wh, err := h.repo.GetByID(c.Request.Context(), id)
+	if err != nil {
+		response.InternalError(c, "failed to look up webhook")
+		return
+	}
+	if wh == nil {
+		response.NotFound(c, "webhook not found")
+		return
+	}
+
+	signature := c.GetHeader("X-Moistello-Signature")
+	if signature == "" {
+		response.Unauthorized(c, "missing webhook signature")
+		return
+	}
+
+	body, err := c.GetRawData()
+	if err != nil {
+		response.BadRequest(c, "failed to read request body")
+		return
+	}
+
+	if !webhook.VerifyWebhookSignature(body, signature, wh.Secret) {
+		response.Unauthorized(c, "invalid webhook signature")
+		return
+	}
+
+	response.OK(c, gin.H{"received": true})
 }

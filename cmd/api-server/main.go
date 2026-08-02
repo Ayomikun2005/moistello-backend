@@ -51,6 +51,7 @@ import (
 	"github.com/moistello/backend/pkg/redis"
 	"github.com/moistello/backend/pkg/tracing"
 	"github.com/moistello/backend/pkg/validator"
+	"github.com/moistello/backend/webhook"
 	"github.com/rs/zerolog/log"
 )
 
@@ -163,6 +164,7 @@ func main() {
 	notifH := handler.NewNotificationHandler(notificationSvc, userSvc)
 	adminH := handler.NewAdminHandler(userSvc, userRepo, circleSvc, auditRepo)
 	webhookH := handler.NewWebhookHandler()
+	webhookRepo := webhook.NewPostgresRepository(db.DB)
 	healthH := handler.NewHealthHandler(db.DB, redisClient, cfg.Stellar.SorobanRPCURL, cfg.Stellar.HorizonURL)
 	passkeyCredH := handler.NewPasskeyCredentialHandler(db)
 	walletH := handler.NewWalletHandler(walletSvc)
@@ -224,7 +226,7 @@ func main() {
 		healthH.WithRabbitMQ(rmqClient)
 	}
 
-	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, communityH, wsH, savingsH, swapH, governanceH, reputationH, referralH, consentH, jwtPublicKey)
+	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, communityH, wsH, savingsH, swapH, governanceH, reputationH, referralH, consentH, webhookRepo, jwtPublicKey)
 
 	if err := api.RunServer(router, cfg.Server); err != nil {
 		log.Fatal().Err(err).Msg("server error")

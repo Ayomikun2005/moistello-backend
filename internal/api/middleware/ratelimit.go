@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,12 +13,15 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/moistello/backend/config"
+	"github.com/moistello/backend/internal/infrastructure/ratelimit"
 )
 
 // errRedisUnavailable is returned when Redis cannot be reached during a rate
-// limit check. The middleware translates this into a 503 Service Unavailable
-// (fail-closed) rather than allowing the request through.
+// limit check. The middleware falls back to an in-memory rate limiter rather
+// than failing closed with 503.
 var errRedisUnavailable = errors.New("rate limiter: Redis unavailable")
+
+var inMemoryLimiter = ratelimit.NewInMemoryRateLimiter()
 
 func RateLimitMiddleware(redisClient *redis.Client, cfg config.RateLimitConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -30,12 +34,8 @@ func RateLimitMiddleware(redisClient *redis.Client, cfg config.RateLimitConfig) 
 
 		allowed, remaining, ttl, err := checkLimit(c, redisClient, key, limit)
 		if err != nil {
-			// Redis is down — fail closed with 503.
-			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
-				"success": false,
-				"error":   "rate limiter unavailable, try again later",
-			})
-			return
+			log.Warn().Err(err).Str("key", key).Msg("rate limit check failed: falling back to in-memory limiter")
+			allowed, remaining, ttl, _ = inMemoryLimiter.Check(c.Request.Context(), key, limit, 1*time.Minute)
 		}
 
 		setRateLimitHeaders(c, limit, remaining, ttl)
@@ -59,12 +59,8 @@ func AuthRateLimitMiddleware(redisClient *redis.Client, cfg config.RateLimitConf
 
 		allowed, remaining, ttl, err := checkLimit(c, redisClient, key, limit)
 		if err != nil {
-			// Redis is down — fail closed with 503.
-			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
-				"success": false,
-				"error":   "rate limiter unavailable, try again later",
-			})
-			return
+			log.Warn().Err(err).Str("key", key).Msg("rate limit check failed: falling back to in-memory limiter")
+			allowed, remaining, ttl, _ = inMemoryLimiter.Check(c.Request.Context(), key, limit, 1*time.Minute)
 		}
 
 		setRateLimitHeaders(c, limit, remaining, ttl)
@@ -86,11 +82,8 @@ func PerResourceRateLimitMiddleware(redisClient *redis.Client, resource string, 
 		key := fmt.Sprintf("ratelimit:r:%s:%s", resource, c.ClientIP())
 		allowed, remaining, ttl, err := checkLimitWithWindow(c, redisClient, key, limit, window)
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
-				"success": false,
-				"error":   "rate limiter unavailable, try again later",
-			})
-			return
+			log.Warn().Err(err).Str("key", key).Msg("rate limit check failed: falling back to in-memory limiter")
+			allowed, remaining, ttl, _ = inMemoryLimiter.Check(c.Request.Context(), key, limit, window)
 		}
 
 		setRateLimitHeaders(c, limit, remaining, ttl)
@@ -111,40 +104,39 @@ func checkLimit(c *gin.Context, redisClient *redis.Client, key string, limit int
 	return checkLimitWithWindow(c, redisClient, key, limit, 1*time.Minute)
 }
 
-// checkLimitWithWindow implements a simple counter-based rate limiter.
-// It returns (allowed, remaining, ttl, err).
-// err is non-nil only when Redis is unreachable — callers must treat this as a
-// hard failure (fail-closed) and return 503 to the client.
+// checkLimitWithWindow implements a Redis-backed sliding window rate limiter
+// using a sorted set with timestamps as scores. It returns (allowed, remaining, ttl, err).
+// err is non-nil only when Redis is unreachable — callers fall back to an
+// in-memory rate limiter rather than failing the request.
 func checkLimitWithWindow(c *gin.Context, redisClient *redis.Client, key string, limit int, window time.Duration) (bool, int, time.Duration, error) {
 	reqCtx := c.Request.Context()
+	redisKey := fmt.Sprintf("ratelimit:%s", key)
 
-	current, err := redisClient.Get(reqCtx, key).Int()
-	if err != nil && err != redis.Nil {
-		log.Error().Err(err).Str("key", key).Msg("rate limit check failed: Redis unreachable, failing closed")
+	now := time.Now().UnixNano()
+	windowStart := now - window.Nanoseconds()
+
+	pipe := redisClient.Pipeline()
+	pipe.ZRemRangeByScore(reqCtx, redisKey, "-inf", fmt.Sprintf("%d", windowStart))
+	pipe.ZAdd(reqCtx, redisKey, &redis.Z{Score: float64(now), Member: now})
+	pipe.ZCard(reqCtx, redisKey)
+	pipe.Expire(reqCtx, redisKey, window)
+
+	results, err := pipe.Exec(reqCtx)
+	if err != nil {
+		log.Error().Err(err).Str("key", key).Msg("rate limit sliding window failed: Redis unreachable")
 		return false, 0, 0, errRedisUnavailable
 	}
 
-	remaining := limit - current - 1
-	if remaining < 0 {
-		remaining = 0
-	}
-
-	if current >= limit {
-		ttl, err := redisClient.TTL(reqCtx, key).Result()
+	count := results[2].(*redis.IntCmd).Val()
+	if count > int64(limit) {
+		ttl, err := redisClient.TTL(reqCtx, redisKey).Result()
 		if err != nil || ttl < 0 {
 			ttl = window
 		}
 		return false, 0, ttl, nil
 	}
 
-	pipe := redisClient.Pipeline()
-	pipe.Incr(reqCtx, key)
-	pipe.Expire(reqCtx, key, window)
-	if _, err := pipe.Exec(reqCtx); err != nil {
-		log.Error().Err(err).Str("key", key).Msg("rate limit pipeline failed: Redis unreachable, failing closed")
-		return false, 0, 0, errRedisUnavailable
-	}
-
+	remaining := limit - int(count)
 	return true, remaining, window, nil
 }
 
