@@ -3,7 +3,11 @@ package integration_test
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/moistello/backend/internal/api/handler"
+	"github.com/moistello/backend/internal/api/middleware"
 	"github.com/moistello/backend/internal/domain/circle"
 	"github.com/moistello/backend/internal/domain/community"
 	"github.com/moistello/backend/internal/domain/contribution"
@@ -22,6 +27,7 @@ import (
 	"github.com/moistello/backend/internal/domain/payout"
 	"github.com/moistello/backend/internal/domain/savings"
 	"github.com/moistello/backend/internal/domain/user"
+	"github.com/moistello/backend/pkg/apperrors"
 )
 
 // ── Mock implementations ──────────────────────────────────────────────
@@ -137,6 +143,12 @@ func (m *mockCircleService) Exit(_ context.Context, _, _ string) error          
 func (m *mockCircleService) GetMembers(_ context.Context, _ string) ([]circle.CircleMember, error) {
 	return []circle.CircleMember{}, nil
 }
+func (m *mockCircleService) IsMember(_ context.Context, _, _ string) (bool, error) {
+	return false, nil
+}
+func (m *mockCircleService) RemoveMember(_ context.Context, _, _, _ string, _ string) error {
+	return nil
+}
 
 type mockInviteService struct{}
 
@@ -166,7 +178,7 @@ func (m *mockContribService) GetCircleHistory(_ context.Context, _ string, _, _ 
 type mockContribRepo struct{}
 
 func (m *mockContribRepo) FindByID(_ context.Context, _ uuid.UUID) (*contribution.Contribution, error) {
-	return nil, nil
+	return nil, apperrors.ErrNotFound
 }
 func (m *mockContribRepo) FindByCircleAndUser(_ context.Context, _, _ uuid.UUID) (*contribution.Contribution, error) {
 	return nil, nil
@@ -191,12 +203,14 @@ func (m *mockPayoutService) GetUserHistory(_ context.Context, _ string, _, _ int
 	return []payout.Payout{}, 0, nil
 }
 func (m *mockPayoutService) GetCircleHistory(_ context.Context, _ string, _, _ int) ([]payout.Payout, int, error) {
-	return []payout.Payout{}, 0, nil
+	return []payout.Payout{{ID: uuid.New()}}, 1, nil
 }
 
 type mockPayoutRepo struct{}
 
-func (m *mockPayoutRepo) FindByID(_ context.Context, _ uuid.UUID) (*payout.Payout, error) { return nil, nil }
+func (m *mockPayoutRepo) FindByID(_ context.Context, _ uuid.UUID) (*payout.Payout, error) {
+	return nil, apperrors.ErrNotFound
+}
 func (m *mockPayoutRepo) Create(_ context.Context, _ *payout.Payout) error               { return nil }
 func (m *mockPayoutRepo) ListByUser(_ context.Context, _ uuid.UUID, _, _ int) ([]payout.Payout, int, error) {
 	return []payout.Payout{}, 0, nil
@@ -333,7 +347,6 @@ func setupTestRouter() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 
 	circleSvc := &mockCircleService{}
-	circleRepo := &mockCircleRepo{}
 	inviteSvc := &mockInviteService{}
 	contribSvc := &mockContribService{}
 	contribRepo := &mockContribRepo{}
@@ -484,7 +497,7 @@ func TestCircleRoutes_CreateCircle_MissingName(t *testing.T) {
 		"contributionAmount": 100, "currency": "USDC", "frequency": "weekly",
 		"maxMembers": 5,
 	})
-	assert.Equal(t, http.StatusBadRequest, code)
+	assert.Equal(t, http.StatusUnprocessableEntity, code)
 }
 
 func TestCircleRoutes_GetCircle_HappyPath(t *testing.T) {
@@ -519,7 +532,7 @@ func TestCircleRoutes_CloseCircle_HappyPath(t *testing.T) {
 	r := setupTestRouter()
 	circleID := uuid.New().String()
 	orgID := uuid.New().String()
-	code, resp := authedRequest(t, r, "POST", "/v1/circles/"+circleID+"/close", orgID, nil)
+	code, _ := authedRequest(t, r, "POST", "/v1/circles/"+circleID+"/close", orgID, nil)
 	assert.Equal(t, http.StatusOK, code)
 }
 
@@ -721,7 +734,9 @@ func TestPayoutRoutes_GetPayout_NotFound(t *testing.T) {
 func TestCommunityRoutes_Create_HappyPath(t *testing.T) {
 	r := setupTestRouter()
 	code, resp := authedRequest(t, r, "POST", "/v1/communities", uuid.New().String(), map[string]any{
-		"name": "Test Community",
+		"name":     "Test Community",
+		"slug":     "test-community",
+		"category": "finance",
 	})
 	assert.Equal(t, http.StatusCreated, code)
 	assert.Contains(t, resp, "data")
@@ -1022,26 +1037,46 @@ func TestWebhookRoutes_Delete_NotFound(t *testing.T) {
 
 // ── Unauthenticated access ────────────────────────────────────────────
 
+// testPublicKeyPEM returns a fresh RSA public key in PEM form, matching the
+// key format the JWT auth middleware expects.
+func testPublicKeyPEM(t *testing.T) []byte {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	pubDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	require.NoError(t, err)
+	return pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
+}
+
 func TestUnauthenticatedAccess_CircleCreate(t *testing.T) {
-	r := setupTestRouter()
+	r := gin.New()
+	r.Use(middleware.AuthMiddleware(testPublicKeyPEM(t)))
+	circleHandler := handler.NewCircleHandler(&mockCircleService{}, nil, nil, nil)
+	r.POST("/v1/circles", circleHandler.CreateCircle)
 	code, _ := unauthRequest(t, r, "POST", "/v1/circles", map[string]any{
 		"name": "Test Circle",
 	})
-	assert.Contains(t, []int{401, 403, 500}, code)
+	assert.Equal(t, http.StatusUnauthorized, code)
 }
 
 func TestUnauthenticatedAccess_Contributions(t *testing.T) {
-	r := setupTestRouter()
+	r := gin.New()
+	r.Use(middleware.AuthMiddleware(testPublicKeyPEM(t)))
+	contribHandler := handler.NewContributionHandler(&mockContribService{}, &mockContribRepo{})
+	r.GET("/v1/contributions", contribHandler.ListContributions)
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/v1/contributions", nil)
 	r.ServeHTTP(w, req)
-	assert.Contains(t, []int{401, 403, 500}, w.Code)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 func TestUnauthenticatedAccess_Notifications(t *testing.T) {
-	r := setupTestRouter()
+	r := gin.New()
+	r.Use(middleware.AuthMiddleware(testPublicKeyPEM(t)))
+	notifHandler := handler.NewNotificationHandler(&mockNotificationService{}, &mockUserService{})
+	r.GET("/v1/notifications", notifHandler.ListNotifications)
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/v1/notifications", nil)
 	r.ServeHTTP(w, req)
-	assert.Contains(t, []int{401, 403, 500}, w.Code)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }

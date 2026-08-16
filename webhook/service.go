@@ -77,6 +77,25 @@ func (r *PostgresRepository) GetByID(ctx context.Context, id string) (*WebhookRe
 	return &wh, nil
 }
 
+func (r *PostgresRepository) GetByUserID(ctx context.Context, userID string) ([]WebhookRegistration, error) {
+	query := `SELECT id, user_id, target_url, secret, created_at FROM webhooks WHERE user_id = $1`
+	rows, err := r.db.QueryContext(ctx, query, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []WebhookRegistration
+	for rows.Next() {
+		var wh WebhookRegistration
+		if err := rows.Scan(&wh.ID, &wh.UserID, &wh.TargetURL, &wh.Secret, &wh.CreatedAt); err != nil {
+			return nil, err
+		}
+		list = append(list, wh)
+	}
+	return list, nil
+}
+
 type Dispatcher struct {
 	repo       WebhookRepository
 	httpClient *http.Client
@@ -155,5 +174,24 @@ func VerifyWebhookSignature(payload []byte, signature, secret string) bool {
 		return false
 	}
 	expected := SignWebhookPayload(payload, secret)
-	return subtle.ConstantTimeCompare([]byte(expected), []byte(signature)) == 1
+	return constantTimeCompare([]byte(expected), []byte(signature))
+}
+
+// constantTimeCompare reports whether a and b are equal in constant time.
+func constantTimeCompare(a, b []byte) bool {
+	return subtle.ConstantTimeCompare(a, b) == 1
+}
+
+// VerifySignature reports whether two hex-encoded signatures are equal, in
+// constant time. Non-hex or length-mismatched inputs never match.
+func VerifySignature(expected, signature string) bool {
+	expectedBytes, err := hex.DecodeString(expected)
+	if err != nil {
+		return false
+	}
+	sigBytes, err := hex.DecodeString(signature)
+	if err != nil {
+		return false
+	}
+	return constantTimeCompare(expectedBytes, sigBytes)
 }

@@ -1,6 +1,10 @@
 package production
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -17,7 +21,7 @@ import (
 
 func TestSecurity_JWTAuth_AllScenarios(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	secret := []byte("production-secret-key-32-bytes-xxxx")
+	publicPEM, privateKey := testRSAPEMKeys(t)
 
 	tests := []struct {
 		name       string
@@ -44,8 +48,8 @@ func TestSecurity_JWTAuth_AllScenarios(t *testing.T) {
 						IssuedAt:  jwt.NewNumericDate(time.Now().Add(-2 * time.Hour)),
 					},
 				}
-				token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-				tok, _ := token.SignedString(secret)
+				token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+				tok, _ := token.SignedString(privateKey)
 				return tok
 			},
 			wantStatus: 401,
@@ -62,8 +66,8 @@ func TestSecurity_JWTAuth_AllScenarios(t *testing.T) {
 						IssuedAt:  jwt.NewNumericDate(time.Now()),
 					},
 				}
-				token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-				tok, _ := token.SignedString(secret)
+				token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+				tok, _ := token.SignedString(privateKey)
 				return tok
 			},
 			wantStatus: 200,
@@ -80,8 +84,8 @@ func TestSecurity_JWTAuth_AllScenarios(t *testing.T) {
 						IssuedAt:  jwt.NewNumericDate(time.Now()),
 					},
 				}
-				token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-				tok, _ := token.SignedString(secret)
+				token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+				tok, _ := token.SignedString(privateKey)
 				return tok
 			},
 			wantStatus: 200,
@@ -91,7 +95,7 @@ func TestSecurity_JWTAuth_AllScenarios(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := gin.New()
-			r.Use(middleware.AuthMiddleware(secret))
+			r.Use(middleware.AuthMiddleware(publicPEM))
 			r.GET("/test", func(c *gin.Context) {
 				c.JSON(200, gin.H{"userId": middleware.GetUserID(c)})
 			})
@@ -106,6 +110,18 @@ func TestSecurity_JWTAuth_AllScenarios(t *testing.T) {
 			assert.Equal(t, tt.wantStatus, w.Code, "scenario: %s", tt.name)
 		})
 	}
+}
+
+// testRSAPEMKeys generates an RSA keypair and returns the PKIX PEM-encoded
+// public key (the format AuthMiddleware expects) and the private key.
+func testRSAPEMKeys(t *testing.T) ([]byte, *rsa.PrivateKey) {
+	t.Helper()
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	pubDER, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	require.NoError(t, err)
+	publicPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
+	return publicPEM, privateKey
 }
 
 func TestSecurity_AdminMiddleware_Enforcement(t *testing.T) {
@@ -125,11 +141,11 @@ func TestSecurity_AdminMiddleware_Enforcement(t *testing.T) {
 
 func TestSecurity_OptionalAuth_Works(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	secret := []byte("test-secret")
+	publicPEM, privateKey := testRSAPEMKeys(t)
 
 	// With valid token
 	r := gin.New()
-	r.Use(middleware.OptionalAuthMiddleware(secret))
+	r.Use(middleware.OptionalAuthMiddleware(publicPEM))
 	r.GET("/public", func(c *gin.Context) {
 		uid, _ := c.Get("userID")
 		if uid == nil {
@@ -146,8 +162,8 @@ func TestSecurity_OptionalAuth_Works(t *testing.T) {
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tok, _ := token.SignedString(secret)
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	tok, _ := token.SignedString(privateKey)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/public", nil)

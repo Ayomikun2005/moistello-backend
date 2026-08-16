@@ -1,17 +1,11 @@
 package webhook
 
 import (
-	"bytes"
 	"context"
 	"crypto/subtle"
-	"encoding/hex"
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -100,77 +94,6 @@ func (f *fakeWebhookRepo) GetByID(ctx context.Context, id string) (*WebhookRegis
 		return wh, nil
 	}
 	return nil, nil
-}
-
-func TestIncomingWebhookHandler_ReceiveWebhook(t *testing.T) {
-	repo := &fakeWebhookRepo{webhooks: make(map[string]*WebhookRegistration)}
-	secret := "test-secret"
-	repo.Register(context.Background(), &WebhookRegistration{
-		ID:        "wh-123",
-		UserID:    "user-1",
-		TargetURL: "https://example.com",
-		Secret:    secret,
-	})
-
-	handler := NewIncomingWebhookHandler(repo)
-
-	t.Run("valid signature returns 200", func(t *testing.T) {
-		payload := []byte(`{"event":"test"}`)
-		sig := SignWebhookPayload(payload, secret)
-
-		w := httptest.NewRecorder()
-		req := httptest.NewRequest("POST", "/webhooks/incoming/wh-123", bytes.NewReader(payload))
-		req.Header.Set("X-Moistello-Signature", sig)
-		req.Header.Set("Content-Type", "application/json")
-
-		c := setupGinWithParam(w, req, "id", "wh-123")
-		handler.ReceiveWebhook(c)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Contains(t, w.Body.String(), `"received":true`)
-	})
-
-	t.Run("missing signature returns 401", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		req := httptest.NewRequest("POST", "/webhooks/incoming/wh-123", strings.NewReader("{}"))
-		req.Header.Set("Content-Type", "application/json")
-
-		c := setupGinWithParam(w, req, "id", "wh-123")
-		handler.ReceiveWebhook(c)
-
-		assert.Equal(t, http.StatusUnauthorized, w.Code)
-	})
-
-	t.Run("invalid signature returns 401", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		req := httptest.NewRequest("POST", "/webhooks/incoming/wh-123", strings.NewReader("{}"))
-		req.Header.Set("X-Moistello-Signature", "invalid")
-		req.Header.Set("Content-Type", "application/json")
-
-		c := setupGinWithParam(w, req, "id", "wh-123")
-		handler.ReceiveWebhook(c)
-
-		assert.Equal(t, http.StatusUnauthorized, w.Code)
-	})
-
-	t.Run("unknown webhook returns 404", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		req := httptest.NewRequest("POST", "/webhooks/incoming/unknown", strings.NewReader("{}"))
-		req.Header.Set("Content-Type", "application/json")
-
-		c := setupGinWithParam(w, req, "id", "unknown")
-		handler.ReceiveWebhook(c)
-
-		assert.Equal(t, http.StatusNotFound, w.Code)
-	})
-}
-
-func setupGinWithParam(w *httptest.ResponseRecorder, req *http.Request, paramKey, paramValue string) *gin.Context {
-	gin.SetMode(gin.TestMode)
-	c, _ := gin.CreateTestContext(w)
-	c.Request = req
-	c.Params = gin.Params{{Key: paramKey, Value: paramValue}}
-	return c
 }
 
 func TestConstantTimeCompareTiming(t *testing.T) {

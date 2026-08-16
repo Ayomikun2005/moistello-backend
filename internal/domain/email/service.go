@@ -108,6 +108,7 @@ func (s *Service) sendBrevo(ctx context.Context, to, subject, htmlBody string) e
 		return fmt.Errorf("brevo API error: %s", resp.Status)
 	}
 
-	logger.Ctx(ctx).Info().Str("to", to).Str("subject", subject).Msg("email sent via brevo")
+	log := logger.Ctx(ctx)
+	log.Info().Str("to", to).Str("subject", subject).Msg("email sent via brevo")
 	return nil
 }
