@@ -24,6 +24,7 @@ type Service interface {
 	Join(ctx context.Context, circleID, userID string, inviteCode string) error
 	Exit(ctx context.Context, circleID, userID string) error
 	GetMembers(ctx context.Context, circleID string) ([]CircleMember, error)
+	IsMember(ctx context.Context, circleID, userID string) (bool, error)
 	RemoveMember(ctx context.Context, circleID, callerID, memberAddress string, reason string) error
 }
 
@@ -583,6 +584,27 @@ func (s *circleService) GetMembers(ctx context.Context, circleID string) ([]Circ
 		return nil, fmt.Errorf("getting members: %w", err)
 	}
 	return members, nil
+}
+
+// IsMember reports whether the user is an active member of the circle.
+func (s *circleService) IsMember(ctx context.Context, circleID, userID string) (bool, error) {
+	cid, err := parseUUID(circleID)
+	if err != nil {
+		return false, err
+	}
+	uid, err := parseUUID(userID)
+	if err != nil {
+		return false, err
+	}
+
+	member, err := s.repo.FindMemberByCircleAndUser(ctx, cid, uid)
+	if err != nil {
+		if err == apperrors.ErrNotFound {
+			return false, nil
+		}
+		return false, fmt.Errorf("checking circle membership: %w", err)
+	}
+	return member != nil && member.Status == MemberStatusActive, nil
 }
 
 // RemoveMember lets the circle organizer forcibly remove a member by their user ID.

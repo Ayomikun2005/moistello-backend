@@ -100,7 +100,6 @@ func TestCircleService_Create_MemberCreationFails(t *testing.T) {
 
 	repo.On("Create", ctx, mock.AnythingOfType("*circle.Circle")).Return(nil)
 	repo.On("CreateMember", ctx, mock.AnythingOfType("*circle.CircleMember")).Return(assert.AnError)
-	repo.On("Delete", ctx, mock.AnythingOfType("uuid.UUID")).Return(nil)
 
 	c, err := svc.Create(ctx, orgID, circle.CreateCircleInput{
 		Name:               "Fail Circle",
@@ -199,8 +198,6 @@ func TestCircleService_Join_PrivateWithoutInvite(t *testing.T) {
 		MaxMembers: 10, CircleType: circle.CircleTypePrivate,
 	}
 	repo.On("FindByID", ctx, mock.AnythingOfType("uuid.UUID")).Return(c, nil)
-	repo.On("GetMemberCount", ctx, mock.AnythingOfType("uuid.UUID")).Return(3, nil)
-	repo.On("FindMemberByCircleAndUser", ctx, mock.AnythingOfType("uuid.UUID"), mock.AnythingOfType("uuid.UUID")).Return(nil, apperrors.ErrNotFound)
 
 	err := svc.Join(ctx, cid, uid, "")
 

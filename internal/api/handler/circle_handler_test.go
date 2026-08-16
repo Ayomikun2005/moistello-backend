@@ -90,7 +90,7 @@ func TestCircleHandler_CreateCircle_InvalidPayload(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
-	assert.Equal(t, 400, w.Code)
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
 }
 
 func TestCircleHandler_ListCircles_Empty(t *testing.T) {

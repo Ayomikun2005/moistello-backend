@@ -131,7 +131,15 @@ func (s *lifecycleCircleService) Exit(context.Context, string, string) error { r
 func (s *lifecycleCircleService) GetMembers(
 	context.Context, string,
 ) ([]circle.CircleMember, error) {
-	return nil, nil
+	return []circle.CircleMember{}, nil
+}
+
+func (s *lifecycleCircleService) IsMember(_ context.Context, _, _ string) (bool, error) {
+	return false, nil
+}
+
+func (s *lifecycleCircleService) RemoveMember(_ context.Context, _, _, _ string, _ string) error {
+	return nil
 }
 
 type lifecycleContributionService struct{ store *lifecycleStore }
@@ -541,8 +549,9 @@ func TestCircleLifecycle_GetMembers_Empty(t *testing.T) {
 	router.GET("/circles/:id/members", h.GetMembers)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/circles/"+uuid.New().String(), nil)
+	req, _ := http.NewRequest("GET", "/circles/"+uuid.New().String()+"/members", nil)
 	router.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), `"members":[]`)
 }
