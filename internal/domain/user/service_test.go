@@ -2,6 +2,8 @@ package user_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"testing"
 	"time"
 
@@ -118,7 +120,8 @@ func TestUserService_UpdateProfile_AllFields(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Equal(t, "Bob", *u.DisplayName)
-	assert.Equal(t, "bob@example.com", *u.Email)
+	hash := sha256.Sum256([]byte("bob@example.com"))
+	assert.Equal(t, hex.EncodeToString(hash[:]), *u.Email)
 	assert.Equal(t, "+1234567890", *u.Phone)
 	assert.Equal(t, "US", *u.CountryCode)
 	assert.Equal(t, "es", u.PreferredLanguage)

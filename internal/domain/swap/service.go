@@ -13,16 +13,16 @@ import (
 )
 
 type Service struct {
-	repo           Repository
-	circleService  *circle.Service
-	userService    *user.Service
+	repo             Repository
+	circleService    circle.Service
+	userService      user.Service
 	escrowSwapClient *soroban.EscrowSwapClient
 }
 
 func NewService(
 	repo Repository,
-	circleService *circle.Service,
-	userService *user.Service,
+	circleService circle.Service,
+	userService user.Service,
 	escrowSwapClient *soroban.EscrowSwapClient,
 ) *Service {
 	return &Service{
@@ -35,21 +35,21 @@ func NewService(
 
 func (s *Service) CreateSwapOffer(ctx context.Context, userID string, req SwapOfferRequest) (*SwapOffer, error) {
 	// Verify user is a member of the circle
-	_, err := s.circleService.GetCircle(ctx, req.CircleID)
+	_, err := s.circleService.Get(ctx, req.CircleID)
 	if err != nil {
-		return nil, apperrors.NewBadRequest("invalid circle ID")
+		return nil, fmt.Errorf("%w: invalid circle ID", apperrors.ErrInvalidInput)
 	}
 
 	isMember, err := s.circleService.IsMember(ctx, req.CircleID, userID)
 	if err != nil || !isMember {
-		return nil, apperrors.NewForbidden("user is not a member of this circle")
+		return nil, fmt.Errorf("%w: user is not a member of this circle", apperrors.ErrForbidden)
 	}
 
 	// If offeree is specified, verify they are also a circle member
 	if req.OffereeUserID != nil {
 		isOffereeMember, err := s.circleService.IsMember(ctx, req.CircleID, *req.OffereeUserID)
 		if err != nil || !isOffereeMember {
-			return nil, apperrors.NewBadRequest("offeree is not a member of this circle")
+			return nil, fmt.Errorf("%w: offeree is not a member of this circle", apperrors.ErrInvalidInput)
 		}
 	}
 
@@ -117,28 +117,28 @@ func (s *Service) AcceptSwapOffer(ctx context.Context, userID string, swapOfferI
 	// Get the swap offer
 	offer, err := s.repo.GetSwapOfferByID(ctx, swapOfferID)
 	if err != nil {
-		return nil, apperrors.NewNotFound("swap offer not found")
+		return nil, fmt.Errorf("%w: swap offer not found", apperrors.ErrNotFound)
 	}
 
 	// Verify the offer is in created status
 	if offer.Status != SwapOfferStatusCreated {
-		return nil, apperrors.NewBadRequest("swap offer is not available for acceptance")
+		return nil, fmt.Errorf("%w: swap offer is not available for acceptance", apperrors.ErrInvalidInput)
 	}
 
 	// Verify the acceptor is the intended offeree (or any member if no offeree specified)
 	if offer.OffereeUserID != nil && *offer.OffereeUserID != userID {
-		return nil, apperrors.NewForbidden("only the specified offeree can accept this swap")
+		return nil, fmt.Errorf("%w: only the specified offeree can accept this swap", apperrors.ErrForbidden)
 	}
 
 	// Verify acceptor is a circle member
 	isMember, err := s.circleService.IsMember(ctx, offer.CircleID, userID)
 	if err != nil || !isMember {
-		return nil, apperrors.NewForbidden("user is not a member of this circle")
+		return nil, fmt.Errorf("%w: user is not a member of this circle", apperrors.ErrForbidden)
 	}
 
 	// Verify the acceptor is not the offeror
 	if offer.OfferorUserID == userID {
-		return nil, apperrors.NewBadRequest("cannot accept your own swap offer")
+		return nil, fmt.Errorf("%w: cannot accept your own swap offer", apperrors.ErrInvalidInput)
 	}
 
 	// Update database first
@@ -183,7 +183,7 @@ func (s *Service) AcceptSwapOffer(ctx context.Context, userID string, swapOfferI
 }
 
 func (s *Service) GetSwapHistory(ctx context.Context, userID string, filter SwapHistoryFilter) (*SwapHistoryResponse, error) {
-	swaps, total, _, err := s.repo.ListUserSwapOffers(ctx, userID, filter)
+	swaps, total, err := s.repo.ListUserSwapOffers(ctx, userID, filter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch swap history: %w", err)
 	}
@@ -202,8 +202,8 @@ func (s *Service) getUserContractID(ctx context.Context, userID string) (string,
 		return "", fmt.Errorf("failed to get user: %w", err)
 	}
 	// Return user's wallet public key as the contract identifier
-	if len(user.Wallets) > 0 {
-		return user.Wallets[0].PublicKey, nil
+	if user.WalletAddress != "" {
+		return user.WalletAddress, nil
 	}
-	return "", apperrors.NewBadRequest("user has no wallet")
+	return "", fmt.Errorf("%w: user has no wallet", apperrors.ErrInvalidInput)
 }

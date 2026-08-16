@@ -26,7 +26,7 @@ func (l *RedisRateLimiter) slidingWindowRedis(ctx context.Context, key string, m
 
 	pipe := l.client.Pipeline()
 	pipe.ZRemRangeByScore(ctx, redisKey, "-inf", fmt.Sprintf("%d", windowStart))
-	pipe.ZAdd(ctx, redisKey, &redis.Z{Score: float64(now), Member: now})
+	pipe.ZAdd(ctx, redisKey, redis.Z{Score: float64(now), Member: now})
 	pipe.ZCard(ctx, redisKey)
 	pipe.Expire(ctx, redisKey, window)
 

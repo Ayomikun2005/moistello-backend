@@ -285,7 +285,7 @@ func (s *service) RecordContribution(ctx context.Context, userID string) (*Savin
 	now := time.Now().UTC()
 	
 	// Get existing streak or create new one
-	streak, err := s.repo.FindByUserID(ctx, uid)
+	streak, err := s.repo.FindStreakByUserID(ctx, uid)
 	if err != nil {
 		if err == ErrIncentiveNotFound {
 			// Create new streak
@@ -345,7 +345,7 @@ func (s *service) GrantStreakBonus(ctx context.Context, userID string) (*Incenti
 		return nil, err
 	}
 	
-	streak, err := s.repo.FindByUserID(ctx, uid)
+	streak, err := s.repo.FindStreakByUserID(ctx, uid)
 	if err != nil {
 		return nil, fmt.Errorf("finding savings streak: %w", err)
 	}

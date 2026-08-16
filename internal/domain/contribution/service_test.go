@@ -15,7 +15,7 @@ import (
 
 func TestContributionService_Record_Success(t *testing.T) {
 	repo := new(contribMocks.Repository)
-	svc := contribution.NewService(repo, nil)
+	svc := contribution.NewService(repo, nil, nil)
 	ctx := context.Background()
 
 	input := contribution.RecordInput{
@@ -40,7 +40,7 @@ func TestContributionService_Record_Success(t *testing.T) {
 
 func TestContributionService_Record_Conflict(t *testing.T) {
 	repo := new(contribMocks.Repository)
-	svc := contribution.NewService(repo, nil)
+	svc := contribution.NewService(repo, nil, nil)
 	ctx := context.Background()
 
 	input := contribution.RecordInput{
@@ -62,7 +62,7 @@ func TestContributionService_Record_Conflict(t *testing.T) {
 
 func TestContributionService_Record_InvalidUUID(t *testing.T) {
 	repo := new(contribMocks.Repository)
-	svc := contribution.NewService(repo, nil)
+	svc := contribution.NewService(repo, nil, nil)
 	ctx := context.Background()
 
 	input := contribution.RecordInput{
@@ -81,7 +81,7 @@ func TestContributionService_Record_InvalidUUID(t *testing.T) {
 
 func TestContributionService_GetUserHistory_Success(t *testing.T) {
 	repo := new(contribMocks.Repository)
-	svc := contribution.NewService(repo, nil)
+	svc := contribution.NewService(repo, nil, nil)
 	ctx := context.Background()
 	userID := uuid.New().String()
 
@@ -101,7 +101,7 @@ func TestContributionService_GetUserHistory_Success(t *testing.T) {
 
 func TestContributionService_GetCircleHistory_Success(t *testing.T) {
 	repo := new(contribMocks.Repository)
-	svc := contribution.NewService(repo, nil)
+	svc := contribution.NewService(repo, nil, nil)
 	ctx := context.Background()
 	circleID := uuid.New().String()
 
@@ -120,7 +120,7 @@ func TestContributionService_GetCircleHistory_Success(t *testing.T) {
 
 func TestContributionService_GetUserHistory_InvalidUUID(t *testing.T) {
 	repo := new(contribMocks.Repository)
-	svc := contribution.NewService(repo, nil)
+	svc := contribution.NewService(repo, nil, nil)
 	ctx := context.Background()
 
 	_, _, err := svc.GetUserHistory(ctx, "not-a-uuid", 1, 10)
@@ -130,7 +130,7 @@ func TestContributionService_GetUserHistory_InvalidUUID(t *testing.T) {
 
 func TestContributionService_GetUserHistory_Empty(t *testing.T) {
 	repo := new(contribMocks.Repository)
-	svc := contribution.NewService(repo, nil)
+	svc := contribution.NewService(repo, nil, nil)
 	ctx := context.Background()
 	userID := uuid.New().String()
 

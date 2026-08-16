@@ -36,7 +36,7 @@ type Repository interface {
 	
 	// Savings Streak
 	CreateSavingsStreak(ctx context.Context, streak *SavingsStreak) error
-	FindByUserID(ctx context.Context, userID uuid.UUID) (*SavingsStreak, error)
+	FindStreakByUserID(ctx context.Context, userID uuid.UUID) (*SavingsStreak, error)
 	UpdateSavingsStreak(ctx context.Context, streak *SavingsStreak) error
 	
 	// Config
@@ -230,7 +230,7 @@ func (r *repository) CreateSavingsStreak(ctx context.Context, streak *SavingsStr
 	return nil
 }
 
-func (r *repository) FindByUserID(ctx context.Context, userID uuid.UUID) (*SavingsStreak, error) {
+func (r *repository) FindStreakByUserID(ctx context.Context, userID uuid.UUID) (*SavingsStreak, error) {
 	var streak SavingsStreak
 	query := `SELECT * FROM savings_streaks WHERE user_id = $1`
 	err := r.db.GetContext(ctx, &streak, query, userID)

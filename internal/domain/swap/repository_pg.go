@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/moistello/backend/pkg/postgres"
 )
 
 type PostgresRepository struct {
@@ -36,7 +35,7 @@ func (r *PostgresRepository) CreateSwapOffer(ctx context.Context, offer *SwapOff
 	)
 
 	if err != nil {
-		return fmt.Errorf("failed to create swap offer: %w", postgres.HandleError(err))
+		return fmt.Errorf("failed to create swap offer: %w", err)
 	}
 
 	return nil
@@ -48,7 +47,7 @@ func (r *PostgresRepository) GetSwapOfferByID(ctx context.Context, id string) (*
 	var offer SwapOffer
 	err := r.db.GetContext(ctx, &offer, query, id)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get swap offer: %w", postgres.HandleError(err))
+		return nil, fmt.Errorf("failed to get swap offer: %w", err)
 	}
 
 	// Check if offer is expired
@@ -74,16 +73,15 @@ func (r *PostgresRepository) UpdateSwapOfferStatus(ctx context.Context, id strin
 
 	_, err := r.db.ExecContext(ctx, query, params...)
 	if err != nil {
-		return fmt.Errorf("failed to update swap offer status: %w", postgres.HandleError(err))
+		return fmt.Errorf("failed to update swap offer status: %w", err)
 	}
 
 	return nil
 }
 
-func (r *PostgresRepository) ListUserSwapOffers(ctx context.Context, userID string, filter SwapHistoryFilter) ([]SwapOffer, int, int, error) {
+func (r *PostgresRepository) ListUserSwapOffers(ctx context.Context, userID string, filter SwapHistoryFilter) ([]SwapOffer, int, error) {
 	baseQuery := `FROM swap_offers WHERE (offeror_user_id = $1 OR offeree_user_id = $1)`
 	countQuery := `SELECT COUNT(*) ` + baseQuery
-	query := `SELECT * ` + baseQuery
 
 	args := []interface{}{userID}
 	argIdx := 2
@@ -100,23 +98,22 @@ func (r *PostgresRepository) ListUserSwapOffers(ctx context.Context, userID stri
 		argIdx++
 	}
 
-	// Add pagination
-	query = baseQuery + ` ORDER BY created_at DESC LIMIT $` + fmt.Sprintf("%d", argIdx) + ` OFFSET $` + fmt.Sprintf("%d", argIdx+1)
+	query := `SELECT * ` + baseQuery + ` ORDER BY created_at DESC LIMIT $` + fmt.Sprintf("%d", argIdx) + ` OFFSET $` + fmt.Sprintf("%d", argIdx+1)
 	args = append(args, filter.Limit, filter.Offset)
 
 	var total int
 	err := r.db.GetContext(ctx, &total, countQuery, userID)
 	if err != nil {
-		return nil, 0, 0, fmt.Errorf("failed to count swap offers: %w", err)
+		return nil, 0, fmt.Errorf("failed to count swap offers: %w", err)
 	}
 
 	var offers []SwapOffer
 	err = r.db.SelectContext(ctx, &offers, query, args...)
 	if err != nil {
-		return nil, 0, 0, fmt.Errorf("failed to list swap offers: %w", err)
+		return nil, 0, fmt.Errorf("failed to list swap offers: %w", err)
 	}
 
-	return offers, total, len(offers), nil
+	return offers, total, nil
 }
 
 func (r *PostgresRepository) ListCircleSwapOffers(ctx context.Context, circleID string, filter SwapHistoryFilter) ([]SwapOffer, int, error) {
@@ -133,7 +130,7 @@ func (r *PostgresRepository) ListCircleSwapOffers(ctx context.Context, circleID 
 		argIdx++
 	}
 
-	query = baseQuery + ` ORDER BY created_at DESC LIMIT $` + fmt.Sprintf("%d", argIdx) + ` OFFSET $` + fmt.Sprintf("%d", argIdx+1)
+	query = `SELECT * ` + baseQuery + ` ORDER BY created_at DESC LIMIT $` + fmt.Sprintf("%d", argIdx) + ` OFFSET $` + fmt.Sprintf("%d", argIdx+1)
 	args = append(args, filter.Limit, filter.Offset)
 
 	var total int

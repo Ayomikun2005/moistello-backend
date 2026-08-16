@@ -8,11 +8,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestGenerateReferralCode(t *testing.T) {
-	repo := &mockRepository{}
+	repo := newMockRepository()
 	service := NewService(repo)
 	
 	userID := uuid.New().String()
@@ -25,7 +24,7 @@ func TestGenerateReferralCode(t *testing.T) {
 }
 
 func TestApplyReferralCode(t *testing.T) {
-	repo := &mockRepository{}
+	repo := newMockRepository()
 	service := NewService(repo)
 	
 	referrerID := uuid.New()
@@ -54,7 +53,7 @@ func TestApplyReferralCode(t *testing.T) {
 }
 
 func TestApplyReferralCode_SelfReferral(t *testing.T) {
-	repo := &mockRepository{}
+	repo := newMockRepository()
 	service := NewService(repo)
 	
 	userID := uuid.New()
@@ -74,7 +73,7 @@ func TestApplyReferralCode_SelfReferral(t *testing.T) {
 }
 
 func TestApplyReferralCode_AlreadyUsed(t *testing.T) {
-	repo := &mockRepository{}
+	repo := newMockRepository()
 	service := NewService(repo)
 	
 	referrerID := uuid.New()
@@ -95,7 +94,7 @@ func TestApplyReferralCode_AlreadyUsed(t *testing.T) {
 }
 
 func TestGrantCircleCompletionReward(t *testing.T) {
-	repo := &mockRepository{}
+	repo := newMockRepository()
 	service := NewService(repo)
 	
 	userID := uuid.New()
@@ -115,7 +114,7 @@ func TestGrantCircleCompletionReward(t *testing.T) {
 }
 
 func TestGrantCircleCompletionReward_AlreadyReceived(t *testing.T) {
-	repo := &mockRepository{}
+	repo := newMockRepository()
 	service := NewService(repo)
 	
 	userID := uuid.New()
@@ -142,7 +141,7 @@ func TestGrantCircleCompletionReward_AlreadyReceived(t *testing.T) {
 }
 
 func TestCalculateContributionMatch(t *testing.T) {
-	repo := &mockRepository{}
+	repo := newMockRepository()
 	service := NewService(repo)
 	
 	repo.config = &IncentiveConfig{
@@ -167,7 +166,7 @@ func TestCalculateContributionMatch(t *testing.T) {
 }
 
 func TestRecordContribution_NewStreak(t *testing.T) {
-	repo := &mockRepository{}
+	repo := newMockRepository()
 	service := NewService(repo)
 	
 	userID := uuid.New()
@@ -186,7 +185,7 @@ func TestRecordContribution_NewStreak(t *testing.T) {
 }
 
 func TestRecordContribution_ContinueStreak(t *testing.T) {
-	repo := &mockRepository{}
+	repo := newMockRepository()
 	service := NewService(repo)
 	
 	userID := uuid.New()
@@ -213,7 +212,7 @@ func TestRecordContribution_ContinueStreak(t *testing.T) {
 }
 
 func TestRecordContribution_ResetStreak(t *testing.T) {
-	repo := &mockRepository{}
+	repo := newMockRepository()
 	service := NewService(repo)
 	
 	userID := uuid.New()
@@ -239,7 +238,7 @@ func TestRecordContribution_ResetStreak(t *testing.T) {
 }
 
 func TestGrantStreakBonus(t *testing.T) {
-	repo := &mockRepository{}
+	repo := newMockRepository()
 	service := NewService(repo)
 	
 	userID := uuid.New()
@@ -269,7 +268,7 @@ func TestGrantStreakBonus(t *testing.T) {
 }
 
 func TestGrantFirstDepositBonus(t *testing.T) {
-	repo := &mockRepository{}
+	repo := newMockRepository()
 	service := NewService(repo)
 	
 	userID := uuid.New()
@@ -289,7 +288,7 @@ func TestGrantFirstDepositBonus(t *testing.T) {
 }
 
 func TestGrantFirstDepositBonus_BelowMinimum(t *testing.T) {
-	repo := &mockRepository{}
+	repo := newMockRepository()
 	service := NewService(repo)
 	
 	userID := uuid.New()
@@ -307,7 +306,7 @@ func TestGrantFirstDepositBonus_BelowMinimum(t *testing.T) {
 }
 
 func TestGrantFirstDepositBonus_AlreadyReceived(t *testing.T) {
-	repo := &mockRepository{}
+	repo := newMockRepository()
 	service := NewService(repo)
 	
 	userID := uuid.New()
@@ -333,7 +332,7 @@ func TestGrantFirstDepositBonus_AlreadyReceived(t *testing.T) {
 }
 
 func TestClaimIncentive(t *testing.T) {
-	repo := &mockRepository{}
+	repo := newMockRepository()
 	service := NewService(repo)
 	
 	userID := uuid.New()
@@ -352,7 +351,7 @@ func TestClaimIncentive(t *testing.T) {
 }
 
 func TestClaimIncentive_NotOwner(t *testing.T) {
-	repo := &mockRepository{}
+	repo := newMockRepository()
 	service := NewService(repo)
 	
 	userID := uuid.New()
@@ -371,7 +370,7 @@ func TestClaimIncentive_NotOwner(t *testing.T) {
 }
 
 func TestClaimIncentive_AlreadyClaimed(t *testing.T) {
-	repo := &mockRepository{}
+	repo := newMockRepository()
 	service := NewService(repo)
 	
 	userID := uuid.New()
@@ -390,7 +389,7 @@ func TestClaimIncentive_AlreadyClaimed(t *testing.T) {
 }
 
 func TestClaimIncentive_Expired(t *testing.T) {
-	repo := &mockRepository{}
+	repo := newMockRepository()
 	service := NewService(repo)
 	
 	userID := uuid.New()
@@ -410,7 +409,7 @@ func TestClaimIncentive_Expired(t *testing.T) {
 }
 
 func TestGetUserSummary(t *testing.T) {
-	repo := &mockRepository{}
+	repo := newMockRepository()
 	service := NewService(repo)
 	
 	userID := uuid.New()
@@ -434,7 +433,7 @@ func TestGetUserSummary(t *testing.T) {
 }
 
 func TestUpdateConfig(t *testing.T) {
-	repo := &mockRepository{}
+	repo := newMockRepository()
 	service := NewService(repo)
 	
 	config := &IncentiveConfig{
@@ -467,6 +466,12 @@ type mockRepository struct {
 	updatedIncentiveStatus   IncentiveStatus
 	updatedConfig            *IncentiveConfig
 	summary                  *UserIncentiveSummary
+}
+
+func newMockRepository() *mockRepository {
+	return &mockRepository{
+		referralCodeMap: map[string]*Referral{},
+	}
 }
 
 func (m *mockRepository) CreateIncentive(ctx context.Context, incentive *Incentive) error {
@@ -534,7 +539,7 @@ func (m *mockRepository) CreateSavingsStreak(ctx context.Context, streak *Saving
 	return nil
 }
 
-func (m *mockRepository) FindByUserID(ctx context.Context, userID uuid.UUID) (*SavingsStreak, error) {
+func (m *mockRepository) FindStreakByUserID(ctx context.Context, userID uuid.UUID) (*SavingsStreak, error) {
 	if m.streak != nil {
 		return m.streak, nil
 	}
