@@ -11,21 +11,30 @@ import (
 
 var Validate *validator.Validate
 
+func init() {
+	Init()
+}
+
 func Init() {
 	Validate = validator.New()
-	Validate.RegisterTagNameFunc(func(fld reflect.StructField) string {
+	registerCommon(Validate)
+	if v, ok := binding.Validator.Engine().(*validator.Validate); ok {
+		v.SetTagName("binding")
+		registerCommon(v)
+	}
+}
+
+func registerCommon(v *validator.Validate) {
+	v.RegisterTagNameFunc(func(fld reflect.StructField) string {
 		name := strings.SplitN(fld.Tag.Get("json"), ",", 2)[0]
 		if name == "-" {
 			return ""
 		}
 		return name
 	})
-	Validate.RegisterValidation("slug", func(fl validator.FieldLevel) bool {
+	v.RegisterValidation("slug", func(fl validator.FieldLevel) bool {
 		return regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`).MatchString(fl.Field().String())
 	})
-	if v, ok := binding.Validator.Engine().(*validator.Validate); ok {
-		*v = *Validate
-	}
 }
 
 func FormatError(err error) []map[string]string {
