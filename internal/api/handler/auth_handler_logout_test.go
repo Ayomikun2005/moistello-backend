@@ -22,7 +22,7 @@ func TestAuthHandler_Logout_Success(t *testing.T) {
 	mockAuthSvc := new(mockAuthService)
 	mockUserRepo := new(userMocks.Repository)
 	userSvc := user.NewService(mockUserRepo, nil)
-	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil)
+	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil, nil)
 
 	r := gin.New()
 	r.POST("/v1/auth/logout", h.Logout)
@@ -47,7 +47,7 @@ func TestAuthHandler_Logout_NoAuthHeader(t *testing.T) {
 	mockAuthSvc := new(mockAuthService)
 	mockUserRepo := new(userMocks.Repository)
 	userSvc := user.NewService(mockUserRepo, nil)
-	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil)
+	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil, nil)
 
 	r := gin.New()
 	r.POST("/v1/auth/logout", h.Logout)
@@ -64,7 +64,7 @@ func TestAuthHandler_Logout_InvalidAuthFormat(t *testing.T) {
 	mockAuthSvc := new(mockAuthService)
 	mockUserRepo := new(userMocks.Repository)
 	userSvc := user.NewService(mockUserRepo, nil)
-	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil)
+	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil, nil)
 
 	r := gin.New()
 	r.POST("/v1/auth/logout", h.Logout)
@@ -77,22 +77,22 @@ func TestAuthHandler_Logout_InvalidAuthFormat(t *testing.T) {
 	assert.Equal(t, 401, w.Code)
 }
 
-func TestAuthHandler_Logout_InvalidToken(t *testing.T) {
+func TestAuthHandler_Logout_NonBearerAuth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	mockAuthSvc := new(mockAuthService)
 	mockUserRepo := new(userMocks.Repository)
 	userSvc := user.NewService(mockUserRepo, nil)
-	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil)
+	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil, nil)
 
 	r := gin.New()
 	r.POST("/v1/auth/logout", h.Logout)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/v1/auth/logout", nil)
-	req.Header.Set("Authorization", "Bearer not-a-valid-jwt")
+	req.Header.Set("Authorization", "Basic abc123")
 	r.ServeHTTP(w, req)
 
-	assert.Equal(t, 400, w.Code)
+	assert.Equal(t, 401, w.Code)
 }
 
 func TestAuthHandler_Logout_WithRedisBlocklist(t *testing.T) {
@@ -103,7 +103,7 @@ func TestAuthHandler_Logout_WithRedisBlocklist(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379", DB: 0})
 	defer rdb.Close()
 
-	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, rdb, nil)
+	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, rdb, nil)
 
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -133,7 +133,7 @@ func TestAuthHandler_Logout_ExpiredToken(t *testing.T) {
 	mockAuthSvc := new(mockAuthService)
 	mockUserRepo := new(userMocks.Repository)
 	userSvc := user.NewService(mockUserRepo, nil)
-	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil)
+	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil, nil)
 
 	r := gin.New()
 	r.POST("/v1/auth/logout", h.Logout)

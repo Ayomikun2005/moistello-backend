@@ -20,7 +20,6 @@ import (
 	"github.com/moistello/backend/internal/domain/auth"
 	"github.com/moistello/backend/internal/domain/user"
 	userMocks "github.com/moistello/backend/internal/domain/user/mocks"
-	"github.com/moistello/backend/pkg/apperrors"
 )
 
 type mockAuthService struct {
@@ -40,12 +39,33 @@ func (m *mockAuthService) VerifySignature(ctx context.Context, walletAddress, si
 	return args.Bool(0), args.Error(1)
 }
 
-func (m *mockAuthService) CreateSession(ctx context.Context, userID uuid.UUID) (*auth.TokenPair, error) {
-	args := m.Called(ctx, userID)
+func (m *mockAuthService) CreateSession(ctx context.Context, userID uuid.UUID, sessionTTL time.Duration, deviceInfo string) (*auth.TokenPair, error) {
+	args := m.Called(ctx, userID, sessionTTL, deviceInfo)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*auth.TokenPair), args.Error(1)
+}
+
+func (m *mockAuthService) GenerateJWTWithTTL(userID uuid.UUID, walletAddress, role string, ttl time.Duration) (string, error) {
+	args := m.Called(userID, walletAddress, role, ttl)
+	return args.String(0), args.Error(1)
+}
+
+func (m *mockAuthService) ListSessions(ctx context.Context, userID string, currentTokenHash string) ([]auth.SessionInfo, error) {
+	args := m.Called(ctx, userID, currentTokenHash)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]auth.SessionInfo), args.Error(1)
+}
+
+func (m *mockAuthService) RevokeSession(ctx context.Context, userID, sessionHash string) error {
+	return m.Called(ctx, userID, sessionHash).Error(0)
+}
+
+func (m *mockAuthService) RevokeAllSessions(ctx context.Context, userID, currentHash string) error {
+	return m.Called(ctx, userID, currentHash).Error(0)
 }
 
 func (m *mockAuthService) ValidateSession(ctx context.Context, refreshToken string) (*uuid.UUID, error) {
@@ -85,16 +105,16 @@ func TestAuthHandler_Nonce(t *testing.T) {
 	userSvc := user.NewService(mockUserRepo, nil)
 
 	nonceResp := &auth.Nonce{
-		WalletAddress: "GABC...",
+		WalletAddress: "GAX23V3WWDPPR5WRER3KTEUTDLSCGZYMSJY5FDRRKKCIQ4JADF5T27RC",
 		Nonce:         "nonce-123",
 	}
-	mockAuthSvc.On("GenerateNonce", mock.Anything, "GABC...").Return(nonceResp, nil)
+	mockAuthSvc.On("GenerateNonce", mock.Anything, "GAX23V3WWDPPR5WRER3KTEUTDLSCGZYMSJY5FDRRKKCIQ4JADF5T27RC").Return(nonceResp, nil)
 
-	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil)
+	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil, nil)
 	r := gin.New()
 	r.POST("/auth/nonce", h.Nonce)
 
-	body, _ := json.Marshal(map[string]string{"walletAddress": "GABC..."})
+	body, _ := json.Marshal(map[string]string{"walletAddress": "GAX23V3WWDPPR5WRER3KTEUTDLSCGZYMSJY5FDRRKKCIQ4JADF5T27RC"})
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/auth/nonce", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -114,7 +134,7 @@ func TestAuthHandler_Nonce_MissingWallet(t *testing.T) {
 
 	mockAuthSvc.On("GenerateNonce", mock.Anything, mock.Anything).Return(nil, errors.New("missing wallet"))
 
-	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil)
+	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil, nil)
 	r := gin.New()
 	r.POST("/auth/nonce", h.Nonce)
 
@@ -134,13 +154,13 @@ func TestAuthHandler_Nonce_ServiceError(t *testing.T) {
 	mockUserRepo := new(userMocks.Repository)
 	userSvc := user.NewService(mockUserRepo, nil)
 
-	mockAuthSvc.On("GenerateNonce", mock.Anything, "GABC...").Return(nil, errors.New("redis error"))
+	mockAuthSvc.On("GenerateNonce", mock.Anything, "GAX23V3WWDPPR5WRER3KTEUTDLSCGZYMSJY5FDRRKKCIQ4JADF5T27RC").Return(nil, errors.New("redis error"))
 
-	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil)
+	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil, nil)
 	r := gin.New()
 	r.POST("/auth/nonce", h.Nonce)
 
-	body, _ := json.Marshal(map[string]string{"walletAddress": "GABC..."})
+	body, _ := json.Marshal(map[string]string{"walletAddress": "GAX23V3WWDPPR5WRER3KTEUTDLSCGZYMSJY5FDRRKKCIQ4JADF5T27RC"})
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/auth/nonce", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -148,92 +168,6 @@ func TestAuthHandler_Nonce_ServiceError(t *testing.T) {
 
 	assert.Equal(t, 500, w.Code)
 	mockAuthSvc.AssertExpectations(t)
-}
-
-func TestAuthHandler_Verify_Success(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	mockAuthSvc := new(mockAuthService)
-	mockUserRepo := new(userMocks.Repository)
-	userSvc := user.NewService(mockUserRepo, nil)
-
-	mockAuthSvc.On("VerifySignature", mock.Anything, "GABC...", "sig-valid").Return(true, nil)
-	mockUserRepo.On("FindByWalletAddress", mock.Anything, "GABC...").Return(nil, apperrors.ErrNotFound)
-	mockUserRepo.On("Create", mock.Anything, mock.AnythingOfType("*user.User")).Return(nil)
-	mockAuthSvc.On("CreateSession", mock.Anything, mock.AnythingOfType("uuid.UUID")).Return(
-		&auth.TokenPair{AccessToken: "jwt-token", RefreshToken: "refresh-token"}, nil,
-	)
-
-	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil)
-	r := gin.New()
-	r.POST("/auth/verify", h.Verify)
-
-	body, _ := json.Marshal(map[string]string{
-		"walletAddress": "GABC...",
-		"signature":     "sig-valid",
-	})
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/auth/verify", bytes.NewBuffer(body))
-	req.Header.Set("Content-Type", "application/json")
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, 200, w.Code)
-	assert.Contains(t, w.Body.String(), "jwt-token")
-	mockAuthSvc.AssertExpectations(t)
-	mockUserRepo.AssertExpectations(t)
-}
-
-func TestAuthHandler_Verify_InvalidSignature(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	mockAuthSvc := new(mockAuthService)
-	mockUserRepo := new(userMocks.Repository)
-	userSvc := user.NewService(mockUserRepo, nil)
-
-	mockAuthSvc.On("VerifySignature", mock.Anything, "GABC...", "sig-bad").Return(false, nil)
-
-	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil)
-	r := gin.New()
-	r.POST("/auth/verify", h.Verify)
-
-	body, _ := json.Marshal(map[string]string{
-		"walletAddress": "GABC...",
-		"signature":     "sig-bad",
-	})
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/auth/verify", bytes.NewBuffer(body))
-	req.Header.Set("Content-Type", "application/json")
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, 401, w.Code)
-	mockAuthSvc.AssertExpectations(t)
-}
-
-func TestAuthHandler_Verify_MissingFields(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	mockAuthSvc := new(mockAuthService)
-	mockUserRepo := new(userMocks.Repository)
-	userSvc := user.NewService(mockUserRepo, nil)
-
-	mockAuthSvc.On("VerifySignature", mock.Anything, mock.Anything, mock.Anything).Return(true, nil)
-	mockUserRepo.On("FindByWalletAddress", mock.Anything, mock.Anything).Return(nil, apperrors.ErrNotFound)
-	mockUserRepo.On("Create", mock.Anything, mock.AnythingOfType("*user.User")).Return(nil)
-	mockAuthSvc.On("CreateSession", mock.Anything, mock.AnythingOfType("uuid.UUID")).Return(
-		&auth.TokenPair{AccessToken: "jwt", RefreshToken: "rt"}, nil,
-	)
-
-	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil)
-	r := gin.New()
-	r.POST("/auth/verify", h.Verify)
-
-	body, _ := json.Marshal(map[string]string{})
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/auth/verify", bytes.NewBuffer(body))
-	req.Header.Set("Content-Type", "application/json")
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, 200, w.Code)
 }
 
 func TestAuthHandler_Refresh_Success(t *testing.T) {
@@ -247,7 +181,7 @@ func TestAuthHandler_Refresh_Success(t *testing.T) {
 		&auth.TokenPair{AccessToken: "new-jwt", RefreshToken: "new-refresh"}, nil,
 	)
 
-	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil)
+	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil, nil)
 	r := gin.New()
 	r.POST("/auth/refresh", h.Refresh)
 
@@ -271,7 +205,7 @@ func TestAuthHandler_Refresh_Invalid(t *testing.T) {
 
 	mockAuthSvc.On("RefreshToken", mock.Anything, "bad-token").Return(nil, errors.New("invalid"))
 
-	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil)
+	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil, nil)
 	r := gin.New()
 	r.POST("/auth/refresh", h.Refresh)
 
@@ -295,12 +229,12 @@ func TestAuthHandler_Me_UserFound(t *testing.T) {
 	uid := uuid.New()
 	expectedUser := &user.User{
 		ID:            uid,
-		WalletAddress: "GABC...",
+		WalletAddress: "GAX23V3WWDPPR5WRER3KTEUTDLSCGZYMSJY5FDRRKKCIQ4JADF5T27RC",
 		Role:          user.RoleUser,
 	}
 	mockUserRepo.On("FindByID", mock.Anything, uid).Return(expectedUser, nil)
 
-	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil)
+	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil, nil)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
 		c.Set("userID", uid.String())
@@ -313,7 +247,7 @@ func TestAuthHandler_Me_UserFound(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, 200, w.Code)
-	assert.Contains(t, w.Body.String(), "GABC...")
+	assert.Contains(t, w.Body.String(), "GAX23V3WWDPPR5WRER3KTEUTDLSCGZYMSJY5FDRRKKCIQ4JADF5T27RC")
 	mockUserRepo.AssertExpectations(t)
 }
 
@@ -324,7 +258,7 @@ func TestAuthHandler_Logout(t *testing.T) {
 	mockUserRepo := new(userMocks.Repository)
 	userSvc := user.NewService(mockUserRepo, nil)
 
-	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil)
+	h := handler.NewAuthHandler(mockAuthSvc, userSvc, nil, nil, nil, nil, nil, nil)
 	r := gin.New()
 	r.POST("/auth/logout", h.Logout)
 

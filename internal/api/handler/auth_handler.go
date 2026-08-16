@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +19,7 @@ import (
 	"github.com/moistello/backend/internal/api/middleware"
 	"github.com/moistello/backend/config"
 	"github.com/moistello/backend/internal/domain/auth"
+	"github.com/moistello/backend/internal/domain/email"
 	"github.com/moistello/backend/internal/domain/totp"
 	"github.com/moistello/backend/internal/domain/user"
 	"github.com/moistello/backend/internal/domain/verification"
