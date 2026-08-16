@@ -29,13 +29,6 @@ func GetTraceID(ctx context.Context) string {
 	return ""
 }
 
-func GetUserID(ctx context.Context) string {
-	if id, ok := ctx.Value("userID").(string); ok {
-		return id
-	}
-	return "anonymous"
-}
-
 func LoggingMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		requestID := c.GetHeader("X-Request-ID")

@@ -19,7 +19,8 @@ func TestLoad_SucceedsWithRequiredConfig(t *testing.T) {
 	t.Setenv("JWT_PRIVATE_KEY", "-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBALs=\n-----END RSA PRIVATE KEY-----")
 	t.Setenv("JWT_PUBLIC_KEY", "-----BEGIN RSA PUBLIC KEY-----\nMFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBALs=\n-----END RSA PUBLIC KEY-----")
 
-	cfg := config.Load()
+	cfg, err := config.Load("")
+	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	require.Equal(t, "postgres://localhost:5432/db", cfg.Database.URL)
 	require.Equal(t, "wallet-pepper", cfg.Security.WalletPepper)
@@ -39,6 +40,6 @@ func TestLoad_PanicsWithoutCriticalConfig(t *testing.T) {
 	t.Setenv("JWT_PUBLIC_KEY", "")
 
 	require.Panics(t, func() {
-		config.Load()
+		config.Load("")
 	})
 }

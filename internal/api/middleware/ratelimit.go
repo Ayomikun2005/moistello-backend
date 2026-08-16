@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -117,7 +116,7 @@ func checkLimitWithWindow(c *gin.Context, redisClient *redis.Client, key string,
 
 	pipe := redisClient.Pipeline()
 	pipe.ZRemRangeByScore(reqCtx, redisKey, "-inf", fmt.Sprintf("%d", windowStart))
-	pipe.ZAdd(reqCtx, redisKey, &redis.Z{Score: float64(now), Member: now})
+	pipe.ZAdd(reqCtx, redisKey, redis.Z{Score: float64(now), Member: now})
 	pipe.ZCard(reqCtx, redisKey)
 	pipe.Expire(reqCtx, redisKey, window)
 

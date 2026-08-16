@@ -166,9 +166,6 @@ type LoggingConfig struct {
 	Output string `mapstructure:"output"`
 }
 
-func Load() *Config {
-	loadDotEnv()
-
 type TracingConfig struct {
 	Enabled          bool          `mapstructure:"enabled"`
 	CollectorEndpoint string       `mapstructure:"collector_endpoint"`
@@ -343,7 +340,7 @@ func Load(path string) (*Config, error) {
 		panic(fmt.Errorf("database.url must not use sslmode=disable outside development; use sslmode=require or stronger"))
 	}
 
-	return &cfg
+	return &cfg, nil
 }
 
 func loadDotEnv() {
@@ -396,7 +393,8 @@ func loadEnvFile(path string) error {
 }
 
 func mustBindEnv(v *viper.Viper, key string, envNames ...string) {
-	if err := v.BindEnv(key, envNames...); err != nil {
+	args := append([]string{key}, envNames...)
+	if err := v.BindEnv(args...); err != nil {
 		panic(fmt.Errorf("config: binding env for %s: %w", key, err))
 	}
 }
@@ -437,13 +435,4 @@ func validateDuration(name string, ok bool) {
 	if !ok {
 		panic(fmt.Errorf("config: %s must be greater than zero", name))
 	}
-}
-	if os.Getenv("MOISTELLO_WALLET_PEPPER") == "" {
-		return nil, fmt.Errorf("MOISTELLO_WALLET_PEPPER environment variable is required")
-	}
-	if os.Getenv("MOISTELLO_PASSKEY_PEPPER") == "" {
-		return nil, fmt.Errorf("MOISTELLO_PASSKEY_PEPPER environment variable is required")
-	}
-
-	return &cfg, nil
 }

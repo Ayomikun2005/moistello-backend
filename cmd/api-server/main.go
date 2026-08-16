@@ -37,6 +37,7 @@ import (
 	"github.com/moistello/backend/internal/domain/reputation"
 	"github.com/moistello/backend/internal/domain/savings"
 	"github.com/moistello/backend/internal/domain/swap"
+	"github.com/moistello/backend/internal/domain/token"
 	"github.com/moistello/backend/internal/domain/totp"
 	"github.com/moistello/backend/internal/domain/user"
 	"github.com/moistello/backend/internal/domain/verification"
@@ -76,7 +77,10 @@ func (a *communityAdapter) IsMember(ctx context.Context, communityID, userID uui
 }
 
 func main() {
-	cfg := config.Load()
+	cfg, err := config.Load("")
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to load configuration")
+	}
 
 	logger.Init(cfg.Logging.Level, cfg.Logging.Format)
 	validator.Init()
@@ -151,6 +155,17 @@ func main() {
 		log.Fatal().Err(err).Msg("failed to initialize wallet service")
 	}
 
+	tokenSvc, err := token.NewService(wallet.NewRepository(db), token.Config{
+		GovernanceTokenContractID: cfg.Stellar.GovernanceTokenContractID,
+		SorobanRPCURL:             cfg.Stellar.SorobanRPCURL,
+		NetworkPassphrase:         cfg.Stellar.NetworkPassphrase,
+		HorizonURL:                cfg.Stellar.HorizonURL,
+	})
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to initialize token service")
+	}
+	tokenH := handler.NewTokenHandler(tokenSvc)
+
 	jwtPublicKey := []byte(cfg.Auth.JWTPublicKeyPEM)
 
 	wsH := handler.NewWebSocketHandler(wsHub, cfg.CORS.AllowedOrigins)
@@ -188,17 +203,15 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to create stellar signer")
 	}
-	accountMgr, err := stellar.NewAccountManager(cfg.Stellar.MasterPublicKey, cfg.Stellar.HorizonURL)
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to create account manager")
-	}
+	horizonClient := stellar.NewClient(cfg.Stellar.HorizonURL, cfg.Stellar.SorobanRPCURL, cfg.Stellar.NetworkPassphrase)
+	accountMgr := stellar.NewAccountManager(horizonClient, cfg.Stellar.MasterPublicKey)
 
 	// Create escrow swap contract invoker and client
 	escrowSwapInvoker := soroban.NewContractInvoker(sorobanClient, signer, accountMgr, cfg.Stellar.EscrowSwapContractID)
 	escrowSwapClient := soroban.NewEscrowSwapClient(escrowSwapInvoker)
 
 	// Swap service and handler
-	swapRepo := swap.NewPostgresRepository(db.DB)
+	swapRepo := swap.NewPostgresRepository(db)
 	swapSvc := swap.NewService(swapRepo, circleSvc, userSvc, escrowSwapClient)
 	swapH := handler.NewSwapHandler(swapSvc)
 
@@ -226,7 +239,7 @@ func main() {
 		healthH.WithRabbitMQ(rmqClient)
 	}
 
-	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, communityH, wsH, savingsH, swapH, governanceH, reputationH, referralH, consentH, webhookRepo, jwtPublicKey)
+	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, communityH, wsH, savingsH, tokenH, swapH, governanceH, reputationH, referralH, consentH, webhookRepo, jwtPublicKey)
 
 	if err := api.RunServer(router, cfg.Server); err != nil {
 		log.Fatal().Err(err).Msg("server error")

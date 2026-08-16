@@ -230,11 +230,10 @@ func NewRouter(
 				admin.GET("/jobs/dead-letter", func(c *gin.Context) {
 					c.JSON(200, gin.H{"dead_letter_jobs": []any{}})
 				})
-				admin.POST("/jobs/dead-letter/:id/retry", func(c *gin.Context) {
-					jobID := c.Param("id")
-					c.JSON(200, gin.H{"message": "dead letter job requeued successfully", "job_id": jobID})
-				})
-			}
+			admin.POST("/jobs/dead-letter/:id/retry", func(c *gin.Context) {
+				jobID := c.Param("id")
+				c.JSON(200, gin.H{"message": "dead letter job requeued successfully", "job_id": jobID})
+			})
 		}
 
 		optional := api.Group("")
