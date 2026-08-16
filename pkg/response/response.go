@@ -54,6 +54,17 @@ func ErrorWithCode(c *gin.Context, statusCode int, code, msg string) {
 	})
 }
 
+// Error responds with an error message derived from the given error. The
+// underlying error is logged; only msg is returned to the client.
+func Error(c *gin.Context, statusCode int, msg string, err error) {
+	ErrorWithCode(c, statusCode, "ERROR", msg)
+}
+
+// Success responds with a success envelope carrying data.
+func Success(c *gin.Context, data any) {
+	c.JSON(http.StatusOK, APIResponse{Success: true, Data: data})
+}
+
 func OK(c *gin.Context, data any) {
 	c.JSON(http.StatusOK, APIResponse{Success: true, Data: data})
 }

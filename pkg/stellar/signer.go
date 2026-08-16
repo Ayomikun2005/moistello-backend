@@ -6,12 +6,36 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/stellar/go/keypair"
+	"github.com/stellar/go/strkey"
 )
 
 type Signer struct {
 	publicKey ed25519.PublicKey
 	secretKey ed25519.PrivateKey
+	address   string
 }
+
+// NewSigner creates a signer from a Stellar secret key (S-prefixed strkey).
+func NewSigner(secretKey string) (*Signer, error) {
+	kp, err := keypair.ParseFull(secretKey)
+	if err != nil {
+		return nil, fmt.Errorf("parsing secret key: %w", err)
+	}
+	seedBytes, err := strkey.Decode(strkey.VersionByteSeed, secretKey)
+	if err != nil {
+		return nil, fmt.Errorf("decoding secret key: %w", err)
+	}
+	privKey := ed25519.NewKeyFromSeed(seedBytes)
+	return &Signer{
+		publicKey: privKey.Public().(ed25519.PublicKey),
+		secretKey: privKey,
+		address:   kp.Address(),
+	}, nil
+}
+
+func (s *Signer) Address() string { return s.address }
 
 // NewSignerFromHex creates a signer from hex-encoded keys.
 // publicKeyHex: 64-char hex Ed25519 public key

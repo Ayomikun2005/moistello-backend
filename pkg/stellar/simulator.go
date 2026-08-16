@@ -13,6 +13,7 @@ import (
 // SimulationResult is the result of simulating a transaction
 type SimulationResult struct {
 	TransactionData string        `json:"transaction_data"`
+	ReturnValue     any           `json:"returnValue,omitempty"`
 	Events          []string      `json:"events"`
 	Cost            SimulateCost  `json:"cost"`
 	Error           *string       `json:"error,omitempty"`
