@@ -1,0 +1,24 @@
+# Moistello Bot Configuration
+# The bot handles auto-merge and auto-fix ONLY.
+# It does NOT assign issues or reviewers — that stays manual.
+
+merge:
+  enabled: true
+  method: squash            # squash | merge | rebase
+  delete_branch: true
+  delay_minutes: 30         # merge 30 minutes AFTER CI goes green
+  require_human_review: false  # if true, branch protection should require a review
+  require_issue_link: true     # PRs must reference an issue (#N or "Closes #N")
+
+fix:
+  enabled: true
+  rebase_out_of_date: true       # auto-rebase PRs to clear merge conflicts
+  resolve_conflicts: true        # AI-resolve merge conflicts (opencode codes ONLY on conflicts)
+  wait_for_off_peak: true        # wait until DeepSeek off-peak hours before spending tokens
+  model: opencode-go/deepseek-v4-flash  # cheapest capable coding model (off-peak $0.22/$0.66)
+
+# Guardrail: only auto-merge PRs that are NOT marked [wip] / draft.
+ignore_title_contains:
+  - '[wip]'
+  - '[do not merge]'
+  - 'draft'

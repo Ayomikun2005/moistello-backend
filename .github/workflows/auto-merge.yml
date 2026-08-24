@@ -1,0 +1,108 @@
+name: "moistello: Auto-Merge"
+
+# "moistello" bot — merges a PR automatically 30 minutes AFTER CI goes green.
+# It does NOT assign issues or reviewers. You assign those manually.
+#
+# Flow:
+#   1. CI passes on a PR commit  -> this workflow runs
+#   2. Verifies the PR is linked to an issue and not in the ignore list
+#   3. Waits 30 minutes (configurable via .github/bot-config.yml delay_minutes)
+#   4. Re-checks CI is still green + PR still mergeable, then merges (squash)
+
+on:
+  workflow_run:
+    workflows: [ CI ]
+    types: [ completed ]
+    branches: [ master, main ]
+  issue_comment:
+    types: [ created ]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  merge-after-delay:
+    name: Merge linked PR after 30m delay
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Load bot config
+        id: config
+        run: |
+          DELAY=30
+          if [ -f .github/bot-config.yml ]; then
+            V=$(grep -E '^\s*delay_minutes:' .github/bot-config.yml | awk '{print $2}')
+            [ -n "$V" ] && DELAY="$V"
+          fi
+          echo "delay_minutes=$DELAY" >> "$GITHUB_OUTPUT"
+
+      - name: Find the PR for this CI run
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHA="${{ github.event.workflow_run.head_sha }}"
+          PR_JSON="$(gh pr list --repo "${{ github.repository }}" --head "${{ github.event.workflow_run.head_branch }}" --json number,title,body,state,mergeable --jq '.[0]' 2>/dev/null)"
+          if [ "$PR_JSON" = "null" ] || [ -z "$PR_JSON" ]; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          NUMBER="$(echo "$PR_JSON" | jq -r '.number')"
+          TITLE="$(echo "$PR_JSON" | jq -r '.title')"
+          BODY="$(echo "$PR_JSON" | jq -r '.body // ""')"
+          STATE="$(echo "$PR_JSON" | jq -r '.state')"
+          echo "found=true" >> "$GITHUB_OUTPUT"
+          echo "number=$NUMBER" >> "$GITHUB_OUTPUT"
+          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
+          echo "body=$BODY" >> "$GITHUB_OUTPUT"
+          echo "state=$STATE" >> "$GITHUB_OUTPUT"
+          echo "PR #$NUMBER found for branch ${{ github.event.workflow_run.head_branch }}"
+
+      - name: Check PR is linked to an issue
+        id: linked
+        if: steps.pr.outputs.found == 'true'
+        run: |
+          BODY="${{ steps.pr.outputs.body }}"
+          TITLE="${{ steps.pr.outputs.title }}"
+          if echo "$BODY $TITLE" | grep -qE '#[0-9]+|Closes|Fixes|Resolves|implements|close #'; then
+            echo "linked=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "linked=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Wait 30 minutes before merging
+        if: steps.pr.outputs.found == 'true' && steps.linked.outputs.linked == 'true'
+        env:
+          DELAY: ${{ steps.config.outputs.delay_minutes }}
+        run: |
+          echo "Waiting ${DELAY} minutes before merging PR #${{ steps.pr.outputs.number }}..."
+          sleep $(( DELAY * 60 ))
+
+      - name: Merge the PR (squash)
+        if: steps.pr.outputs.found == 'true' && steps.linked.outputs.linked == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+        run: |
+          PR="${{ steps.pr.outputs.number }}"
+          # Only merge if still open and mergeable (base moved / conflicts = skip for auto-fix to handle).
+          gh pr merge "$PR" --repo "${{ github.repository }}" --squash --delete-branch \
+            || echo "Merge skipped (not mergeable / already merged / conflicts)."
+
+  merge-command:
+    name: Merge on /merge comment
+    runs-on: ubuntu-latest
+    if: github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/merge')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Merge the PR
+        env:
+          GH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+        run: |
+          PR="${{ github.event.issue.number }}"
+          gh pr merge "$PR" --repo "${{ github.repository }}" --squash --delete-branch

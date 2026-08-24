@@ -1,0 +1,146 @@
+name: "moistello: Auto-Fix"
+
+# The "moistello" bot ONLY auto-fixes MERGE CONFLICTS.
+#   - On a PR that has merge conflicts, it tries to rebase automatically.
+#   - If a rebase isn't possible, it hands the conflict to an AI agent
+#     (opencode) which resolves the conflict against the full codebase,
+#     verifies, and pushes a fix.
+#
+# It does NOT run on every CI failure — if CI fails (not a conflict), the
+# PR is left for a human (you) to fix. It NEVER assigns issues/reviewers.
+
+on:
+  pull_request:
+    types: [ opened, reopened, synchronize, ready_for_review ]
+
+concurrency:
+  group: fix-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  resolve-conflicts:
+    name: Resolve merge conflicts
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    steps:
+      # Full checkout: fetch ALL history + base branch so the agent has complete
+      # context of the codebase, not just the PR head.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Checkout base branch for comparison
+        env:
+          GH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+        run: |
+          git fetch origin "${{ github.event.pull_request.base.ref }}:${{ github.event.pull_request.base.ref }}"
+          git fetch origin "${{ github.event.pull_request.head.ref }}"
+
+      - name: Attempt to rebase PR onto base
+        id: rebase
+        run: |
+          git config user.name "moistello-bot[bot]"
+          git config user.email "bot@users.noreply.github.com"
+          if git rebase "origin/${{ github.event.pull_request.base.ref }}"; then
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+            echo "Rebase succeeded."
+          else
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            echo "Rebase failed — merge conflict detected."
+          fi
+
+      - name: Push clean rebase
+        if: steps.rebase.outputs.conflict == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+        run: |
+          git push origin "HEAD:${{ github.event.pull_request.head.ref }}" \
+            || echo "Nothing to push (branch already up to date)."
+
+      # ----- Only reach here when there is a genuine merge conflict -----
+      - name: Skip AI resolution when no LLM key configured
+        id: llm
+        if: steps.rebase.outputs.conflict == 'true'
+        env:
+          LLM_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: |
+          if [ -n "$LLM_KEY" ]; then echo "configured=true" >> "$GITHUB_OUTPUT"; else echo "configured=false" >> "$GITHUB_OUTPUT"; fi
+
+      # Wait until DeepSeek's OFF-PEAK window before spending tokens.
+      # Peak: 01:00-04:00 and 06:00-10:00 UTC (2.4x-4.7x the flat price).
+      # Off-peak: every other hour (17h/day) at the cheapest rate.
+      - name: Wait for DeepSeek off-peak hours
+        if: steps.rebase.outputs.conflict == 'true' && steps.llm.outputs.configured == 'true'
+        run: |
+          end1=$((4*3600))            # 04:00
+          end2=$((10*3600))           # 10:00
+          h=$(date -u +%-H); m=$(date -u +%-M); s=$(date -u +%-S)
+          now=$(( h*3600 + m*60 + s ))
+          next=0
+          if (( h >= 1 && h < 4 )); then next=$end1; fi
+          if (( h >= 6 && h < 10 )); then next=$end2; fi
+          if (( next > now )); then
+            wait=$(( next - now ))
+            echo "Peak hours — waiting ${wait}s until DeepSeek off-peak pricing..."
+            sleep "$wait"
+          else
+            echo "Off-peak — proceeding now."
+          fi
+
+      - name: Cache Go modules + opencode CLI
+        if: steps.rebase.outputs.conflict == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.npm
+          key: go-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-
+
+      - name: AI-resolve the merge conflict against the full codebase
+        if: steps.rebase.outputs.conflict == 'true' && steps.llm.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          OPENCODE_MODEL: ${{ secrets.OPENCODE_MODEL || 'opencode-go/deepseek-v4-flash' }}
+        run: |
+          git config user.name "moistello-bot[bot]"
+          git config user.email "bot@users.noreply.github.com"
+
+          npm install -g opencode-ai 2>/dev/null || npx opencode --version >/dev/null 2>&1 || true
+
+          opencode run \
+            --model "${OPENCODE_MODEL}" \
+            --agent-plan \
+            "The repository is mid-rebase with merge conflicts against branch
+             ${{ github.event.pull_request.base.ref }} on PR #${{ github.event.pull_request.number }}.
+             Use the full Go codebase as context. Resolve every conflict correctly so that both
+             the incoming and the current changes are preserved correctly, keep the code
+             consistent and compiling (go build ./...), and complete the rebase (git add +
+             git rebase --continue yourself). Do NOT introduce unrelated changes.
+             Do NOT assign or change issues."
+
+          git add -A 2>/dev/null || true
+          if git rev-parse -q --verify REBASE_HEAD >/dev/null; then
+            GIT_EDITOR=true git rebase --continue 2>/dev/null || \
+              git rebase --abort && echo "Rebase aborted — agent could not auto-resolve."
+          fi
+
+          if git diff --quiet origin/"${{ github.event.pull_request.head.ref }}" 2>/dev/null; then
+            echo "No net changes vs remote; nothing to push."
+          else
+            git push origin "HEAD:${{ github.event.pull_request.head.ref }}" --force-with-lease \
+              || echo "Push failed (branch changed concurrently)."
+          fi
