@@ -3,11 +3,20 @@ name: "moistello: Auto-Merge"
 # "moistello" bot — merges a PR automatically 30 minutes AFTER CI goes green.
 # It does NOT assign issues or reviewers. You assign those manually.
 #
+# SAFEGUARDS (per repo policy):
+#   - Auto-merge ONLY for human-authored PRs. The bot's own PRs (opencode-agent[bot])
+#     are left for human review and are NEVER auto-merged.
+#   - Auto-merge ONLY when there is PROOF OF REAL WORK: the diff must touch at least
+#     one source file with genuine code changes (not just comments/docs/empty commits).
+#     "Fake work" (empty commits, doc-only, comment-only) is rejected.
+#   - CI must be green (enforced by the workflow_run trigger).
+#
 # Flow:
 #   1. CI passes on a PR commit  -> this workflow runs
-#   2. Verifies the PR is linked to an issue and not in the ignore list
-#   3. Waits 30 minutes (configurable via .github/bot-config.yml delay_minutes)
-#   4. Re-checks CI is still green + PR still mergeable, then merges (squash)
+#   2. Verifies the PR is linked to an issue and not authored by the bot
+#   3. Verifies real code changes exist (proof of work)
+#   4. Waits 30 minutes (configurable via .github/bot-config.yml delay_minutes)
+#   5. Re-checks CI is still green + PR still mergeable, then merges (squash)
 
 on:
   workflow_run:
@@ -76,8 +85,61 @@ jobs:
             echo "linked=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Check PR author is human (not the bot)
+        id: author
+        if: steps.pr.outputs.found == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          AUTHOR="$(gh api repos/${{ github.repository }}/pulls/${{ steps.pr.outputs.number }} --jq '.user.login')"
+          echo "author=$AUTHOR" >> "$GITHUB_OUTPUT"
+          if [ "$AUTHOR" = "opencode-agent[bot]" ]; then
+            echo "is_bot=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::PR #${{ steps.pr.outputs.number }} is authored by the bot — skipping auto-merge (needs human review)."
+          else
+            echo "is_bot=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Proof of real work (reject fake/empty changes)
+        id: pow
+        if: steps.pr.outputs.found == 'true' && steps.author.outputs.is_bot == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR="${{ steps.pr.outputs.number }}"
+          # Fetch changed files with patch info.
+          FILES_JSON="$(gh api repos/${{ github.repository }}/pulls/$PR/files --paginate --jq \
+            '[.[] | {filename, additions, deletions, patch}]')"
+
+          # Source files (code, not docs/tests/markdown/config-only).
+          SRC_COUNT="$(echo "$FILES_JSON" | jq '[.[] | select(.filename | test("\\.(ts|tsx|js|jsx|go|py|rs|java|rb|php|c|cpp|h|css|scss)$"))] | length')"
+
+          # "Real" added lines = lines starting with "+" that are NOT pure comment /
+          # blank / brace-only (i.e. actual logic/structure changed).
+          REAL_LINES="$(echo "$FILES_JSON" | jq -r '[.[] | (.patch // "")] | join("\n")' \
+            | grep -E '^\+[^+]' \
+            | grep -vE '^\+\s*(//|#|/\*|\*|<!--|\}|\{|\)|\(|;)$' \
+            | grep -vE '^\+\s*$' \
+            | wc -l)"
+
+          TOTAL_CHANGES="$(echo "$FILES_JSON" | jq '[.[].additions + .deletions] | add')"
+
+          echo "source_files=$SRC_COUNT real_code_lines=$REAL_LINES total_changed_lines=$TOTAL_CHANGES"
+
+          if [ "$SRC_COUNT" -ge 1 ] && [ "$REAL_LINES" -ge 3 ] && [ "$TOTAL_CHANGES" -ge 2 ]; then
+            echo "proof=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Proof of work OK (source files: $SRC_COUNT, real code lines: $REAL_LINES)."
+          else
+            echo "proof=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No proof of real work (source files: $SRC_COUNT, real code lines: $REAL_LINES). Skipping auto-merge."
+          fi
+
       - name: Wait 30 minutes before merging
-        if: steps.pr.outputs.found == 'true' && steps.linked.outputs.linked == 'true'
+        if: >-
+          steps.pr.outputs.found == 'true'
+          && steps.linked.outputs.linked == 'true'
+          && steps.author.outputs.is_bot == 'false'
+          && steps.pow.outputs.proof == 'true'
         env:
           DELAY: ${{ steps.config.outputs.delay_minutes }}
         run: |
@@ -85,7 +147,11 @@ jobs:
           sleep $(( DELAY * 60 ))
 
       - name: Merge the PR (squash)
-        if: steps.pr.outputs.found == 'true' && steps.linked.outputs.linked == 'true'
+        if: >-
+          steps.pr.outputs.found == 'true'
+          && steps.linked.outputs.linked == 'true'
+          && steps.author.outputs.is_bot == 'false'
+          && steps.pow.outputs.proof == 'true'
         env:
           GH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
         run: |
