@@ -123,7 +123,6 @@ jobs:
 
           opencode run \
             --model "${OPENCODE_MODEL}" \
-            --agent-plan \
             "The repository is mid-rebase with merge conflicts against branch
              ${{ github.event.pull_request.base.ref }} on PR #${{ github.event.pull_request.number }}.
              Use the full Go codebase as context. Resolve every conflict correctly so that both
@@ -193,7 +192,6 @@ jobs:
 
           opencode run \
             --model "${OPENCODE_MODEL}" \
-            --agent-plan \
             "CI failed on branch ${{ github.event.workflow_run.head_branch }} (commit ${{ github.event.workflow_run.head_sha }}).
              Inspect the full Go repository, run the failing commands (go build ./cmd/api-server,
              go vet ./..., go test ./... -race -count=1) to reproduce, fix the root cause(s), and make CI green.
