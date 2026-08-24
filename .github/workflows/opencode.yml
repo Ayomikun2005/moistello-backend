@@ -24,21 +24,7 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Authenticate opencode to OpenCode Go workspace
-        run: |
-          mkdir -p ~/.local/share/opencode
-          cat > ~/.local/share/opencode/auth.json << JSON
-          {
-            "opencode-go": {
-              "type": "api",
-              "key": "${{ secrets.OPENCODE_API_KEY }}"
-            }
-          }
-          JSON
-
       - name: Run OpenCode
         uses: anomalyco/opencode/github@latest
-        env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:
-          model: opencode-go/deepseek-v4-flash
+          model: opencode/mimo-v2.5-free
