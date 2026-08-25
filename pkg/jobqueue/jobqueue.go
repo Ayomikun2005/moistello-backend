@@ -235,6 +235,26 @@ func (jq *JobQueue) GetDeadLetterJobs(ctx context.Context) ([]*Job, error) {
 	return result, nil
 }
 
+// GetJobStatus returns the status of a job by ID. Only works with in-memory mode.
+func (jq *JobQueue) GetJobStatus(jobID string) JobStatus {
+	jq.mu.Lock()
+	defer jq.mu.Unlock()
+	if job, ok := jq.memory[jobID]; ok {
+		return job.Status
+	}
+	return ""
+}
+
+// GetJobRetries returns the retry count of a job by ID. Only works with in-memory mode.
+func (jq *JobQueue) GetJobRetries(jobID string) int {
+	jq.mu.Lock()
+	defer jq.mu.Unlock()
+	if job, ok := jq.memory[jobID]; ok {
+		return job.RetriesCount
+	}
+	return 0
+}
+
 // RetryDeadLetterJob resets a dead-letter job back to pending.
 func (jq *JobQueue) RetryDeadLetterJob(ctx context.Context, jobID string) error {
 	if jq.db != nil {

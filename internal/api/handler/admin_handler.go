@@ -1,29 +1,30 @@
 package handler
 
 import (
-	"net/http"
-
 	"github.com/gin-gonic/gin"
 	"github.com/moistello/backend/internal/domain/audit"
 	"github.com/moistello/backend/internal/domain/circle"
+	"github.com/moistello/backend/internal/domain/featureflag"
 	"github.com/moistello/backend/internal/domain/user"
 	"github.com/moistello/backend/pkg/pagination"
 	"github.com/moistello/backend/pkg/response"
 )
 
 type AdminHandler struct {
-	userService   user.Service
-	userRepo      user.Repository
-	circleService circle.Service
-	auditRepo     audit.Repository
+	userService      user.Service
+	userRepo         user.Repository
+	circleService    circle.Service
+	auditRepo        audit.Repository
+	featureFlagSvc   featureflag.Service
 }
 
-func NewAdminHandler(userSvc user.Service, userRepo user.Repository, circleSvc circle.Service, auditRepo audit.Repository) *AdminHandler {
+func NewAdminHandler(userSvc user.Service, userRepo user.Repository, circleSvc circle.Service, auditRepo audit.Repository, ffSvc featureflag.Service) *AdminHandler {
 	return &AdminHandler{
-		userService:   userSvc,
-		userRepo:      userRepo,
-		circleService: circleSvc,
-		auditRepo:     auditRepo,
+		userService:    userSvc,
+		userRepo:       userRepo,
+		circleService:  circleSvc,
+		auditRepo:      auditRepo,
+		featureFlagSvc: ffSvc,
 	}
 }
 
@@ -164,10 +165,15 @@ func (h *AdminHandler) UpdateFeatureFlag(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	// Feature-flag persistence (e.g. DB or Redis) is not yet implemented.
-	// Return 501 so callers know the operation was not performed.
-	c.JSON(http.StatusNotImplemented, gin.H{
-		"success": false,
-		"error":   "feature flag persistence not yet implemented",
+
+	ff, err := h.featureFlagSvc.Set(c.Request.Context(), req.Flag, req.Value, "")
+	if err != nil {
+		response.InternalError(c, "failed to update feature flag: "+err.Error())
+		return
+	}
+
+	response.OK(c, gin.H{
+		"flag":    ff.Flag,
+		"enabled": ff.Enabled,
 	})
 }
