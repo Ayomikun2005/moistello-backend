@@ -93,3 +93,23 @@ type CircleMember struct {
 	Status   MemberStatus `json:"status" db:"status"`
 	JoinedAt time.Time    `json:"joinedAt" db:"joined_at"`
 }
+
+type PenaltyType string
+
+const (
+	PenaltyTypeLate      PenaltyType = "late"
+	PenaltyTypeDefault   PenaltyType = "default"
+	PenaltyTypeEarlyExit PenaltyType = "early_exit"
+)
+
+type Penalty struct {
+	ID             uuid.UUID      `json:"id" db:"id"`
+	CircleID       uuid.UUID      `json:"circleId" db:"circle_id"`
+	UserID         uuid.UUID      `json:"userId" db:"user_id"`
+	RoundNumber    int            `json:"roundNumber" db:"round_number"`
+	PenaltyType    PenaltyType    `json:"penaltyType" db:"penalty_type"`
+	Amount         float64        `json:"amount" db:"amount"`
+	StrikesApplied int            `json:"strikesApplied" db:"strikes_applied"`
+	Reason         sql.NullString `json:"reason,omitempty" db:"reason"`
+	CreatedAt      time.Time      `json:"createdAt" db:"created_at"`
+}

@@ -90,3 +90,32 @@ func (m *Repository) FindCirclesByUserID(ctx context.Context, userID uuid.UUID) 
 	}
 	return args.Get(0).([]circle.Circle), args.Error(1)
 }
+
+
+func (m *Repository) CreatePenalty(ctx context.Context, p *circle.Penalty) error {
+	return m.Called(ctx, p).Error(0)
+}
+
+func (m *Repository) GetPenaltiesByCircle(ctx context.Context, circleID uuid.UUID) ([]circle.Penalty, error) {
+	args := m.Called(ctx, circleID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]circle.Penalty), args.Error(1)
+}
+
+func (m *Repository) GetPenaltiesByUser(ctx context.Context, userID uuid.UUID) ([]circle.Penalty, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]circle.Penalty), args.Error(1)
+}
+
+func (m *Repository) GetContributionsByCircleAndRound(ctx context.Context, circleID uuid.UUID, roundNumber int) ([]uuid.UUID, error) {
+	args := m.Called(ctx, circleID, roundNumber)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]uuid.UUID), args.Error(1)
+}
