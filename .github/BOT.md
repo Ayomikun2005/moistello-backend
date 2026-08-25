@@ -39,16 +39,20 @@ The bot **never assigns issues or reviewers** — that stays manual (you decide 
 
 With auto-merge, the **moistello** bot merges a linked PR **30 minutes after CI passes** (set `delay_minutes` in `.github/bot-config.yml`). If branch protection requires a human review, the bot waits for that review before the 30-minute countdown completes.
 
-## Auto-fix behavior (opencode codes ONLY on merge conflicts)
+## Auto-fix behavior
 
-The **moistello** bot never auto-writes code on ordinary CI failures — those are left for you.
-It only runs opencode when a PR has a **merge conflict**:
+The **moistello** bot auto-fixes two things, both gated behind `OPENCODE_API_KEY`
+(so it only acts when you've enabled AI fixing):
 
-1. **Merge conflicts**: on a PR with conflicts, it first tries a clean rebase. If a rebase
-   isn't possible, it hands the conflicted repo (full codebase, all history) to an opencode
-   agent that resolves the conflict correctly, completes the rebase, and pushes the fix.
-2. **CI failures that are NOT conflicts** → left for a human. This is how you stay in control
-   of what gets written.
+1. **Merge conflicts** — on a PR with conflicts it first tries a clean rebase; if that's
+   impossible it hands the conflicted repo (full codebase, all history) to an opencode agent
+   that resolves the conflict correctly, completes the rebase, and pushes.
+2. **Failing CI** — if CI fails (tests/lint/build) on a PR or on `main`, an opencode agent
+   checks out the full repository, reproduces the failure, fixes the root cause, verifies
+   tests pass, and pushes the fix. This lets the bot keep your repos green even when you're
+   not available.
+
+It NEVER assigns issues or reviewers — that stays manual.
 
 The workflow checks out the **entire repository with full history** (not just the PR head)
 so the agent has complete codebase context, and caches Go modules / npm + the opencode CLI
