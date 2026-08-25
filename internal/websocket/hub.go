@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"context"
 	"encoding/json"
 	"sync"
 
@@ -15,12 +16,18 @@ type Message struct {
 	Payload any    `json:"payload"`
 }
 
+// SubscriptionAuthorizer decides whether a user may subscribe to a circle room.
+type SubscriptionAuthorizer interface {
+	CanSubscribe(ctx context.Context, circleID, userID string) (bool, error)
+}
+
 // Hub maintains the set of active WebSocket clients and manages circle-based
 // rooms for targeted broadcasts.
 type Hub struct {
-	mu      sync.RWMutex
-	clients map[string]*Client            // clientID -> Client
-	rooms   map[string]map[string]*Client // circleID -> clientID -> Client
+	mu         sync.RWMutex
+	clients    map[string]*Client            // clientID -> Client
+	rooms      map[string]map[string]*Client // circleID -> clientID -> Client
+	authorizer SubscriptionAuthorizer
 }
 
 // NewHub creates a new Hub with empty client and room registries.
@@ -29,6 +36,14 @@ func NewHub() *Hub {
 		clients: make(map[string]*Client),
 		rooms:   make(map[string]map[string]*Client),
 	}
+}
+
+// SetSubscriptionAuthorizer installs an authorization hook used to enforce
+// circle membership before a client can join a room.
+func (h *Hub) SetSubscriptionAuthorizer(a SubscriptionAuthorizer) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.authorizer = a
 }
 
 // Register adds a client to the hub so it can receive broadcasts and updates metrics.
@@ -57,17 +72,39 @@ func (h *Hub) Unregister(client *Client) {
 	log.Debug().Str("clientID", client.ID).Msg("client unregistered")
 }
 
-// JoinRoom subscribes a client to a circle's broadcast room.
-func (h *Hub) JoinRoom(circleID, clientID string) {
+// JoinRoom subscribes a client to a circle's broadcast room. It returns true
+// if the client was subscribed; false if the client is not registered, not
+// authorized, or the circle is otherwise unavailable.
+func (h *Hub) JoinRoom(circleID, clientID string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+
+	client, ok := h.clients[clientID]
+	if !ok {
+		log.Debug().Str("clientID", clientID).Msg("join room: client not registered")
+		return false
+	}
+
+	if h.authorizer != nil {
+		allowed, err := h.authorizer.CanSubscribe(context.Background(), circleID, client.UserID)
+		if err != nil {
+			log.Warn().Err(err).Str("circleID", circleID).Str("userID", client.UserID).
+				Msg("join room authorization error")
+			return false
+		}
+		if !allowed {
+			log.Info().Str("circleID", circleID).Str("userID", client.UserID).
+				Msg("join room denied")
+			return false
+		}
+	}
+
 	if _, ok := h.rooms[circleID]; !ok {
 		h.rooms[circleID] = make(map[string]*Client)
 	}
-	if client, ok := h.clients[clientID]; ok {
-		h.rooms[circleID][clientID] = client
-	}
+	h.rooms[circleID][clientID] = client
 	log.Debug().Str("circleID", circleID).Str("clientID", clientID).Msg("client joined room")
+	return true
 }
 
 // LeaveRoom unsubscribes a client from a circle's broadcast room.
