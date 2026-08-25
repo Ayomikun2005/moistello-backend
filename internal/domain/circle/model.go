@@ -93,3 +93,43 @@ type CircleMember struct {
 	Status   MemberStatus `json:"status" db:"status"`
 	JoinedAt time.Time    `json:"joinedAt" db:"joined_at"`
 }
+
+type DisputeStatus string
+
+const (
+	DisputeStatusPending  DisputeStatus = "pending"
+	DisputeStatusResolved DisputeStatus = "resolved"
+	DisputeStatusDismissed DisputeStatus = "dismissed"
+)
+
+type Dispute struct {
+	ID             uuid.UUID      `json:"id" db:"id"`
+	CircleID       uuid.UUID      `json:"circleId" db:"circle_id"`
+	RaiserID       uuid.UUID      `json:"raiserId" db:"raiser_id"`
+	Reason         string         `json:"reason" db:"reason"`
+	Evidence       sql.NullString `json:"evidence,omitempty" db:"evidence"`
+	Status         DisputeStatus  `json:"status" db:"status"`
+	IdempotencyKey sql.NullString `json:"idempotencyKey,omitempty" db:"idempotency_key"`
+	CreatedAt      time.Time      `json:"createdAt" db:"created_at"`
+	UpdatedAt      time.Time      `json:"updatedAt" db:"updated_at"`
+}
+
+type CircleVote struct {
+	ID             uuid.UUID      `json:"id" db:"id"`
+	CircleID       uuid.UUID      `json:"circleId" db:"circle_id"`
+	VoterID        uuid.UUID      `json:"voterId" db:"voter_id"`
+	VoteForID      uuid.UUID      `json:"voteForId" db:"vote_for_id"`
+	RoundNumber    int            `json:"roundNumber" db:"round_number"`
+	IdempotencyKey sql.NullString `json:"idempotencyKey,omitempty" db:"idempotency_key"`
+	CreatedAt      time.Time      `json:"createdAt" db:"created_at"`
+}
+
+type CircleAuctionBid struct {
+	ID             uuid.UUID      `json:"id" db:"id"`
+	CircleID       uuid.UUID      `json:"circleId" db:"circle_id"`
+	BidderID       uuid.UUID      `json:"bidderId" db:"bidder_id"`
+	RoundNumber    int            `json:"roundNumber" db:"round_number"`
+	DiscountBips   int            `json:"discountBips" db:"discount_bips"`
+	IdempotencyKey sql.NullString `json:"idempotencyKey,omitempty" db:"idempotency_key"`
+	CreatedAt      time.Time      `json:"createdAt" db:"created_at"`
+}

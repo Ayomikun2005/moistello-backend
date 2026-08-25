@@ -18,6 +18,7 @@ type dbExecutor interface {
 	QueryxContext(ctx context.Context, query string, args ...interface{}) (*sqlx.Rows, error)
 	NamedExecContext(ctx context.Context, query string, arg interface{}) (sql.Result, error)
 	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	SelectContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error
 }
 
 type pgRepo struct {
@@ -393,4 +394,98 @@ func isUniqueViolationPg(err error) bool {
 		return pqErr.Code == pq.ErrorCode("23505")
 	}
 	return false
+}
+
+
+func (r *pgRepo) CreateDispute(ctx context.Context, d *Dispute) error {
+	query := `
+		INSERT INTO disputes (id, circle_id, raiser_id, reason, evidence, status, idempotency_key, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`
+	_, err := r.db.ExecContext(ctx, query, d.ID, d.CircleID, d.RaiserID, d.Reason, d.Evidence, d.Status, d.IdempotencyKey, d.CreatedAt, d.UpdatedAt)
+	return err
+}
+
+func (r *pgRepo) GetDisputeByID(ctx context.Context, id uuid.UUID) (*Dispute, error) {
+	query := `SELECT id, circle_id, raiser_id, reason, evidence, status, idempotency_key, created_at, updated_at FROM disputes WHERE id = $1`
+	var d Dispute
+	err := r.db.QueryRowxContext(ctx, query, id).StructScan(&d)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil // Or domain specific error
+		}
+		return nil, err
+	}
+	return &d, nil
+}
+
+func (r *pgRepo) UpdateDisputeStatus(ctx context.Context, id uuid.UUID, status DisputeStatus) error {
+	query := `UPDATE disputes SET status = $1, updated_at = NOW() WHERE id = $2`
+	_, err := r.db.ExecContext(ctx, query, status, id)
+	return err
+}
+
+func (r *pgRepo) ListDisputesByCircle(ctx context.Context, circleID uuid.UUID) ([]Dispute, error) {
+	query := `SELECT id, circle_id, raiser_id, reason, evidence, status, idempotency_key, created_at, updated_at FROM disputes WHERE circle_id = $1 ORDER BY created_at DESC`
+	var disputes []Dispute
+	err := r.db.SelectContext(ctx, &disputes, query, circleID)
+	return disputes, err
+}
+
+func (r *pgRepo) CreateVote(ctx context.Context, v *CircleVote) error {
+	query := `
+		INSERT INTO circle_votes (id, circle_id, voter_id, vote_for_id, round_number, idempotency_key, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`
+	_, err := r.db.ExecContext(ctx, query, v.ID, v.CircleID, v.VoterID, v.VoteForID, v.RoundNumber, v.IdempotencyKey, v.CreatedAt)
+	return err
+}
+
+func (r *pgRepo) GetVotesByCircleAndRound(ctx context.Context, circleID uuid.UUID, roundNumber int) ([]CircleVote, error) {
+	query := `SELECT id, circle_id, voter_id, vote_for_id, round_number, idempotency_key, created_at FROM circle_votes WHERE circle_id = $1 AND round_number = $2`
+	var votes []CircleVote
+	err := r.db.SelectContext(ctx, &votes, query, circleID, roundNumber)
+	return votes, err
+}
+
+func (r *pgRepo) GetVoteByVoterAndRound(ctx context.Context, circleID, voterID uuid.UUID, roundNumber int) (*CircleVote, error) {
+	query := `SELECT id, circle_id, voter_id, vote_for_id, round_number, idempotency_key, created_at FROM circle_votes WHERE circle_id = $1 AND voter_id = $2 AND round_number = $3`
+	var v CircleVote
+	err := r.db.QueryRowxContext(ctx, query, circleID, voterID, roundNumber).StructScan(&v)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r *pgRepo) CreateAuctionBid(ctx context.Context, b *CircleAuctionBid) error {
+	query := `
+		INSERT INTO circle_auction_bids (id, circle_id, bidder_id, round_number, discount_bips, idempotency_key, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`
+	_, err := r.db.ExecContext(ctx, query, b.ID, b.CircleID, b.BidderID, b.RoundNumber, b.DiscountBips, b.IdempotencyKey, b.CreatedAt)
+	return err
+}
+
+func (r *pgRepo) GetAuctionBidsByCircleAndRound(ctx context.Context, circleID uuid.UUID, roundNumber int) ([]CircleAuctionBid, error) {
+	query := `SELECT id, circle_id, bidder_id, round_number, discount_bips, idempotency_key, created_at FROM circle_auction_bids WHERE circle_id = $1 AND round_number = $2 ORDER BY discount_bips DESC, created_at ASC`
+	var bids []CircleAuctionBid
+	err := r.db.SelectContext(ctx, &bids, query, circleID, roundNumber)
+	return bids, err
+}
+
+func (r *pgRepo) GetAuctionBidByBidderAndRound(ctx context.Context, circleID, bidderID uuid.UUID, roundNumber int) (*CircleAuctionBid, error) {
+	query := `SELECT id, circle_id, bidder_id, round_number, discount_bips, idempotency_key, created_at FROM circle_auction_bids WHERE circle_id = $1 AND bidder_id = $2 AND round_number = $3`
+	var b CircleAuctionBid
+	err := r.db.QueryRowxContext(ctx, query, circleID, bidderID, roundNumber).StructScan(&b)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &b, nil
 }
