@@ -28,6 +28,7 @@ import (
 	"github.com/moistello/backend/internal/domain/savings"
 	"github.com/moistello/backend/internal/domain/user"
 	"github.com/moistello/backend/pkg/apperrors"
+	"github.com/moistello/backend/webhook"
 )
 
 // ── Mock implementations ──────────────────────────────────────────────
@@ -102,10 +103,10 @@ func (m *mockCircleRepo) FindByContractID(_ context.Context, _ string) (*circle.
 func (m *mockCircleRepo) List(_ context.Context, _ circle.CircleFilter) ([]circle.Circle, error) {
 	return []circle.Circle{}, nil
 }
-func (m *mockCircleRepo) Count(_ context.Context, _ circle.CircleFilter) (int, error) { return 0, nil }
-func (m *mockCircleRepo) Create(_ context.Context, _ *circle.Circle) error            { return nil }
-func (m *mockCircleRepo) Update(_ context.Context, _ *circle.Circle) error            { return nil }
-func (m *mockCircleRepo) Delete(_ context.Context, _ uuid.UUID) error                { return nil }
+func (m *mockCircleRepo) Count(_ context.Context, _ circle.CircleFilter) (int, error)  { return 0, nil }
+func (m *mockCircleRepo) Create(_ context.Context, _ *circle.Circle) error             { return nil }
+func (m *mockCircleRepo) Update(_ context.Context, _ *circle.Circle) error             { return nil }
+func (m *mockCircleRepo) Delete(_ context.Context, _ uuid.UUID) error                  { return nil }
 func (m *mockCircleRepo) CreateMember(_ context.Context, _ *circle.CircleMember) error { return nil }
 func (m *mockCircleRepo) GetMembers(_ context.Context, _ uuid.UUID) ([]circle.CircleMember, error) {
 	return []circle.CircleMember{}, nil
@@ -135,11 +136,11 @@ func (m *mockCircleService) Create(_ context.Context, organizerID string, input 
 func (m *mockCircleService) Update(_ context.Context, id, userID string, _ circle.UpdateCircleInput) (*circle.Circle, error) {
 	return &circle.Circle{ID: uuid.MustParse(id), Name: "Updated"}, nil
 }
-func (m *mockCircleService) Start(_ context.Context, _, _ string) error          { return nil }
-func (m *mockCircleService) Close(_ context.Context, _, _ string) error          { return nil }
-func (m *mockCircleService) Cancel(_ context.Context, _, _ string) error         { return nil }
-func (m *mockCircleService) Join(_ context.Context, _, _, _ string) error        { return nil }
-func (m *mockCircleService) Exit(_ context.Context, _, _ string) error           { return nil }
+func (m *mockCircleService) Start(_ context.Context, _, _ string) error   { return nil }
+func (m *mockCircleService) Close(_ context.Context, _, _ string) error   { return nil }
+func (m *mockCircleService) Cancel(_ context.Context, _, _ string) error  { return nil }
+func (m *mockCircleService) Join(_ context.Context, _, _, _ string) error { return nil }
+func (m *mockCircleService) Exit(_ context.Context, _, _ string) error    { return nil }
 func (m *mockCircleService) GetMembers(_ context.Context, _ string) ([]circle.CircleMember, error) {
 	return []circle.CircleMember{}, nil
 }
@@ -183,7 +184,7 @@ func (m *mockContribRepo) FindByID(_ context.Context, _ uuid.UUID) (*contributio
 func (m *mockContribRepo) FindByCircleAndUser(_ context.Context, _, _ uuid.UUID) (*contribution.Contribution, error) {
 	return nil, nil
 }
-func (m *mockContribRepo) Create(_ context.Context, _ *contribution.Contribution) error  { return nil }
+func (m *mockContribRepo) Create(_ context.Context, _ *contribution.Contribution) error { return nil }
 func (m *mockContribRepo) UpdateStatus(_ context.Context, _ uuid.UUID, _ contribution.ContributionStatus, _ string) error {
 	return nil
 }
@@ -211,7 +212,7 @@ type mockPayoutRepo struct{}
 func (m *mockPayoutRepo) FindByID(_ context.Context, _ uuid.UUID) (*payout.Payout, error) {
 	return nil, apperrors.ErrNotFound
 }
-func (m *mockPayoutRepo) Create(_ context.Context, _ *payout.Payout) error               { return nil }
+func (m *mockPayoutRepo) Create(_ context.Context, _ *payout.Payout) error { return nil }
 func (m *mockPayoutRepo) ListByUser(_ context.Context, _ uuid.UUID, _, _ int) ([]payout.Payout, int, error) {
 	return []payout.Payout{}, 0, nil
 }
@@ -227,8 +228,8 @@ func (m *mockNotificationService) Create(_ context.Context, _ notification.Creat
 func (m *mockNotificationService) List(_ context.Context, _ string, _, _ int, _ bool) ([]notification.Notification, int, error) {
 	return []notification.Notification{}, 0, nil
 }
-func (m *mockNotificationService) MarkRead(_ context.Context, _, _ string) error    { return nil }
-func (m *mockNotificationService) MarkAllRead(_ context.Context, _ string) error    { return nil }
+func (m *mockNotificationService) MarkRead(_ context.Context, _, _ string) error { return nil }
+func (m *mockNotificationService) MarkAllRead(_ context.Context, _ string) error { return nil }
 
 type mockCommunityService struct{}
 
@@ -247,21 +248,23 @@ func (m *mockCommunityService) List(_ context.Context, _ community.CommunityFilt
 func (m *mockCommunityService) Update(_ context.Context, _, _ string, _ community.UpdateCommunityInput) (*community.Community, error) {
 	return &community.Community{ID: uuid.New(), Name: "Updated"}, nil
 }
-func (m *mockCommunityService) Delete(_ context.Context, _, _ string) error                { return nil }
-func (m *mockCommunityService) Join(_ context.Context, _, _ string) error                  { return nil }
-func (m *mockCommunityService) Leave(_ context.Context, _, _ string) error                 { return nil }
+func (m *mockCommunityService) Delete(_ context.Context, _, _ string) error { return nil }
+func (m *mockCommunityService) Join(_ context.Context, _, _ string) error   { return nil }
+func (m *mockCommunityService) Leave(_ context.Context, _, _ string) error  { return nil }
 func (m *mockCommunityService) GetMembers(_ context.Context, _ string) ([]community.CommunityMember, error) {
 	return []community.CommunityMember{}, nil
 }
-func (m *mockCommunityService) IsMember(_ context.Context, _, _ string) (bool, error) { return true, nil }
+func (m *mockCommunityService) IsMember(_ context.Context, _, _ string) (bool, error) {
+	return true, nil
+}
 func (m *mockCommunityService) CreateAnnouncement(_ context.Context, _, _, _ string) (*community.Announcement, error) {
 	return &community.Announcement{ID: uuid.New()}, nil
 }
 func (m *mockCommunityService) GetAnnouncements(_ context.Context, _ string) ([]community.Announcement, error) {
 	return []community.Announcement{}, nil
 }
-func (m *mockCommunityService) DeleteAnnouncement(_ context.Context, _, _ string) error   { return nil }
-func (m *mockCommunityService) LikeAnnouncement(_ context.Context, _ string) error        { return nil }
+func (m *mockCommunityService) DeleteAnnouncement(_ context.Context, _, _ string) error { return nil }
+func (m *mockCommunityService) LikeAnnouncement(_ context.Context, _ string) error      { return nil }
 func (m *mockCommunityService) PinAnnouncement(_ context.Context, _, _ string, _ bool) error {
 	return nil
 }
@@ -343,6 +346,66 @@ func unauthRequest(t *testing.T, router http.Handler, method, path string, body 
 	return w.Code, resp
 }
 
+// memoryWebhookRepo is an in-memory webhook.WebhookRepository used by the
+// test router so webhook registrations persist across requests in a test.
+type memoryWebhookRepo struct {
+	webhooks   map[string]*webhook.WebhookRegistration
+	deliveries []webhook.DeliveryLog
+}
+
+func (m *memoryWebhookRepo) Register(_ context.Context, wh *webhook.WebhookRegistration) error {
+	m.webhooks[wh.ID] = wh
+	return nil
+}
+
+func (m *memoryWebhookRepo) GetByUserID(_ context.Context, userID string) ([]webhook.WebhookRegistration, error) {
+	var list []webhook.WebhookRegistration
+	for _, wh := range m.webhooks {
+		if wh.UserID == userID {
+			list = append(list, *wh)
+		}
+	}
+	return list, nil
+}
+
+func (m *memoryWebhookRepo) GetActiveWebhooks(_ context.Context) ([]webhook.WebhookRegistration, error) {
+	var list []webhook.WebhookRegistration
+	for _, wh := range m.webhooks {
+		if wh.IsActive {
+			list = append(list, *wh)
+		}
+	}
+	return list, nil
+}
+
+func (m *memoryWebhookRepo) GetByID(_ context.Context, id string) (*webhook.WebhookRegistration, error) {
+	if wh, ok := m.webhooks[id]; ok {
+		return wh, nil
+	}
+	return nil, nil
+}
+
+func (m *memoryWebhookRepo) Delete(_ context.Context, id string) error {
+	if _, ok := m.webhooks[id]; !ok {
+		return apperrors.ErrNotFound
+	}
+	delete(m.webhooks, id)
+	return nil
+}
+
+func (m *memoryWebhookRepo) UpdateDeliveryOutcome(_ context.Context, _ string, _ bool) error {
+	return nil
+}
+
+func (m *memoryWebhookRepo) LogDelivery(_ context.Context, d *webhook.DeliveryLog) error {
+	m.deliveries = append(m.deliveries, *d)
+	return nil
+}
+
+func (m *memoryWebhookRepo) ListDeliveries(_ context.Context, _ string, _, _ int) ([]webhook.DeliveryLog, int, error) {
+	return m.deliveries, len(m.deliveries), nil
+}
+
 func setupTestRouter() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 
@@ -364,7 +427,7 @@ func setupTestRouter() *gin.Engine {
 	communityHandler := handler.NewCommunityHandler(communitySvc)
 	notificationHandler := handler.NewNotificationHandler(notifSvc, userSvc)
 	savingsHandler := handler.NewSavingsGoalHandler(savingsSvc)
-	webhookHandler := handler.NewWebhookHandler()
+	webhookHandler := handler.NewWebhookHandler(&memoryWebhookRepo{webhooks: map[string]*webhook.WebhookRegistration{}})
 	healthHandler := handler.NewHealthHandler(nil, nil, "", "")
 
 	r := gin.New()

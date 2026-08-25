@@ -7,19 +7,21 @@ import (
 )
 
 type PaginationMeta struct {
-	Page       int `json:"page"`
-	Limit      int `json:"limit"`
-	Total      int `json:"total"`
-	TotalPages int `json:"totalPages"`
+	Page       int  `json:"page"`
+	Limit      int  `json:"limit"`
+	Total      int  `json:"total"`
+	TotalPages int  `json:"totalPages"`
+	HasMore    bool `json:"hasMore"`
 }
 
 // Pagination is the stable list-response contract. PaginationMeta remains in
 // the envelope for clients using the original camelCase API.
 type Pagination struct {
-	Page       int `json:"page"`
-	PageSize   int `json:"page_size"`
-	Total      int `json:"total"`
-	TotalPages int `json:"total_pages"`
+	Page       int  `json:"page"`
+	PageSize   int  `json:"page_size"`
+	Total      int  `json:"total"`
+	TotalPages int  `json:"total_pages"`
+	HasMore    bool `json:"has_more"`
 }
 
 type Envelope = APIResponse
@@ -73,7 +75,7 @@ func OKWithMeta(c *gin.Context, data any, meta *PaginationMeta) {
 	var current *Pagination
 	if meta != nil {
 		current = &Pagination{
-			Page: meta.Page, PageSize: meta.Limit, Total: meta.Total, TotalPages: meta.TotalPages,
+			Page: meta.Page, PageSize: meta.Limit, Total: meta.Total, TotalPages: meta.TotalPages, HasMore: meta.HasMore,
 		}
 	}
 	c.JSON(http.StatusOK, APIResponse{
@@ -121,5 +123,5 @@ func NewPaginationMeta(page, limit, total int) *PaginationMeta {
 		limit = 20
 	}
 	totalPages := (total + limit - 1) / limit
-	return &PaginationMeta{Page: page, Limit: limit, Total: total, TotalPages: totalPages}
+	return &PaginationMeta{Page: page, Limit: limit, Total: total, TotalPages: totalPages, HasMore: page < totalPages}
 }

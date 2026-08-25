@@ -23,6 +23,7 @@ import (
 	"github.com/moistello/backend/config"
 	"github.com/moistello/backend/internal/api"
 	"github.com/moistello/backend/internal/api/handler"
+	"github.com/moistello/backend/internal/domain/admin"
 	"github.com/moistello/backend/internal/domain/audit"
 	"github.com/moistello/backend/internal/domain/auth"
 	"github.com/moistello/backend/internal/domain/circle"
@@ -43,13 +44,13 @@ import (
 	"github.com/moistello/backend/internal/domain/verification"
 	"github.com/moistello/backend/internal/domain/wallet"
 	"github.com/moistello/backend/internal/domain/yellowcard"
-	"github.com/moistello/backend/pkg/stellar"
-	"github.com/moistello/backend/pkg/stellar/soroban"
 	ws "github.com/moistello/backend/internal/websocket"
 	"github.com/moistello/backend/pkg/logger"
 	"github.com/moistello/backend/pkg/postgres"
 	"github.com/moistello/backend/pkg/rabbitmq"
 	"github.com/moistello/backend/pkg/redis"
+	"github.com/moistello/backend/pkg/stellar"
+	"github.com/moistello/backend/pkg/stellar/soroban"
 	"github.com/moistello/backend/pkg/tracing"
 	"github.com/moistello/backend/pkg/validator"
 	"github.com/moistello/backend/webhook"
@@ -177,9 +178,10 @@ func main() {
 	payoutH := handler.NewPayoutHandler(payoutSvc, payoutRepo)
 	inviteH := handler.NewInviteHandler(inviteSvc)
 	notifH := handler.NewNotificationHandler(notificationSvc, userSvc)
-	adminH := handler.NewAdminHandler(userSvc, userRepo, circleSvc, auditRepo)
-	webhookH := handler.NewWebhookHandler()
+	adminMetricsSvc := admin.NewService(admin.NewRepository(db), 0)
+	adminH := handler.NewAdminHandler(userSvc, userRepo, circleSvc, auditRepo, adminMetricsSvc)
 	webhookRepo := webhook.NewPostgresRepository(db.DB)
+	webhookH := handler.NewWebhookHandler(webhookRepo)
 	healthH := handler.NewHealthHandler(db.DB, redisClient, cfg.Stellar.SorobanRPCURL, cfg.Stellar.HorizonURL)
 	passkeyCredH := handler.NewPasskeyCredentialHandler(db)
 	walletH := handler.NewWalletHandler(walletSvc)
