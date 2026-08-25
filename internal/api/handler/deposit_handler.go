@@ -144,19 +144,20 @@ func (h *DepositHandler) InitiateWithdraw(c *gin.Context) {
 		return
 	}
 
-	// Return Yellow Card's Stellar address for the user to send USDC to
-	ycAddress := "GABCDEF123..." // This comes from Yellow Card's API config
+	// Return Yellow Card's configured Stellar address for the user to send USDC
+	// to. The address is provided at startup from config rather than hard-coded.
+	ycAddress := h.yc.StellarAddress()
 
 	response.OK(c, gin.H{
 		"withdraw": gin.H{
-			"sendId":             sendResp.SendID,
-			"status":             sendResp.Status,
-			"paymentRef":         paymentRef,
-			"estimatedNgn":       quote.ToAmount,
-			"spread":             quote.FeePercentage,
-			"yellowCardAddress":  ycAddress,
-			"usdcAmount":         req.AmountUSDC,
-			"userWallet":         userWallet.PublicKey,
+			"sendId":            sendResp.SendID,
+			"status":            sendResp.Status,
+			"paymentRef":        paymentRef,
+			"estimatedNgn":      quote.ToAmount,
+			"spread":            quote.FeePercentage,
+			"yellowCardAddress": ycAddress,
+			"usdcAmount":        req.AmountUSDC,
+			"userWallet":        userWallet.PublicKey,
 		},
 	})
 }

@@ -93,8 +93,9 @@ func (s StellarConfig) String() string {
 }
 
 type YellowCardConfig struct {
-	APIKey    string `mapstructure:"api_key"`
-	APISecret string `mapstructure:"api_secret"`
+	APIKey         string `mapstructure:"api_key"`
+	APISecret      string `mapstructure:"api_secret"`
+	StellarAddress string `mapstructure:"stellar_address"`
 }
 
 type AuthConfig struct {
@@ -241,6 +242,7 @@ func Load(path string) (*Config, error) {
 	setDefault(v, "notification.push.fcm_server_key", "")
 	setDefault(v, "yellow_card.api_key", "")
 	setDefault(v, "yellow_card.api_secret", "")
+	setDefault(v, "yellow_card.stellar_address", "")
 	setDefault(v, "security.wallet_pepper", "")
 	setDefault(v, "security.passkey_pepper", "")
 	setDefault(v, "security.encryption_key", "")
@@ -259,6 +261,7 @@ func Load(path string) (*Config, error) {
 	mustBindEnv(v, "brevo.from_name", "MOISTELLO_BREVO_FROM_NAME", "MOISTELLO_NOTIFICATION_EMAIL_FROM_NAME")
 	mustBindEnv(v, "yellow_card.api_key", "YELLOW_CARD_API_KEY")
 	mustBindEnv(v, "yellow_card.api_secret", "YELLOW_CARD_API_SECRET")
+	mustBindEnv(v, "yellow_card.stellar_address", "YELLOW_CARD_STELLAR_ADDRESS")
 	v.SetDefault("server.port", 1100)
 	v.SetDefault("server.host", "0.0.0.0")
 	v.SetDefault("server.read_timeout", "10s")

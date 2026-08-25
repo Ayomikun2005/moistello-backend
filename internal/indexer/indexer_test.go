@@ -62,6 +62,68 @@ func TestPoller_FilterByContract_NoFilter(t *testing.T) {
 	assert.Len(t, result, 2)
 }
 
+func TestPoller_FilterByContract_SourceAccountMatch(t *testing.T) {
+	p := NewPoller("http://x", []string{"GMASTER123"})
+	txns := []Transaction{
+		{Hash: "a", Operations: []Operation{{Type: "payment", SourceAccount: "GMASTER123"}}},
+		{Hash: "b", Operations: []Operation{{Type: "payment", SourceAccount: "GOTHER456"}}},
+	}
+
+	result := p.FilterByContract(txns)
+
+	assert.Len(t, result, 1)
+	assert.Equal(t, "a", result[0].Hash)
+}
+
+func TestPoller_FilterByContract_ContractIDMatch(t *testing.T) {
+	p := NewPoller("http://x", []string{"CONTRACT_ID_123"})
+	txns := []Transaction{
+		{Hash: "match", Operations: []Operation{{Type: "invoke_host_function", ContractID: "CONTRACT_ID_123"}}},
+		{Hash: "skip", Operations: []Operation{{Type: "invoke_host_function", ContractID: "SOME_OTHER_CONTRACT"}}},
+	}
+
+	result := p.FilterByContract(txns)
+
+	assert.Len(t, result, 1)
+	assert.Equal(t, "match", result[0].Hash)
+}
+
+// The previous bug matched ANY invoke_host_function regardless of contract.
+// Ensure an unrelated contract invocation is no longer over-included.
+func TestPoller_FilterByContract_IgnoresUnrelatedInvokeHostFunction(t *testing.T) {
+	p := NewPoller("http://x", []string{"CONTRACT_ID_123"})
+	txns := []Transaction{
+		{Hash: "unrelated", Operations: []Operation{{Type: "invoke_host_function", ContractID: "UNRELATED_CONTRACT"}}},
+		{Hash: "unrelated2", Operations: []Operation{{Type: "invoke_host_function"}}},
+	}
+
+	result := p.FilterByContract(txns)
+
+	assert.Len(t, result, 0)
+}
+
+func TestPoller_FilterByContract_MultipleContracts(t *testing.T) {
+	p := NewPoller("http://x", []string{"CONTRACT_A", "CONTRACT_B"})
+	txns := []Transaction{
+		{Hash: "a", Operations: []Operation{{Type: "invoke_host_function", ContractID: "CONTRACT_A"}}},
+		{Hash: "b", Operations: []Operation{{Type: "invoke_host_function", ContractID: "CONTRACT_B"}}},
+		{Hash: "c", Operations: []Operation{{Type: "invoke_host_function", ContractID: "CONTRACT_C"}}},
+	}
+
+	result := p.FilterByContract(txns)
+
+	assert.Len(t, result, 2)
+}
+
+func TestPoller_FilterByContract_NoOperations(t *testing.T) {
+	p := NewPoller("http://x", []string{"CONTRACT_A"})
+	txns := []Transaction{{Hash: "a", Operations: []Operation{}}}
+
+	result := p.FilterByContract(txns)
+
+	assert.Len(t, result, 0)
+}
+
 func TestIndexerMetrics_Creation(t *testing.T) {
 	m := NewIndexerMetrics()
 	assert.NotNil(t, m.EventsProcessed)
