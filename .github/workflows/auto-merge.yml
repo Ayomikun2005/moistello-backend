@@ -22,7 +22,6 @@ on:
   workflow_run:
     workflows: [ CI ]
     types: [ completed ]
-    branches: [ master, main ]
   issue_comment:
     types: [ created ]
 
@@ -122,7 +121,7 @@ jobs:
             | grep -vE '^\+\s*$' \
             | wc -l)"
 
-          TOTAL_CHANGES="$(echo "$FILES_JSON" | jq '[.[].additions + .deletions] | add')"
+          TOTAL_CHANGES="$(echo "$FILES_JSON" | jq '[.[].additions + .deletions] | add // 0')"
 
           echo "source_files=$SRC_COUNT real_code_lines=$REAL_LINES total_changed_lines=$TOTAL_CHANGES"
 
@@ -163,12 +162,16 @@ jobs:
   merge-command:
     name: Merge on /merge comment
     runs-on: ubuntu-latest
-    if: github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/merge')
+    if: >-
+      github.event_name == 'issue_comment'
+      && startsWith(github.event.comment.body, '/merge')
+      && !contains(github.event.comment.user.login, '[bot]')
     steps:
       - uses: actions/checkout@v4
-      - name: Merge the PR
+      - name: Merge the PR (respects branch protection; waits for green CI via auto-merge)
         env:
           GH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
         run: |
           PR="${{ github.event.issue.number }}"
-          gh pr merge "$PR" --repo "${{ github.repository }}" --squash --delete-branch
+          gh pr merge "$PR" --repo "${{ github.repository }}" --squash --delete-branch --auto \
+            || echo "Merge skipped (not mergeable / protection unsatisfied / already merged)."
