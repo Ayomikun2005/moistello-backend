@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/moistello/backend/pkg/tracing"
 	"github.com/rs/zerolog/log"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 type Client struct {
@@ -40,9 +42,12 @@ type HorizonAccountResponse struct {
 	} `json:"balances"`
 }
 
-func (c *Client) GetAccount(ctx context.Context, address string) (*HorizonAccountResponse, error) {
-	var account *HorizonAccountResponse
-	err := c.cb.Execute(ctx, func() error {
+func (c *Client) GetAccount(ctx context.Context, address string) (account *HorizonAccountResponse, err error) {
+	ctx, span := tracing.StartStellarSpan(ctx, "get_account")
+	start := time.Now()
+	defer func() { tracing.EndSpan(span, err, start, attribute.String("stellar.address", address)) }()
+
+	err = c.cb.Execute(ctx, func() error {
 		url := fmt.Sprintf("%s/accounts/%s", c.horizonURL, address)
 		resp, err := c.httpClient.Get(url)
 		if err != nil {
@@ -71,9 +76,12 @@ func (c *Client) GetAccount(ctx context.Context, address string) (*HorizonAccoun
 	return account, nil
 }
 
-func (c *Client) GetTransaction(ctx context.Context, txnHash string) (map[string]any, error) {
-	var result map[string]any
-	err := c.cb.Execute(ctx, func() error {
+func (c *Client) GetTransaction(ctx context.Context, txnHash string) (result map[string]any, err error) {
+	ctx, span := tracing.StartStellarSpan(ctx, "get_transaction")
+	start := time.Now()
+	defer func() { tracing.EndSpan(span, err, start, attribute.String("stellar.txn_hash", txnHash)) }()
+
+	err = c.cb.Execute(ctx, func() error {
 		url := fmt.Sprintf("%s/transactions/%s", c.horizonURL, txnHash)
 		resp, err := c.httpClient.Get(url)
 		if err != nil {

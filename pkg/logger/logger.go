@@ -9,6 +9,19 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// ContextKey is the type used for request-scoped context keys so they cannot
+// collide with keys from other packages. Values stored under these keys are
+// picked up by Ctx and included in every structured log line emitted during a
+// request, tying logs back to the originating request.
+type ContextKey string
+
+const (
+	// RequestIDKey is the context key for the request correlation ID.
+	RequestIDKey ContextKey = "requestID"
+	// UserIDKey is the context key for the authenticated user ID.
+	UserIDKey ContextKey = "userID"
+)
+
 // traceIDHook is a zerolog hook that adds trace ID from OpenTelemetry context
 type traceIDHook struct{}
 
@@ -33,10 +46,10 @@ func Ctx(ctx context.Context) zerolog.Logger {
 		return log.Logger
 	}
 	logger := log.Logger.With()
-	if reqID, ok := ctx.Value("requestID").(string); ok && reqID != "" {
+	if reqID, ok := ctx.Value(RequestIDKey).(string); ok && reqID != "" {
 		logger = logger.Str("requestID", reqID)
 	}
-	if userID, ok := ctx.Value("userID").(string); ok && userID != "" {
+	if userID, ok := ctx.Value(UserIDKey).(string); ok && userID != "" {
 		logger = logger.Str("userID", userID)
 	}
 	return logger.Logger()

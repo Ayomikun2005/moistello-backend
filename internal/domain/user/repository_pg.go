@@ -12,6 +12,7 @@ import (
 	"github.com/lib/pq"
 
 	"github.com/moistello/backend/pkg/apperrors"
+	"github.com/moistello/backend/pkg/tracing"
 )
 
 func hashUserEmail(email string) string {
@@ -89,7 +90,9 @@ func (r *pgRepo) FindByID(ctx context.Context, id uuid.UUID) (*User, error) {
 		country_code, preferred_language, moi_score, role,
 		session_ttl_minutes, password_hash, totp_secret, totp_enabled, backup_codes, email_verified, passkey_credential_id,
 		created_at, updated_at FROM users WHERE id = $1`
-	return scanUser(r.db.QueryRowxContext(ctx, query, id))
+	return tracing.WithDBSpan(ctx, "SELECT", "users", func(ctx context.Context) (*User, error) {
+		return scanUser(r.db.QueryRowxContext(ctx, query, id))
+	})
 }
 
 func (r *pgRepo) FindByWalletAddress(ctx context.Context, walletAddress string) (*User, error) {
@@ -97,7 +100,9 @@ func (r *pgRepo) FindByWalletAddress(ctx context.Context, walletAddress string) 
 		country_code, preferred_language, moi_score, role,
 		session_ttl_minutes, password_hash, totp_secret, totp_enabled, backup_codes, email_verified, passkey_credential_id,
 		created_at, updated_at FROM users WHERE wallet_address = $1`
-	return scanUser(r.db.QueryRowxContext(ctx, query, walletAddress))
+	return tracing.WithDBSpan(ctx, "SELECT", "users", func(ctx context.Context) (*User, error) {
+		return scanUser(r.db.QueryRowxContext(ctx, query, walletAddress))
+	})
 }
 
 func (r *pgRepo) FindByEmail(ctx context.Context, email string) (*User, error) {
@@ -106,7 +111,9 @@ func (r *pgRepo) FindByEmail(ctx context.Context, email string) (*User, error) {
 		country_code, preferred_language, moi_score, role,
 		session_ttl_minutes, password_hash, totp_secret, totp_enabled, backup_codes, email_verified, passkey_credential_id,
 		created_at, updated_at FROM users WHERE email = $1`
-	return scanUser(r.db.QueryRowxContext(ctx, query, hashedEmail))
+	return tracing.WithDBSpan(ctx, "SELECT", "users", func(ctx context.Context) (*User, error) {
+		return scanUser(r.db.QueryRowxContext(ctx, query, hashedEmail))
+	})
 }
 
 func (r *pgRepo) FindByPasskeyCredentialID(ctx context.Context, credentialID string) (*User, error) {
@@ -114,7 +121,9 @@ func (r *pgRepo) FindByPasskeyCredentialID(ctx context.Context, credentialID str
 		country_code, preferred_language, moi_score, role,
 		session_ttl_minutes, password_hash, totp_secret, totp_enabled, backup_codes, email_verified, passkey_credential_id,
 		created_at, updated_at FROM users WHERE passkey_credential_id = $1`
-	return scanUser(r.db.QueryRowxContext(ctx, query, credentialID))
+	return tracing.WithDBSpan(ctx, "SELECT", "users", func(ctx context.Context) (*User, error) {
+		return scanUser(r.db.QueryRowxContext(ctx, query, credentialID))
+	})
 }
 
 func (r *pgRepo) Create(ctx context.Context, u *User) error {
@@ -126,14 +135,17 @@ func (r *pgRepo) Create(ctx context.Context, u *User) error {
 		:avatar_ipfs_hash, :country_code, :preferred_language,
 		:moi_score, :role, :session_ttl_minutes, :password_hash, :totp_secret, :totp_enabled, :backup_codes, :email_verified, :passkey_credential_id,
 		:created_at, :updated_at)`
-	_, err := r.db.NamedExecContext(ctx, query, u)
-	if err != nil {
-		if isUniqueViolation(err) {
-			return apperrors.ErrConflict
+	_, err := tracing.WithDBSpan(ctx, "INSERT", "users", func(ctx context.Context) (any, error) {
+		_, err := r.db.NamedExecContext(ctx, query, u)
+		if err != nil {
+			if isUniqueViolation(err) {
+				return nil, apperrors.ErrConflict
+			}
+			return nil, fmt.Errorf("creating user: %w", err)
 		}
-		return fmt.Errorf("creating user: %w", err)
-	}
-	return nil
+		return nil, nil
+	})
+	return err
 }
 
 func (r *pgRepo) Update(ctx context.Context, u *User) error {
@@ -144,28 +156,34 @@ func (r *pgRepo) Update(ctx context.Context, u *User) error {
 		totp_secret = :totp_secret, totp_enabled = :totp_enabled,
 		backup_codes = :backup_codes, email_verified = :email_verified,
 		passkey_credential_id = :passkey_credential_id, updated_at = :updated_at WHERE id = :id`
-	result, err := r.db.NamedExecContext(ctx, query, u)
-	if err != nil {
-		return fmt.Errorf("updating user: %w", err)
-	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		return ErrUserNotFound
-	}
-	return nil
+	_, err := tracing.WithDBSpan(ctx, "UPDATE", "users", func(ctx context.Context) (any, error) {
+		result, err := r.db.NamedExecContext(ctx, query, u)
+		if err != nil {
+			return nil, fmt.Errorf("updating user: %w", err)
+		}
+		rows, _ := result.RowsAffected()
+		if rows == 0 {
+			return nil, ErrUserNotFound
+		}
+		return nil, nil
+	})
+	return err
 }
 
 func (r *pgRepo) UpdateMoiScore(ctx context.Context, id uuid.UUID, score int) error {
 	query := `UPDATE users SET moi_score = $1, updated_at = NOW() WHERE id = $2`
-	result, err := r.db.ExecContext(ctx, query, score, id)
-	if err != nil {
-		return fmt.Errorf("updating moi score: %w", err)
-	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		return ErrUserNotFound
-	}
-	return nil
+	_, err := tracing.WithDBSpan(ctx, "UPDATE", "users", func(ctx context.Context) (any, error) {
+		result, err := r.db.ExecContext(ctx, query, score, id)
+		if err != nil {
+			return nil, fmt.Errorf("updating moi score: %w", err)
+		}
+		rows, _ := result.RowsAffected()
+		if rows == 0 {
+			return nil, ErrUserNotFound
+		}
+		return nil, nil
+	})
+	return err
 }
 
 func (r *pgRepo) List(ctx context.Context, filter UserFilter) ([]User, error) {
@@ -193,24 +211,26 @@ func (r *pgRepo) List(ctx context.Context, filter UserFilter) ([]User, error) {
 	query += ` ORDER BY created_at DESC LIMIT $` + fmt.Sprint(len(args)+1) + ` OFFSET $` + fmt.Sprint(len(args)+2)
 	args = append(args, limit, offset)
 
-	rows, err := r.db.QueryxContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("listing users: %w", err)
-	}
-	defer rows.Close()
-
-	var users []User
-	for rows.Next() {
-		u, err := scanUser(rows)
+	return tracing.WithDBSpan(ctx, "SELECT", "users", func(ctx context.Context) ([]User, error) {
+		rows, err := r.db.QueryxContext(ctx, query, args...)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("listing users: %w", err)
 		}
-		users = append(users, *u)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating users: %w", err)
-	}
-	return users, nil
+		defer rows.Close()
+
+		var users []User
+		for rows.Next() {
+			u, err := scanUser(rows)
+			if err != nil {
+				return nil, err
+			}
+			users = append(users, *u)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterating users: %w", err)
+		}
+		return users, nil
+	})
 }
 
 func (r *pgRepo) Count(ctx context.Context, filter UserFilter) (int, error) {
@@ -223,34 +243,42 @@ func (r *pgRepo) Count(ctx context.Context, filter UserFilter) (int, error) {
 		args = append(args, searchPattern)
 	}
 
-	var count int
-	err := r.db.QueryRowxContext(ctx, query, args...).Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("counting users: %w", err)
-	}
-	return count, nil
+	return tracing.WithDBSpan(ctx, "SELECT", "users", func(ctx context.Context) (int, error) {
+		var count int
+		err := r.db.QueryRowxContext(ctx, query, args...).Scan(&count)
+		if err != nil {
+			return 0, fmt.Errorf("counting users: %w", err)
+		}
+		return count, nil
+	})
 }
 
 func (r *pgRepo) ClaimNextName(ctx context.Context) (int64, error) {
-	var value int64
-	err := r.db.QueryRowxContext(ctx, `UPDATE user_name_counter SET value = value + 1 WHERE id = 1 RETURNING value`).Scan(&value)
-	if err != nil {
-		return 0, fmt.Errorf("claiming name: %w", err)
-	}
-	return value, nil
+	query := `UPDATE user_name_counter SET value = value + 1 WHERE id = 1 RETURNING value`
+	return tracing.WithDBSpan(ctx, "UPDATE", "user_name_counter", func(ctx context.Context) (int64, error) {
+		var value int64
+		err := r.db.QueryRowxContext(ctx, query).Scan(&value)
+		if err != nil {
+			return 0, fmt.Errorf("claiming name: %w", err)
+		}
+		return value, nil
+	})
 }
 
 func (r *pgRepo) Delete(ctx context.Context, id uuid.UUID) error {
 	query := `DELETE FROM users WHERE id = $1`
-	result, err := r.db.ExecContext(ctx, query, id)
-	if err != nil {
-		return fmt.Errorf("deleting user: %w", err)
-	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		return ErrUserNotFound
-	}
-	return nil
+	_, err := tracing.WithDBSpan(ctx, "DELETE", "users", func(ctx context.Context) (any, error) {
+		result, err := r.db.ExecContext(ctx, query, id)
+		if err != nil {
+			return nil, fmt.Errorf("deleting user: %w", err)
+		}
+		rows, _ := result.RowsAffected()
+		if rows == 0 {
+			return nil, ErrUserNotFound
+		}
+		return nil, nil
+	})
+	return err
 }
 
 func isUniqueViolation(err error) bool {
