@@ -23,7 +23,19 @@ type WebhookRegistration struct {
 	UserID    string    `json:"user_id"`
 	TargetURL string    `json:"target_url"`
 	Secret    string    `json:"secret"`
+	Events    []string  `json:"events"`
+	IsActive  bool      `json:"is_active"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+type DeliveryLog struct {
+	ID          string    `json:"id"`
+	WebhookID   string    `json:"webhook_id"`
+	StatusCode  int       `json:"status_code"`
+	Success     bool      `json:"success"`
+	Error       string    `json:"error,omitempty"`
+	DurationMs  int64     `json:"duration_ms"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 type WebhookRepository interface {
@@ -31,6 +43,8 @@ type WebhookRepository interface {
 	GetByUserID(ctx context.Context, userID string) ([]WebhookRegistration, error)
 	GetActiveWebhooks(ctx context.Context) ([]WebhookRegistration, error)
 	GetByID(ctx context.Context, id string) (*WebhookRegistration, error)
+	Delete(ctx context.Context, id string) error
+	ListDeliveries(ctx context.Context, webhookID string, page, limit int) ([]DeliveryLog, int, error)
 }
 
 type PostgresRepository struct {
@@ -98,6 +112,37 @@ func (r *PostgresRepository) GetByUserID(ctx context.Context, userID string) ([]
 		list = append(list, wh)
 	}
 	return list, nil
+}
+
+func (r *PostgresRepository) Delete(ctx context.Context, id string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM webhooks WHERE id = $1`, id)
+	return err
+}
+
+func (r *PostgresRepository) ListDeliveries(ctx context.Context, webhookID string, page, limit int) ([]DeliveryLog, int, error) {
+	var total int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM webhook_deliveries WHERE webhook_id = $1`, webhookID).Scan(&total)
+	if err != nil {
+		return nil, 0, err
+	}
+	offset := (page - 1) * limit
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, webhook_id, status_code, success, error, duration_ms, created_at FROM webhook_deliveries WHERE webhook_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+		webhookID, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var list []DeliveryLog
+	for rows.Next() {
+		var d DeliveryLog
+		if err := rows.Scan(&d.ID, &d.WebhookID, &d.StatusCode, &d.Success, &d.Error, &d.DurationMs, &d.CreatedAt); err != nil {
+			return nil, 0, err
+		}
+		list = append(list, d)
+	}
+	return list, total, nil
 }
 
 // JobEnqueuer defines the contract for persisting background retry jobs.
