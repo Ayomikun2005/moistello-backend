@@ -1,13 +1,42 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 
+	"github.com/moistello/backend/internal/domain/circle"
 	ws "github.com/moistello/backend/internal/websocket"
 )
+
+type Option func(*WebSocketHandler)
+
+// WithCircleService wires a circle.Service into the handler so that
+// subscribe authorization can enforce circle membership.
+func WithCircleService(svc circle.Service) Option {
+	return func(h *WebSocketHandler) {
+		if h.hub != nil {
+			h.hub.SetSubscriptionAuthorizer(&circleSubscriptionAuthorizer{service: svc})
+		}
+	}
+}
+
+type circleSubscriptionAuthorizer struct {
+	service circle.Service
+}
+
+func (a *circleSubscriptionAuthorizer) CanSubscribe(ctx context.Context, circleID, userID string) (bool, error) {
+	c, err := a.service.Get(ctx, circleID)
+	if err != nil {
+		return false, err
+	}
+	if c.CircleType == circle.CircleTypePublic {
+		return true, nil
+	}
+	return a.service.IsMember(ctx, circleID, userID)
+}
 
 // WebSocketHandler handles HTTP-to-WebSocket upgrades and manages client
 // connections via the Hub.
@@ -18,8 +47,8 @@ type WebSocketHandler struct {
 
 // NewWebSocketHandler creates a new WebSocketHandler backed by the given Hub.
 // The upgrader is configured with generous buffer sizes and strict origin checking.
-func NewWebSocketHandler(hub *ws.Hub, allowedOrigins []string) *WebSocketHandler {
-	return &WebSocketHandler{
+func NewWebSocketHandler(hub *ws.Hub, allowedOrigins []string, opts ...Option) *WebSocketHandler {
+	h := &WebSocketHandler{
 		hub: hub,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
@@ -38,6 +67,10 @@ func NewWebSocketHandler(hub *ws.Hub, allowedOrigins []string) *WebSocketHandler
 			},
 		},
 	}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
 }
 
 // HandleWebSocket upgrades an authenticated HTTP connection to a WebSocket and

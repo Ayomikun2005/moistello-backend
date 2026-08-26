@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"context"
 	"encoding/json"
 	"sync"
 
@@ -15,22 +16,34 @@ type Message struct {
 	Payload any    `json:"payload"`
 }
 
-// Hub maintains the set of active WebSocket clients and manages circle-based
-// rooms and user-based mappings for targeted broadcasts.
-type Hub struct {
-	mu      sync.RWMutex
-	clients map[string]*Client            // clientID -> Client
-	users   map[string]map[string]*Client // userID -> clientID -> Client
-	rooms   map[string]map[string]*Client // circleID -> clientID -> Client
+// SubscriptionAuthorizer decides whether a user may subscribe to a circle room.
+type SubscriptionAuthorizer interface {
+	CanSubscribe(ctx context.Context, circleID, userID string) (bool, error)
 }
 
-// NewHub creates a new Hub with empty client, user, and room registries.
+// Hub maintains the set of active WebSocket clients and manages circle-based
+// rooms for targeted broadcasts.
+type Hub struct {
+	mu         sync.RWMutex
+	clients    map[string]*Client            // clientID -> Client
+	rooms      map[string]map[string]*Client // circleID -> clientID -> Client
+	authorizer SubscriptionAuthorizer
+}
+
+// NewHub creates a new Hub with empty client and room registries.
 func NewHub() *Hub {
 	return &Hub{
 		clients: make(map[string]*Client),
-		users:   make(map[string]map[string]*Client),
 		rooms:   make(map[string]map[string]*Client),
 	}
+}
+
+// SetSubscriptionAuthorizer installs an authorization hook used to enforce
+// circle membership before a client can join a room.
+func (h *Hub) SetSubscriptionAuthorizer(a SubscriptionAuthorizer) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.authorizer = a
 }
 
 // Register adds a client to the hub so it can receive broadcasts and updates metrics.
@@ -40,17 +53,11 @@ func (h *Hub) Register(client *Client) {
 		h.clients[client.ID] = client
 		metrics.WSActiveConnections.Inc()
 	}
-	if client.UserID != "" {
-		if _, ok := h.users[client.UserID]; !ok {
-			h.users[client.UserID] = make(map[string]*Client)
-		}
-		h.users[client.UserID][client.ID] = client
-	}
 	h.mu.Unlock()
-	log.Debug().Str("clientID", client.ID).Str("userID", client.UserID).Msg("client registered")
+	log.Debug().Str("clientID", client.ID).Msg("client registered")
 }
 
-// Unregister removes a client from the hub, all rooms, and user mappings.
+// Unregister removes a client from the hub and all rooms it has joined.
 // It is safe to call from any goroutine.
 func (h *Hub) Unregister(client *Client) {
 	h.mu.Lock()
@@ -58,32 +65,46 @@ func (h *Hub) Unregister(client *Client) {
 		delete(h.clients, client.ID)
 		metrics.WSActiveConnections.Dec()
 	}
-	if client.UserID != "" {
-		if userMap, ok := h.users[client.UserID]; ok {
-			delete(userMap, client.ID)
-			if len(userMap) == 0 {
-				delete(h.users, client.UserID)
-			}
-		}
-	}
 	for _, room := range h.rooms {
 		delete(room, client.ID)
 	}
 	h.mu.Unlock()
-	log.Debug().Str("clientID", client.ID).Str("userID", client.UserID).Msg("client unregistered")
+	log.Debug().Str("clientID", client.ID).Msg("client unregistered")
 }
 
-// JoinRoom subscribes a client to a circle's broadcast room.
-func (h *Hub) JoinRoom(circleID, clientID string) {
+// JoinRoom subscribes a client to a circle's broadcast room. It returns true
+// if the client was subscribed; false if the client is not registered, not
+// authorized, or the circle is otherwise unavailable.
+func (h *Hub) JoinRoom(circleID, clientID string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+
+	client, ok := h.clients[clientID]
+	if !ok {
+		log.Debug().Str("clientID", clientID).Msg("join room: client not registered")
+		return false
+	}
+
+	if h.authorizer != nil {
+		allowed, err := h.authorizer.CanSubscribe(context.Background(), circleID, client.UserID)
+		if err != nil {
+			log.Warn().Err(err).Str("circleID", circleID).Str("userID", client.UserID).
+				Msg("join room authorization error")
+			return false
+		}
+		if !allowed {
+			log.Info().Str("circleID", circleID).Str("userID", client.UserID).
+				Msg("join room denied")
+			return false
+		}
+	}
+
 	if _, ok := h.rooms[circleID]; !ok {
 		h.rooms[circleID] = make(map[string]*Client)
 	}
-	if client, ok := h.clients[clientID]; ok {
-		h.rooms[circleID][clientID] = client
-	}
+	h.rooms[circleID][clientID] = client
 	log.Debug().Str("circleID", circleID).Str("clientID", clientID).Msg("client joined room")
+	return true
 }
 
 // LeaveRoom unsubscribes a client from a circle's broadcast room.
@@ -101,15 +122,10 @@ func (h *Hub) LeaveRoom(circleID, clientID string) {
 func (h *Hub) Broadcast(circleID string, msg Message) {
 	h.mu.RLock()
 	room, ok := h.rooms[circleID]
-	if !ok || len(room) == 0 {
-		h.mu.RUnlock()
+	h.mu.RUnlock()
+	if !ok {
 		return
 	}
-	clients := make([]*Client, 0, len(room))
-	for _, client := range room {
-		clients = append(clients, client)
-	}
-	h.mu.RUnlock()
 
 	data, err := json.Marshal(msg)
 	if err != nil {
@@ -117,7 +133,7 @@ func (h *Hub) Broadcast(circleID string, msg Message) {
 		return
 	}
 
-	for _, client := range clients {
+	for _, client := range room {
 		select {
 		case client.Send <- data:
 		default:
@@ -127,21 +143,16 @@ func (h *Hub) Broadcast(circleID string, msg Message) {
 	}
 }
 
-// BroadcastToUser sends a message to all active WebSocket connections for a
-// specific user identified by userID. If no active connections are found,
-// the message is silently dropped.
+// BroadcastToUser sends a message to a specific user identified by userID.
+// The userID maps to a registered Client; if no client is found the message
+// is silently dropped.
 func (h *Hub) BroadcastToUser(userID string, msg Message) {
 	h.mu.RLock()
-	userMap, ok := h.users[userID]
-	if !ok || len(userMap) == 0 {
-		h.mu.RUnlock()
+	client, ok := h.clients[userID]
+	h.mu.RUnlock()
+	if !ok {
 		return
 	}
-	clients := make([]*Client, 0, len(userMap))
-	for _, client := range userMap {
-		clients = append(clients, client)
-	}
-	h.mu.RUnlock()
 
 	data, err := json.Marshal(msg)
 	if err != nil {
@@ -149,29 +160,11 @@ func (h *Hub) BroadcastToUser(userID string, msg Message) {
 		return
 	}
 
-	for _, client := range clients {
-		select {
-		case client.Send <- data:
-		default:
-			go h.Unregister(client)
-		}
+	select {
+	case client.Send <- data:
+	default:
+		go h.Unregister(client)
 	}
-}
-
-// Drain closes all connected WebSocket client channels and clears registries.
-func (h *Hub) Drain() {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	for _, client := range h.clients {
-		if client.Conn != nil {
-			_ = client.Conn.Close()
-		}
-	}
-	h.clients = make(map[string]*Client)
-	h.users = make(map[string]map[string]*Client)
-	h.rooms = make(map[string]map[string]*Client)
-	log.Info().Msg("all websocket connections drained")
 }
 
 // Stats returns the current number of connected clients and active rooms.
@@ -186,13 +179,6 @@ func (h *Hub) ClientCount() int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return len(h.clients)
-}
-
-// UserCount returns the number of unique users with active connections.
-func (h *Hub) UserCount() int {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return len(h.users)
 }
 
 // RoomCount returns the total number of active rooms.
