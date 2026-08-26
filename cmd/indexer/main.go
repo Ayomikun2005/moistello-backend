@@ -19,6 +19,7 @@ import (
 	"github.com/moistello/backend/internal/domain/reputation"
 	"github.com/moistello/backend/internal/domain/user"
 	"github.com/moistello/backend/internal/indexer"
+	"github.com/moistello/backend/pkg/jobqueue"
 	"github.com/moistello/backend/pkg/logger"
 	"github.com/moistello/backend/pkg/postgres"
 	"github.com/moistello/backend/pkg/rabbitmq"
@@ -108,6 +109,21 @@ func main() {
 		log.Fatal().Err(err).Msg("failed to start engine")
 	}
 
+	// --- Optional Job Queue Worker ---
+	var jobWorker *jobqueue.Worker
+	if cfg.JobQueue.Enabled {
+		jobQueue := jobqueue.NewJobQueue(db)
+		jobWorker = jobqueue.NewWorker(jobQueue, jobqueue.WorkerOptions{
+			Concurrency:  cfg.JobQueue.Concurrency,
+			PollInterval: cfg.JobQueue.PollInterval,
+			Queues:       cfg.JobQueue.Queues,
+			MaxRetries:   cfg.JobQueue.MaxRetries,
+		})
+		if err := jobWorker.Start(ctx); err != nil {
+			log.Error().Err(err).Msg("failed to start job queue worker in indexer")
+		}
+	}
+
 	log.Info().
 		Str("horizon", cfg.Stellar.HorizonURL).
 		Strs("contracts", contractIDs).
@@ -163,6 +179,9 @@ func main() {
 
 	log.Info().Msg("shutting down indexer...")
 	cancel()
+	if jobWorker != nil {
+		jobWorker.Stop()
+	}
 	engine.Stop()
 
 	shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -21,6 +21,7 @@ type Broadcaster interface {
 
 type Service interface {
 	Record(ctx context.Context, input RecordInput) (*Contribution, error)
+	UpdateVerification(ctx context.Context, id string, verifiedOnchain bool, status VerificationStatus) error
 	GetUserHistory(ctx context.Context, userID string, page, limit int) ([]Contribution, int, error)
 	GetCircleHistory(ctx context.Context, circleID string, page, limit int) ([]Contribution, int, error)
 }
@@ -30,11 +31,13 @@ type Transactor interface {
 }
 
 type RecordInput struct {
-	CircleID    string  `json:"circleId" validate:"required"`
-	UserID      string  `json:"userId" validate:"required"`
-	RoundNumber int     `json:"roundNumber" validate:"required,gte=1"`
-	Amount      float64 `json:"amount" validate:"required,gt=0"`
-	TxnHash     string  `json:"txnHash" validate:"required"`
+	CircleID           string              `json:"circleId" validate:"required"`
+	UserID             string              `json:"userId" validate:"required"`
+	RoundNumber        int                 `json:"roundNumber" validate:"required,gte=1"`
+	Amount             float64             `json:"amount" validate:"required,gt=0"`
+	TxnHash            string              `json:"txnHash" validate:"required"`
+	VerifiedOnchain    *bool               `json:"verifiedOnchain,omitempty"`
+	VerificationStatus *VerificationStatus `json:"verificationStatus,omitempty"`
 }
 
 type contributionService struct {
@@ -94,17 +97,30 @@ func (s *contributionService) Record(ctx context.Context, input RecordInput) (*C
 	now := time.Now().UTC()
 	txnHash := sql.NullString{String: input.TxnHash, Valid: true}
 
+	verifiedOnchain := false
+	if input.VerifiedOnchain != nil {
+		verifiedOnchain = *input.VerifiedOnchain
+	}
+	verificationStatus := VerificationStatusUnverified
+	if input.VerificationStatus != nil {
+		verificationStatus = *input.VerificationStatus
+	} else if verifiedOnchain {
+		verificationStatus = VerificationStatusVerified
+	}
+
 	c := &Contribution{
-		ID:          uuid.New(),
-		CircleID:    circleID,
-		UserID:      userID,
-		RoundNumber: input.RoundNumber,
-		Amount:      input.Amount,
-		TxnHash:     txnHash,
-		Status:      StatusPending,
-		OnTime:      true,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:                 uuid.New(),
+		CircleID:           circleID,
+		UserID:             userID,
+		RoundNumber:        input.RoundNumber,
+		Amount:             input.Amount,
+		TxnHash:            txnHash,
+		Status:             StatusPending,
+		OnTime:             true,
+		VerifiedOnchain:    verifiedOnchain,
+		VerificationStatus: verificationStatus,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 
 	if s.tx != nil {
@@ -133,6 +149,14 @@ func (s *contributionService) Record(ctx context.Context, input RecordInput) (*C
 		s.broadcaster.ContributionRecorded(ctx, input.CircleID, input.UserID, input.RoundNumber, input.Amount)
 	}
 	return c, nil
+}
+
+func (s *contributionService) UpdateVerification(ctx context.Context, id string, verifiedOnchain bool, status VerificationStatus) error {
+	uid, err := parseUUID(id)
+	if err != nil {
+		return err
+	}
+	return s.repo.UpdateVerificationStatus(ctx, uid, verifiedOnchain, status)
 }
 
 func (s *contributionService) GetUserHistory(ctx context.Context, userID string, page, limit int) ([]Contribution, int, error) {

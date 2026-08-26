@@ -2,12 +2,12 @@ package api
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/redis/go-redis/v9"
 	"github.com/moistello/backend/config"
 	"github.com/moistello/backend/internal/api/handler"
 	"github.com/moistello/backend/internal/api/middleware"
 	"github.com/moistello/backend/webhook"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/redis/go-redis/v9"
 )
 
 func NewRouter(
@@ -35,6 +35,7 @@ func NewRouter(
 	reputationHandler *handler.ReputationHandler,
 	referralHandler *handler.ReferralHandler,
 	consentHandler *handler.ConsentHandler,
+	adminJobQueueHandler *handler.AdminJobQueueHandler,
 	webhookRepo webhook.WebhookRepository,
 	jwtPublicKey []byte,
 ) *gin.Engine {
@@ -104,8 +105,8 @@ func NewRouter(
 			authenticated.GET("/users/me/reputation", userHandler.GetReputation)
 			authenticated.GET("/users/me/circles", userHandler.GetMyCircles)
 
-			// Public — claim a unique anonymous name (before auth)
-			api.POST("/claim-name", userHandler.ClaimName)
+		// Public — claim a unique anonymous name (before auth)
+		api.POST("/claim-name", userHandler.ClaimName)
 
 			// Wallet routes
 			authenticated.POST("/wallets", walletHandler.CreateWallet)
@@ -211,30 +212,24 @@ func NewRouter(
 			authenticated.POST("/swap/accept", swapHandler.AcceptSwapOffer)
 			authenticated.GET("/swap/history", swapHandler.GetSwapHistory)
 
-			authenticated.POST("/webhooks", webhookHandler.RegisterWebhook)
-			authenticated.GET("/webhooks", webhookHandler.ListWebhooks)
-			authenticated.DELETE("/webhooks/:id", webhookHandler.DeleteWebhook)
-			authenticated.GET("/webhooks/:id/deliveries", webhookHandler.ListDeliveries)
-		}
+		authenticated.POST("/webhooks", webhookHandler.RegisterWebhook)
+		authenticated.GET("/webhooks", webhookHandler.ListWebhooks)
+		authenticated.DELETE("/webhooks/:id", webhookHandler.DeleteWebhook)
+	}
 
-		incomingWebhookH := handler.NewIncomingWebhookHandler(webhookRepo)
-		r.POST("/webhooks/incoming/:id", incomingWebhookH.ReceiveWebhook)
+	incomingWebhookH := handler.NewIncomingWebhookHandler(webhookRepo)
+	r.POST("/webhooks/incoming/:id", incomingWebhookH.ReceiveWebhook)
 
-		admin := authenticated.Group("/admin")
-		admin.Use(middleware.AdminMiddleware())
-		{
-			admin.GET("/users", adminHandler.ListUsers)
-			admin.GET("/circles", adminHandler.ListCircles)
-			admin.GET("/audit-log", adminHandler.GetAuditLog)
-			admin.GET("/metrics", adminHandler.GetMetrics)
-			admin.POST("/feature-flags", adminHandler.UpdateFeatureFlag)
-			admin.GET("/jobs/dead-letter", func(c *gin.Context) {
-				c.JSON(200, gin.H{"dead_letter_jobs": []any{}})
-			})
-			admin.POST("/jobs/dead-letter/:id/retry", func(c *gin.Context) {
-				jobID := c.Param("id")
-				c.JSON(200, gin.H{"message": "dead letter job requeued successfully", "job_id": jobID})
-			})
+	admin := authenticated.Group("/admin")
+			admin.Use(middleware.AdminMiddleware())
+			{
+				admin.GET("/users", adminHandler.ListUsers)
+				admin.GET("/circles", adminHandler.ListCircles)
+				admin.GET("/audit-log", adminHandler.GetAuditLog)
+				admin.GET("/metrics", adminHandler.GetMetrics)
+				admin.POST("/feature-flags", adminHandler.UpdateFeatureFlag)
+				admin.GET("/jobs/dead-letter", adminJobQueueHandler.GetDeadLetterJobs)
+				admin.POST("/jobs/dead-letter/:id/retry", adminJobQueueHandler.RetryDeadLetterJob)
 		}
 
 		optional := api.Group("")

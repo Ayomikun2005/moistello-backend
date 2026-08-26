@@ -29,6 +29,7 @@ type Config struct {
 	Environment  string
 	YellowCard   YellowCardConfig `mapstructure:"yellow_card"`
 	Tracing      TracingConfig
+	JobQueue     JobQueueConfig   `mapstructure:"job_queue"`
 }
 
 type ServerConfig struct {
@@ -177,6 +178,14 @@ type TracingConfig struct {
 	SampleRate       float64      `mapstructure:"sample_rate"`
 }
 
+type JobQueueConfig struct {
+	Enabled      bool          `mapstructure:"enabled"`
+	Concurrency  int           `mapstructure:"concurrency"`
+	PollInterval time.Duration `mapstructure:"poll_interval"`
+	MaxRetries   int           `mapstructure:"max_retries"`
+	Queues       []string      `mapstructure:"queues"`
+}
+
 func Load(path string) (*Config, error) {
 	v := viper.New()
 	v.SetConfigName("config")
@@ -248,6 +257,16 @@ func Load(path string) (*Config, error) {
 	setDefault(v, "security.wallet_pepper", "")
 	setDefault(v, "security.passkey_pepper", "")
 	setDefault(v, "security.encryption_key", "")
+	setDefault(v, "job_queue.enabled", true)
+	setDefault(v, "job_queue.concurrency", 5)
+	setDefault(v, "job_queue.poll_interval", "500ms")
+	setDefault(v, "job_queue.max_retries", 3)
+	setDefault(v, "job_queue.queues", []string{"default", "notifications", "webhooks", "emails"})
+
+	mustBindEnv(v, "job_queue.enabled", "MOISTELLO_JOB_QUEUE_ENABLED")
+	mustBindEnv(v, "job_queue.concurrency", "MOISTELLO_JOB_QUEUE_CONCURRENCY")
+	mustBindEnv(v, "job_queue.poll_interval", "MOISTELLO_JOB_QUEUE_POLL_INTERVAL")
+	mustBindEnv(v, "job_queue.max_retries", "MOISTELLO_JOB_QUEUE_MAX_RETRIES")
 
 	mustBindEnv(v, "environment", "MOISTELLO_ENVIRONMENT", "NODE_ENV")
 	mustBindEnv(v, "database.url", "MOISTELLO_DATABASE_URL", "DATABASE_URL")

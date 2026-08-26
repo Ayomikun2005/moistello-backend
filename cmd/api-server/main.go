@@ -45,6 +45,7 @@ import (
 	"github.com/moistello/backend/internal/domain/wallet"
 	"github.com/moistello/backend/internal/domain/yellowcard"
 	ws "github.com/moistello/backend/internal/websocket"
+	"github.com/moistello/backend/pkg/jobqueue"
 	"github.com/moistello/backend/pkg/logger"
 	"github.com/moistello/backend/pkg/postgres"
 	"github.com/moistello/backend/pkg/rabbitmq"
@@ -238,6 +239,28 @@ func main() {
 	// GDPR cookie consent handler
 	consentH := handler.NewConsentHandler(db.DB)
 
+	// Job queue and consumer worker
+	jobQueue := jobqueue.NewJobQueue(db)
+	if cfg.JobQueue.Enabled {
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+
+		jobWorker := jobqueue.NewWorker(jobQueue, jobqueue.WorkerOptions{
+			Concurrency:  cfg.JobQueue.Concurrency,
+			PollInterval: cfg.JobQueue.PollInterval,
+			Queues:       cfg.JobQueue.Queues,
+			MaxRetries:   cfg.JobQueue.MaxRetries,
+		})
+
+		if err := jobWorker.Start(workerCtx); err != nil {
+			log.Error().Err(err).Msg("failed to start job queue worker")
+		} else {
+			defer jobWorker.Stop()
+		}
+	}
+
+	adminJobQueueH := handler.NewAdminJobQueueHandler(jobQueue)
+
 	// RabbitMQ connection for health checks and event publishing
 	rmqClient, rmqErr := rabbitmq.New(cfg.RabbitMQ)
 	if rmqErr != nil {
@@ -251,7 +274,7 @@ func main() {
 		healthH.WithRabbitMQ(rmqClient)
 	}
 
-	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, communityH, wsH, savingsH, tokenH, swapH, governanceH, reputationH, referralH, consentH, webhookRepo, jwtPublicKey)
+	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, communityH, wsH, savingsH, tokenH, swapH, governanceH, reputationH, referralH, consentH, adminJobQueueH, webhookRepo, jwtPublicKey)
 
 	if err := api.RunServer(router, cfg.Server); err != nil {
 		log.Fatal().Err(err).Msg("server error")

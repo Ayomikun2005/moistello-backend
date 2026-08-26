@@ -7,6 +7,7 @@ import (
 
 	"github.com/moistello/backend/internal/domain/circle"
 	"github.com/moistello/backend/internal/domain/contribution"
+	"github.com/moistello/backend/internal/domain/payout"
 	"github.com/moistello/backend/internal/domain/user"
 )
 
@@ -60,15 +61,31 @@ func NewTestCircleMember(circleID, userID uuid.UUID, position int) *circle.Circl
 func NewTestContribution(circleID, userID uuid.UUID, round int, amount float64) *contribution.Contribution {
 	now := time.Now().UTC()
 	return &contribution.Contribution{
-		ID:          uuid.New(),
-		CircleID:    circleID,
-		UserID:      userID,
-		RoundNumber: round,
-		Amount:      amount,
-		Status:      contribution.StatusPending,
-		OnTime:      true,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:                 uuid.New(),
+		CircleID:           circleID,
+		UserID:             userID,
+		RoundNumber:        round,
+		Amount:             amount,
+		Status:             contribution.StatusPending,
+		OnTime:             true,
+		VerifiedOnchain:    false,
+		VerificationStatus: contribution.VerificationStatusUnverified,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
+}
+
+func NewTestPayout(circleID, recipientID uuid.UUID, round int, amount float64) *payout.Payout {
+	return &payout.Payout{
+		ID:                 uuid.New(),
+		CircleID:           circleID,
+		RecipientID:        recipientID,
+		RoundNumber:        round,
+		Amount:             amount,
+		PayoutType:         payout.PayoutTypeRandom,
+		VerifiedOnchain:    false,
+		VerificationStatus: payout.VerificationStatusUnverified,
+		CreatedAt:          time.Now().UTC(),
 	}
 }
 
