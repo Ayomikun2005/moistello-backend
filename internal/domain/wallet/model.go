@@ -27,27 +27,63 @@ type Wallet struct {
 	UpdatedAt          string     `json:"updatedAt" db:"updated_at"`
 }
 
-// DecryptSecret decrypts the Stellar secret key using the passkey seed
-func (w *Wallet) DecryptSecret(passkeySeed []byte) (string, error) {
-	key := sha256.Sum256(passkeySeed)
-	block, err := aes.NewCipher(key[:])
-	if err != nil {
-		return "", fmt.Errorf("creating cipher: %w", err)
+// DecryptSecret decrypts the Stellar secret key using the provided encryption keys.
+// It iterates through the provided keys (primary configured key, rotated keys, or legacy passkey seed)
+// and returns the decrypted secret key upon the first successful decryption.
+func (w *Wallet) DecryptSecret(keys ...[]byte) (string, error) {
+	if len(w.EncryptedSecretKey) == 0 || len(w.EncryptionNonce) == 0 {
+		return "", fmt.Errorf("wallet has no encrypted secret key")
 	}
 
-	aesGCM, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", fmt.Errorf("creating GCM: %w", err)
+	var lastErr error
+	for _, rawKey := range keys {
+		if len(rawKey) == 0 {
+			continue
+		}
+
+		// Try direct key if 32 bytes, or SHA-256 derived key
+		var aesKey [32]byte
+		if len(rawKey) == 32 {
+			copy(aesKey[:], rawKey)
+		} else {
+			aesKey = sha256.Sum256(rawKey)
+		}
+
+		block, err := aes.NewCipher(aesKey[:])
+		if err == nil {
+			aesGCM, err := cipher.NewGCM(block)
+			if err == nil {
+				plaintext, err := aesGCM.Open(nil, w.EncryptionNonce, w.EncryptedSecretKey, nil)
+				if err == nil {
+					return string(plaintext), nil
+				}
+				lastErr = err
+			} else {
+				lastErr = err
+			}
+		} else {
+			lastErr = err
+		}
+
+		// For 32-byte keys, also attempt SHA-256(rawKey) to support legacy wallets where a 32-byte seed was hashed
+		if len(rawKey) == 32 {
+			hashedKey := sha256.Sum256(rawKey)
+			blockHashed, err := aes.NewCipher(hashedKey[:])
+			if err == nil {
+				aesGCM, err := cipher.NewGCM(blockHashed)
+				if err == nil {
+					plaintext, err := aesGCM.Open(nil, w.EncryptionNonce, w.EncryptedSecretKey, nil)
+					if err == nil {
+						return string(plaintext), nil
+					}
+					lastErr = err
+				}
+			}
+		}
 	}
 
-	if len(w.EncryptionNonce) != aesGCM.NonceSize() {
-		return "", fmt.Errorf("invalid nonce length")
+	if lastErr != nil {
+		return "", fmt.Errorf("decrypting secret key: %w", lastErr)
 	}
-
-	plaintext, err := aesGCM.Open(nil, w.EncryptionNonce, w.EncryptedSecretKey, nil)
-	if err != nil {
-		return "", fmt.Errorf("decrypting: %w", err)
-	}
-
-	return string(plaintext), nil
+	return "", fmt.Errorf("no decryption key provided")
 }

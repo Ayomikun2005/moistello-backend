@@ -39,8 +39,8 @@ func (m *mockAuthService) VerifySignature(ctx context.Context, walletAddress, si
 	return args.Bool(0), args.Error(1)
 }
 
-func (m *mockAuthService) CreateSession(ctx context.Context, userID uuid.UUID, sessionTTL time.Duration, deviceInfo string) (*auth.TokenPair, error) {
-	args := m.Called(ctx, userID, sessionTTL, deviceInfo)
+func (m *mockAuthService) CreateSession(ctx context.Context, userID uuid.UUID, role string, sessionTTL time.Duration, deviceInfo string) (*auth.TokenPair, error) {
+	args := m.Called(ctx, userID, role, sessionTTL, deviceInfo)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}

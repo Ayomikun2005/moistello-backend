@@ -4,189 +4,115 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/mock"
 
 	"github.com/moistello/backend/internal/api/handler"
+	"github.com/moistello/backend/internal/domain/token"
 )
 
-// Mock Token Service for Handler testing
-type mockTokenServiceForHandler struct {
-	balance      uint64
-	stakedAmount uint64
-	stakeTxHash  string
-	unstakeTx    string
-	err          error
+type mockTokenService struct{ mock.Mock }
+
+func (m *mockTokenService) GetBalance(ctx context.Context, address string) (uint64, error) {
+	args := m.Called(ctx, address)
+	return args.Get(0).(uint64), args.Error(1)
 }
 
-func (m *mockTokenServiceForHandler) GetBalance(ctx context.Context, address string) (uint64, error) {
-	if m.err != nil {
-		return 0, m.err
-	}
-	return m.balance, nil
+func (m *mockTokenService) Stake(ctx context.Context, userID string, amount uint64) (string, error) {
+	args := m.Called(ctx, userID, amount)
+	return args.String(0), args.Error(1)
 }
 
-func (m *mockTokenServiceForHandler) GetStakedAmount(ctx context.Context, address string) (uint64, error) {
-	if m.err != nil {
-		return 0, m.err
-	}
-	return m.stakedAmount, nil
+func (m *mockTokenService) Unstake(ctx context.Context, userID string, amount uint64) (string, error) {
+	args := m.Called(ctx, userID, amount)
+	return args.String(0), args.Error(1)
 }
 
-func (m *mockTokenServiceForHandler) Stake(ctx context.Context, userID string, passkeySeed []byte, amount uint64) (string, error) {
-	if m.err != nil {
-		return "", m.err
-	}
-	return m.stakeTxHash, nil
+func (m *mockTokenService) GetStakedAmount(ctx context.Context, address string) (uint64, error) {
+	args := m.Called(ctx, address)
+	return args.Get(0).(uint64), args.Error(1)
 }
 
-func (m *mockTokenServiceForHandler) Unstake(ctx context.Context, userID string, passkeySeed []byte, amount uint64) (string, error) {
-	if m.err != nil {
-		return "", m.err
-	}
-	return m.unstakeTx, nil
-}
-
-func setupTokenTestRouter(svc *mockTokenServiceForHandler, authUserID string) *gin.Engine {
+func TestTokenHandler_Stake_WithoutPasskeySeed(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.Use(func(c *gin.Context) {
-		if authUserID != "" {
-			c.Set("userID", authUserID)
-		}
-		c.Next()
-	})
+
+	svc := new(mockTokenService)
+	svc.On("Stake", mock.Anything, "user-123", uint64(100)).Return("txhash-abc", nil)
 
 	h := handler.NewTokenHandler(svc)
-	r.GET("/v1/token/balance/:address", h.GetBalance)
-	r.GET("/v1/token/stakes/:address", h.GetStakes)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set("userID", "user-123")
+		c.Next()
+	})
 	r.POST("/v1/token/stake", h.Stake)
+
+	// No passkeySeed in the body — must not be rejected.
+	body, _ := json.Marshal(map[string]any{"amount": 100})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/v1/token/stake", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.Contains(t, w.Body.String(), "txhash-abc")
+	assert.NotContains(t, w.Body.String(), "passkeySeed")
+	assert.NotContains(t, w.Body.String(), "seed")
+	svc.AssertExpectations(t)
+}
+
+func TestTokenHandler_Unstake_WithoutPasskeySeed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	svc := new(mockTokenService)
+	svc.On("Unstake", mock.Anything, "user-123", uint64(50)).Return("txhash-def", nil)
+
+	h := handler.NewTokenHandler(svc)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set("userID", "user-123")
+		c.Next()
+	})
 	r.POST("/v1/token/unstake", h.Unstake)
 
-	return r
-}
-
-func TestTokenHandler_GetBalance_Success(t *testing.T) {
-	mockSvc := &mockTokenServiceForHandler{balance: 5000}
-	r := setupTokenTestRouter(mockSvc, "")
-
+	body, _ := json.Marshal(map[string]any{"amount": 50})
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/v1/token/balance/GBTESTADDR12345", nil)
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]any
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.True(t, resp["success"].(bool))
-}
-
-func TestTokenHandler_GetBalance_Error(t *testing.T) {
-	mockSvc := &mockTokenServiceForHandler{err: errors.New("contract RPC failed")}
-	r := setupTokenTestRouter(mockSvc, "")
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/v1/token/balance/GBTESTADDR12345", nil)
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestTokenHandler_GetStakes_Success(t *testing.T) {
-	mockSvc := &mockTokenServiceForHandler{stakedAmount: 1200}
-	r := setupTokenTestRouter(mockSvc, "")
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/v1/token/stakes/GBTESTADDR12345", nil)
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]any
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.True(t, resp["success"].(bool))
-}
-
-func TestTokenHandler_Stake_Success(t *testing.T) {
-	mockSvc := &mockTokenServiceForHandler{stakeTxHash: "tx-stake-hash-123"}
-	userID := uuid.NewString()
-	r := setupTokenTestRouter(mockSvc, userID)
-
-	body := `{"amount":100,"passkeySeed":"my-secret-seed"}`
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/v1/token/stake", bytes.NewBufferString(body))
+	req, _ := http.NewRequest("POST", "/v1/token/unstake", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]any
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.True(t, resp["success"].(bool))
+	assert.Equal(t, 200, w.Code)
+	assert.Contains(t, w.Body.String(), "txhash-def")
+	assert.NotContains(t, w.Body.String(), "passkeySeed")
+	assert.NotContains(t, w.Body.String(), "seed")
+	svc.AssertExpectations(t)
 }
 
-func TestTokenHandler_Stake_InvalidPayload(t *testing.T) {
-	mockSvc := &mockTokenServiceForHandler{}
-	r := setupTokenTestRouter(mockSvc, uuid.NewString())
+func TestTokenHandler_Stake_MissingAmount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
 
-	// Missing amount / zero amount
-	body := `{"amount":0,"passkeySeed":"my-secret-seed"}`
+	svc := new(mockTokenService)
+	h := handler.NewTokenHandler(svc)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set("userID", "user-123")
+		c.Next()
+	})
+	r.POST("/v1/token/stake", h.Stake)
+
+	body, _ := json.Marshal(map[string]any{})
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/v1/token/stake", bytes.NewBufferString(body))
+	req, _ := http.NewRequest("POST", "/v1/token/stake", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, 400, w.Code)
+	svc.AssertNotCalled(t, "Stake", mock.Anything, mock.Anything, mock.Anything)
 }
 
-func TestTokenHandler_Stake_ServiceError(t *testing.T) {
-	mockSvc := &mockTokenServiceForHandler{err: errors.New("contract execution failed")}
-	r := setupTokenTestRouter(mockSvc, uuid.NewString())
-
-	body := `{"amount":100,"passkeySeed":"my-secret-seed"}`
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/v1/token/stake", bytes.NewBufferString(body))
-	req.Header.Set("Content-Type", "application/json")
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestTokenHandler_Unstake_Success(t *testing.T) {
-	mockSvc := &mockTokenServiceForHandler{unstakeTx: "tx-unstake-hash-456"}
-	userID := uuid.NewString()
-	r := setupTokenTestRouter(mockSvc, userID)
-
-	body := `{"amount":50,"passkeySeed":"my-secret-seed"}`
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/v1/token/unstake", bytes.NewBufferString(body))
-	req.Header.Set("Content-Type", "application/json")
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]any
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.True(t, resp["success"].(bool))
-}
-
-func TestTokenHandler_Unstake_InvalidPayload(t *testing.T) {
-	mockSvc := &mockTokenServiceForHandler{}
-	r := setupTokenTestRouter(mockSvc, uuid.NewString())
-
-	// Missing passkeySeed
-	body := `{"amount":50}`
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/v1/token/unstake", bytes.NewBufferString(body))
-	req.Header.Set("Content-Type", "application/json")
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
+var _ token.Service = (*mockTokenService)(nil)

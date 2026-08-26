@@ -32,10 +32,12 @@ type BalanceResponse struct {
 	Balance uint64 `json:"balance"`
 }
 
-// StakeRequest represents a stake/unstake request
+// StakeRequest represents a stake/unstake request.
+// The seed is intentionally NOT part of the request body: the server derives
+// the signer from the authenticated user's wallet, encrypted at rest with the
+// configured security.encryption_key (see #169).
 type StakeRequest struct {
-	Amount      uint64 `json:"amount" binding:"required,gt=0"`
-	PasskeySeed string `json:"passkeySeed" binding:"required"`
+	Amount uint64 `json:"amount" binding:"required,gt=0"`
 }
 
 // StakeResponse represents the response after staking/unstaking

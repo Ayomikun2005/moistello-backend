@@ -2,8 +2,8 @@ package handler
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/moistello/backend/internal/domain/wallet"
 	"github.com/moistello/backend/internal/api/middleware"
+	"github.com/moistello/backend/internal/domain/wallet"
 	"github.com/moistello/backend/pkg/response"
 )
 
@@ -61,11 +61,11 @@ func (h *WalletHandler) ListWallets(c *gin.Context) {
 func (h *WalletHandler) Withdraw(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	var req struct {
-		Destination  string  `json:"destination" binding:"required"`
-		Asset        string  `json:"asset" binding:"required,oneof=XLM USDC"`
-		Amount       float64 `json:"amount" binding:"required,gt=0"`
-		PasskeySeed  string  `json:"passkeySeed" binding:"required"`
-		Memo         string  `json:"memo"`
+		Destination string  `json:"destination" binding:"required"`
+		Asset       string  `json:"asset" binding:"required,oneof=XLM USDC"`
+		Amount      float64 `json:"amount" binding:"required,gt=0"`
+		PasskeySeed string  `json:"passkeySeed"`
+		Memo        string  `json:"memo"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, err.Error())

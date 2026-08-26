@@ -28,7 +28,7 @@ import (
 type Service interface {
 	GenerateNonce(ctx context.Context, walletAddress string) (*Nonce, error)
 	VerifySignature(ctx context.Context, walletAddress, signature string) (bool, error)
-	CreateSession(ctx context.Context, userID uuid.UUID, sessionTTL time.Duration, deviceInfo string) (*TokenPair, error)
+	CreateSession(ctx context.Context, userID uuid.UUID, role string, sessionTTL time.Duration, deviceInfo string) (*TokenPair, error)
 	ValidateSession(ctx context.Context, refreshToken string) (*uuid.UUID, error)
 	GenerateJWT(userID uuid.UUID, walletAddress, role string) (string, error)
 	GenerateJWTWithTTL(userID uuid.UUID, walletAddress, role string, ttl time.Duration) (string, error)
@@ -145,8 +145,11 @@ func (s *authService) VerifySignature(ctx context.Context, walletAddress, signat
 	return valid, nil
 }
 
-func (s *authService) CreateSession(ctx context.Context, userID uuid.UUID, sessionTTL time.Duration, deviceInfo string) (*TokenPair, error) {
-	accessToken, err := s.GenerateJWTWithTTL(userID, "", "user", sessionTTL)
+func (s *authService) CreateSession(ctx context.Context, userID uuid.UUID, role string, sessionTTL time.Duration, deviceInfo string) (*TokenPair, error) {
+	if role == "" {
+		role = "user"
+	}
+	accessToken, err := s.GenerateJWTWithTTL(userID, "", role, sessionTTL)
 	if err != nil {
 		return nil, fmt.Errorf("generating access token: %w", err)
 	}
@@ -166,7 +169,7 @@ func (s *authService) CreateSession(ctx context.Context, userID uuid.UUID, sessi
 
 	userIDStr := userID.String()
 
-	sessionData := fmt.Sprintf("%s|%s|%d", userIDStr, deviceInfo, time.Now().Unix())
+	sessionData := fmt.Sprintf("%s|%s|%d|%s", userIDStr, deviceInfo, time.Now().Unix(), role)
 	sessionKey := fmt.Sprintf("session:%s", tokenHash)
 	csrfKey := fmt.Sprintf("csrf:%x", sha256.Sum256([]byte(accessToken)))
 	userSessionsKey := fmt.Sprintf("user:sessions:%s", userIDStr)
@@ -419,21 +422,47 @@ func (s *authService) ValidateJWT(tokenString string) (*JWTCustomClaims, error) 
 }
 
 func (s *authService) RefreshToken(ctx context.Context, refreshToken string) (*TokenPair, error) {
-	uid, err := s.ValidateSession(ctx, refreshToken)
+	tokenHash := sha256Hash(refreshToken)
+	key := fmt.Sprintf("session:%s", tokenHash)
+
+	data, err := s.redis.Get(ctx, key).Result()
 	if err != nil {
-		return nil, err
+		if err == redis.Nil {
+			return nil, apperrors.ErrTokenExpired
+		}
+		return nil, fmt.Errorf("retrieving session from redis: %w", err)
+	}
+
+	parts := strings.Split(data, "|")
+	userIDStr := parts[0]
+	role := SessionRole(data)
+
+	// Check if the user's refresh tokens have been blocklisted
+	blocklistKey := fmt.Sprintf("refresh:blocklist:%s", userIDStr)
+	blocklisted, err := s.redis.Exists(ctx, blocklistKey).Result()
+	if err != nil {
+		log.Warn().Err(err).Str("userID", userIDStr).Msg("failed to check refresh blocklist")
+		return nil, fmt.Errorf("session validation error")
+	}
+	if blocklisted > 0 {
+		s.redis.Del(ctx, key)
+		return nil, fmt.Errorf("session revoked")
+	}
+
+	uid, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("parsing session user ID: %w", err)
 	}
 
 	// Create the NEW session first so that if this fails, the old one remains valid
-	newPair, err := s.CreateSession(ctx, *uid, s.accessTTL, "")
+	newPair, err := s.CreateSession(ctx, uid, role, s.accessTTL, "")
 	if err != nil {
 		return nil, fmt.Errorf("creating new session: %w", err)
 	}
 
 	// Grace period: keep the old session alive for 60 seconds so that
 	// in-flight requests using the old refresh token can still complete.
-	oldTokenHash := sha256Hash(refreshToken)
-	oldKey := fmt.Sprintf("session:%s", oldTokenHash)
+	oldKey := fmt.Sprintf("session:%s", tokenHash)
 	graceTTL := 60 * time.Second
 	if err := s.redis.Expire(ctx, oldKey, graceTTL).Err(); err != nil {
 		log.Warn().Err(err).Msg("failed to set old session grace period — non-fatal")
@@ -510,6 +539,23 @@ func xdrCRC16(data []byte) uint16 {
 		}
 	}
 	return crc
+}
+
+// SessionRole extracts the role claim from a stored session data string.
+// Session data is formatted as "userID|deviceInfo|timestamp|role", but
+// deviceInfo itself contains '|' (userAgent|ip), so the role is always the
+// LAST pipe-separated field. Values that are not a known role (e.g. the
+// timestamp of a legacy session without a role field) fall back to "user".
+func SessionRole(data string) string {
+	parts := strings.Split(data, "|")
+	if len(parts) == 0 {
+		return "user"
+	}
+	last := parts[len(parts)-1]
+	if last == "user" || last == "admin" {
+		return last
+	}
+	return "user"
 }
 
 func sha256Hash(s string) string {

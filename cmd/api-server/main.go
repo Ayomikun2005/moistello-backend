@@ -158,6 +158,7 @@ func main() {
 		USDCIssuer:        cfg.Stellar.USDCIssuer,
 		NetworkPassphrase: cfg.Stellar.NetworkPassphrase,
 		MinBalanceXLM:     cfg.Stellar.WalletMinBalance,
+		EncryptionKey:     cfg.Security.EncryptionKey,
 	}
 	walletSvc, err := wallet.NewService(wallet.NewRepository(db), walletCfg)
 	if err != nil {
@@ -169,6 +170,7 @@ func main() {
 		SorobanRPCURL:             cfg.Stellar.SorobanRPCURL,
 		NetworkPassphrase:         cfg.Stellar.NetworkPassphrase,
 		HorizonURL:                cfg.Stellar.HorizonURL,
+		EncryptionKey:             cfg.Security.EncryptionKey,
 	})
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to initialize token service")

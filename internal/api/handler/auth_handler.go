@@ -235,12 +235,6 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	walletSeed, err := h.deriveWalletSeed(req.Email)
-	if err != nil {
-		response.InternalError(c, "wallet seed derivation failed: "+err.Error())
-		return
-	}
-
 	// Store in Redis — NOT in PostgreSQL. User is only created after email verification.
 	pendingData := &verification.PendingRegistration{
 		PasswordHash: passwordHash,
@@ -259,9 +253,8 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	response.Created(c, gin.H{
-		"message":    "verification code sent",
-		"walletSeed": walletSeed,
-		"expiresIn":  300,
+		"message":   "verification code sent",
+		"expiresIn": 300,
 	})
 }
 
@@ -333,7 +326,7 @@ func (h *AuthHandler) RegisterVerify(c *gin.Context) {
 
 	h.verificationSvc.DeletePendingRegistration(c.Request.Context(), req.Email)
 
-	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, sessionTTLFromUser(u), deviceInfoFromContext(c))
+	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, string(u.Role), sessionTTLFromUser(u), deviceInfoFromContext(c))
 	if err != nil {
 		response.InternalError(c, "failed to create session")
 		return
@@ -382,7 +375,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, sessionTTLFromUser(u), deviceInfoFromContext(c))
+	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, string(u.Role), sessionTTLFromUser(u), deviceInfoFromContext(c))
 	if err != nil {
 		response.InternalError(c, "failed to create session")
 		return
@@ -447,7 +440,7 @@ func (h *AuthHandler) PasskeyVerify(c *gin.Context) {
 		return
 	}
 
-	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, sessionTTLFromUser(u), deviceInfoFromContext(c))
+	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, string(u.Role), sessionTTLFromUser(u), deviceInfoFromContext(c))
 	if err != nil {
 		response.InternalError(c, "failed to create session")
 		return
@@ -563,7 +556,7 @@ func (h *AuthHandler) Recovery(c *gin.Context) {
 	u.BackupCodes = remaining
 	h.userRepo.Update(c.Request.Context(), u)
 
-	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, sessionTTLFromUser(u), deviceInfoFromContext(c))
+	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, string(u.Role), sessionTTLFromUser(u), deviceInfoFromContext(c))
 	if err != nil {
 		response.InternalError(c, "failed to create session")
 		return
