@@ -24,6 +24,7 @@ import (
 	"github.com/moistello/backend/internal/api"
 	"github.com/moistello/backend/internal/api/handler"
 	"github.com/moistello/backend/internal/domain/audit"
+	"github.com/moistello/backend/internal/domain/admin"
 	"github.com/moistello/backend/internal/domain/auth"
 	"github.com/moistello/backend/internal/domain/circle"
 	"github.com/moistello/backend/internal/domain/community"
@@ -48,6 +49,7 @@ import (
 	ws "github.com/moistello/backend/internal/websocket"
 	"github.com/moistello/backend/pkg/logger"
 	"github.com/moistello/backend/pkg/postgres"
+	"github.com/moistello/backend/pkg/jobqueue"
 	"github.com/moistello/backend/pkg/rabbitmq"
 	"github.com/moistello/backend/pkg/redis"
 	"github.com/moistello/backend/pkg/tracing"
@@ -182,9 +184,10 @@ func main() {
 	payoutH := handler.NewPayoutHandler(payoutSvc, payoutRepo)
 	inviteH := handler.NewInviteHandler(inviteSvc)
 	notifH := handler.NewNotificationHandler(notificationSvc, userSvc)
-	adminH := handler.NewAdminHandler(userSvc, userRepo, circleSvc, auditRepo)
-	webhookH := handler.NewWebhookHandler()
+	adminSvc := admin.NewService(nil, 0)
+	adminH := handler.NewAdminHandler(userSvc, userRepo, circleSvc, auditRepo, adminSvc)
 	webhookRepo := webhook.NewPostgresRepository(db.DB)
+	webhookH := handler.NewWebhookHandler(webhookRepo)
 	healthH := handler.NewHealthHandler(db.DB, redisClient, cfg.Stellar.SorobanRPCURL, cfg.Stellar.HorizonURL)
 	passkeyCredH := handler.NewPasskeyCredentialHandler(db)
 	walletH := handler.NewWalletHandler(walletSvc)
@@ -194,7 +197,7 @@ func main() {
 	communityH := handler.NewCommunityHandler(communitySvc)
 
 	// Yellow Card integration
-	ycClient := yellowcard.NewClient(cfg.YellowCard.APIKey, cfg.YellowCard.APISecret)
+	ycClient := yellowcard.NewClient(cfg.YellowCard.APIKey, cfg.YellowCard.APISecret, cfg.Stellar.MasterPublicKey)
 	depositH := handler.NewDepositHandler(ycClient, walletSvc)
 
 	// Savings goals
@@ -220,7 +223,8 @@ func main() {
 	swapSvc := swap.NewService(swapRepo, circleSvc, userSvc, escrowSwapClient)
 	swapH := handler.NewSwapHandler(swapSvc)
 
-	governanceSvc := governance.NewService()
+	governanceRepo := governance.NewRepository(db)
+	governanceSvc := governance.NewService(governanceRepo)
 	governanceH := handler.NewGovernanceHandler(governanceSvc)
 
 	incentivesRepo := incentives.NewRepository(db)
@@ -244,7 +248,11 @@ func main() {
 		healthH.WithRabbitMQ(rmqClient)
 	}
 
-	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, communityH, wsH, savingsH, tokenH, swapH, governanceH, reputationH, referralH, consentH, webhookRepo, jwtPublicKey)
+	// Job queue for background tasks
+	jobQueue := jobqueue.NewJobQueue(db)
+	adminJobQueueH := handler.NewAdminJobQueueHandler(jobQueue)
+
+	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, communityH, wsH, savingsH, tokenH, swapH, governanceH, reputationH, referralH, consentH, adminJobQueueH, webhookRepo, jwtPublicKey)
 
 	if err := api.RunServer(router, cfg.Server); err != nil {
 		log.Fatal().Err(err).Msg("server error")
