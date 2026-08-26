@@ -52,15 +52,93 @@ func TestHub_Broadcast(t *testing.T) {
 
 func TestHub_BroadcastToUser(t *testing.T) {
 	hub := NewHub()
-	c1 := &Client{ID: "u1", Send: make(chan []byte, 10), Hub: hub}
+	// clientID is distinct from UserID (UUID vs user ID)
+	c1 := &Client{ID: "client-uuid-1", UserID: "user-123", Send: make(chan []byte, 10), Hub: hub}
 	hub.Register(c1)
-	hub.BroadcastToUser("u1", Message{Type: "private", Payload: "secret"})
+	hub.BroadcastToUser("user-123", Message{Type: "private", Payload: "secret"})
 	select {
 	case msg := <-c1.Send:
 		assert.Contains(t, string(msg), "private")
 	case <-time.After(200 * time.Millisecond):
-		t.Fatal("timeout")
+		t.Fatal("timeout: user broadcast did not reach client")
 	}
+}
+
+func TestHub_BroadcastToUser_MultiConnection(t *testing.T) {
+	hub := NewHub()
+	// Two separate connections/tabs for the same user
+	c1 := &Client{ID: "client-tab-1", UserID: "user-multi", Send: make(chan []byte, 10), Hub: hub}
+	c2 := &Client{ID: "client-tab-2", UserID: "user-multi", Send: make(chan []byte, 10), Hub: hub}
+	hub.Register(c1)
+	hub.Register(c2)
+
+	assert.Equal(t, 2, hub.ClientCount())
+	assert.Equal(t, 1, hub.UserCount())
+
+	hub.BroadcastToUser("user-multi", Message{Type: "notification", Payload: "multi-tab"})
+
+	// Both connections must receive the broadcast
+	select {
+	case msg := <-c1.Send:
+		assert.Contains(t, string(msg), "multi-tab")
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("timeout: connection 1 did not receive user broadcast")
+	}
+
+	select {
+	case msg := <-c2.Send:
+		assert.Contains(t, string(msg), "multi-tab")
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("timeout: connection 2 did not receive user broadcast")
+	}
+
+	// Unregister one connection — second connection should still receive messages
+	hub.Unregister(c1)
+	assert.Equal(t, 1, hub.ClientCount())
+	assert.Equal(t, 1, hub.UserCount())
+
+	hub.BroadcastToUser("user-multi", Message{Type: "notification", Payload: "still-connected"})
+	select {
+	case msg := <-c2.Send:
+		assert.Contains(t, string(msg), "still-connected")
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("timeout: remaining connection did not receive user broadcast")
+	}
+
+	// Unregister final connection — user map entry should be cleaned up
+	hub.Unregister(c2)
+	assert.Equal(t, 0, hub.ClientCount())
+	assert.Equal(t, 0, hub.UserCount())
+}
+
+func TestHub_BroadcastToUser_NonExistentUser(t *testing.T) {
+	hub := NewHub()
+	c1 := &Client{ID: "client-1", UserID: "user-1", Send: make(chan []byte, 10), Hub: hub}
+	hub.Register(c1)
+
+	// Broadcast to non-existent user should not error or send to other users
+	hub.BroadcastToUser("non-existent-user", Message{Type: "private", Payload: "ghost"})
+	select {
+	case <-c1.Send:
+		t.Fatal("should not receive message targeted to another user")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestHub_Drain(t *testing.T) {
+	hub := NewHub()
+	c1 := &Client{ID: "c1", UserID: "u1", Send: make(chan []byte, 10), Hub: hub}
+	c2 := &Client{ID: "c2", UserID: "u2", Send: make(chan []byte, 10), Hub: hub}
+	hub.Register(c1)
+	hub.Register(c2)
+	hub.JoinRoom("room-1", "c1")
+
+	assert.Equal(t, 2, hub.ClientCount())
+	hub.Drain()
+
+	assert.Equal(t, 0, hub.ClientCount())
+	assert.Equal(t, 0, hub.UserCount())
+	assert.Equal(t, 0, hub.RoomCount())
 }
 
 func TestHub_Broadcast_DifferentRoom(t *testing.T) {

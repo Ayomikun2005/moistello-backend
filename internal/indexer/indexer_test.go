@@ -71,3 +71,25 @@ func TestIndexerMetrics_Creation(t *testing.T) {
 	assert.NotNil(t, m.ReconcilerRuns)
 	assert.NotNil(t, m.DedupSize)
 }
+
+func TestReconciler_StartStop(t *testing.T) {
+	r := &Reconciler{
+		interval: 1 * time.Hour,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		r.StartReconciliation(ctx, 1*time.Hour)
+		close(done)
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+		// success: stopped cleanly on context cancellation
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("reconciler did not stop on context cancellation")
+	}
+}

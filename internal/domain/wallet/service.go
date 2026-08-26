@@ -538,6 +538,10 @@ func decryptSecret(encrypted []byte, nonce []byte, passkeySeed []byte) (string, 
 		return "", fmt.Errorf("creating GCM: %w", err)
 	}
 
+	if len(nonce) != aesGCM.NonceSize() {
+		return "", fmt.Errorf("invalid nonce length")
+	}
+
 	plaintext, err := aesGCM.Open(nil, nonce, encrypted, nil)
 	if err != nil {
 		return "", fmt.Errorf("decrypting: %w", err)
