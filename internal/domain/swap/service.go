@@ -8,27 +8,50 @@ import (
 	"github.com/google/uuid"
 	"github.com/moistello/backend/internal/domain/circle"
 	"github.com/moistello/backend/internal/domain/user"
-	"github.com/moistello/backend/pkg/stellar/soroban"
 	"github.com/moistello/backend/pkg/apperrors"
+	"github.com/rs/zerolog/log"
 )
+
+// CircleService is the slice of the circle domain the swap service needs.
+// Narrow interfaces keep the swap service testable without building the full
+// circle.Service mock.
+type CircleService interface {
+	Get(ctx context.Context, id string) (*circle.Circle, error)
+	IsMember(ctx context.Context, circleID, userID string) (bool, error)
+}
+
+// UserService is the slice of the user domain the swap service needs.
+type UserService interface {
+	GetByID(ctx context.Context, id string) (*user.User, error)
+}
+
+// EscrowSwapClient is the slice of the Soroban escrow bindings the swap
+// service uses. The concrete *soroban.EscrowSwapClient satisfies it; the
+// interface exists so the sweep/cancel logic can be tested with a fake.
+type EscrowSwapClient interface {
+	CreateSwap(ctx context.Context, circleID, offeror, offeree string, offerorAsset string, offerorAmount int64, requestedAsset string, requestedAmount int64, expiresAt uint64) (string, error)
+	AcceptSwap(ctx context.Context, swapID string, acceptor string) (string, error)
+	CancelSwap(ctx context.Context, swapID string, canceller string) (string, error)
+	ExecuteSwap(ctx context.Context, swapID string) (string, error)
+}
 
 type Service struct {
 	repo             Repository
-	circleService    circle.Service
-	userService      user.Service
-	escrowSwapClient *soroban.EscrowSwapClient
+	circleService    CircleService
+	userService      UserService
+	escrowSwapClient EscrowSwapClient
 }
 
 func NewService(
 	repo Repository,
-	circleService circle.Service,
-	userService user.Service,
-	escrowSwapClient *soroban.EscrowSwapClient,
+	circleService CircleService,
+	userService UserService,
+	escrowSwapClient EscrowSwapClient,
 ) *Service {
 	return &Service{
-		repo:           repo,
-		circleService:  circleService,
-		userService:    userService,
+		repo:             repo,
+		circleService:    circleService,
+		userService:      userService,
 		escrowSwapClient: escrowSwapClient,
 	}
 }
@@ -125,6 +148,14 @@ func (s *Service) AcceptSwapOffer(ctx context.Context, userID string, swapOfferI
 		return nil, fmt.Errorf("%w: swap offer is not available for acceptance", apperrors.ErrInvalidInput)
 	}
 
+	// Reject offers that have expired but have not yet been swept. The sweep
+	// worker owns the created→expired transition (it must release escrow
+	// on-chain first), so an expired offer can still read as created for up to
+	// one sweep interval — acceptance must not slip through that window.
+	if time.Now().After(offer.ExpiresAt) {
+		return nil, fmt.Errorf("%w: swap offer has expired", apperrors.ErrInvalidInput)
+	}
+
 	// Verify the acceptor is the intended offeree (or any member if no offeree specified)
 	if offer.OffereeUserID != nil && *offer.OffereeUserID != userID {
 		return nil, fmt.Errorf("%w: only the specified offeree can accept this swap", apperrors.ErrForbidden)
@@ -180,6 +211,75 @@ func (s *Service) AcceptSwapOffer(ctx context.Context, userID string, swapOfferI
 	}
 
 	return offer, nil
+}
+
+// CancelSwapOffer lets the offeror cancel a created offer before it is
+// accepted. The escrow is released on-chain first, then the offer is marked
+// cancelled — an offer that cannot be cancelled on-chain stays created so the
+// caller sees the failure rather than a DB row that lies about the escrow.
+func (s *Service) CancelSwapOffer(ctx context.Context, userID string, swapOfferID string) (*SwapOffer, error) {
+	offer, err := s.repo.GetSwapOfferByID(ctx, swapOfferID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: swap offer not found", apperrors.ErrNotFound)
+	}
+
+	if offer.OfferorUserID != userID {
+		return nil, fmt.Errorf("%w: only the offeror can cancel a swap offer", apperrors.ErrForbidden)
+	}
+
+	if offer.Status != SwapOfferStatusCreated {
+		return nil, fmt.Errorf("%w: swap offer is not available for cancellation", apperrors.ErrInvalidInput)
+	}
+
+	offerorContractID, err := s.getUserContractID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := s.escrowSwapClient.CancelSwap(ctx, swapOfferID, offerorContractID); err != nil {
+		return nil, fmt.Errorf("failed to cancel swap on chain: %w", err)
+	}
+
+	if err := s.repo.UpdateSwapOfferStatus(ctx, swapOfferID, SwapOfferStatusCancelled, nil); err != nil {
+		return offer, nil // escrow is released; a failed row update must not report failure
+	}
+
+	offer.Status = SwapOfferStatusCancelled
+	return offer, nil
+}
+
+// SweepExpiredOffers is the expiry half of the sweep worker (#243). For every
+// created offer past its expires_at it cancels the escrow on-chain (releasing
+// the offeror's funds) and then marks the offer expired. An offer that cannot
+// be cancelled on-chain is left created so the next sweep retries it — a DB
+// transition without the chain release would orphan the escrow.
+func (s *Service) SweepExpiredOffers(ctx context.Context) (int, error) {
+	offers, err := s.repo.ListExpiredCreatedOffers(ctx, time.Now())
+	if err != nil {
+		return 0, fmt.Errorf("failed to list expired swap offers: %w", err)
+	}
+
+	swept := 0
+	for _, offer := range offers {
+		offerContractID, err := s.getUserContractID(ctx, offer.OfferorUserID)
+		if err != nil {
+			log.Warn().Err(err).Str("offer", offer.ID).Msg("swap sweep: cannot resolve offeror contract ID, deferring")
+			continue
+		}
+
+		if _, err := s.escrowSwapClient.CancelSwap(ctx, offer.ID, offerContractID); err != nil {
+			log.Warn().Err(err).Str("offer", offer.ID).Msg("swap sweep: on-chain cancel failed, retrying next sweep")
+			continue
+		}
+
+		if err := s.repo.UpdateSwapOfferStatus(ctx, offer.ID, SwapOfferStatusExpired, nil); err != nil {
+			log.Warn().Err(err).Str("offer", offer.ID).Msg("swap sweep: failed to mark offer expired")
+			continue
+		}
+		swept++
+	}
+
+	return swept, nil
 }
 
 func (s *Service) GetSwapHistory(ctx context.Context, userID string, filter SwapHistoryFilter) (*SwapHistoryResponse, error) {

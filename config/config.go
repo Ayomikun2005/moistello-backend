@@ -29,6 +29,7 @@ type Config struct {
 	Environment  string
 	YellowCard   YellowCardConfig `mapstructure:"yellow_card"`
 	Tracing      TracingConfig
+	Swap         SwapConfig       `mapstructure:"swap"`
 }
 
 type ServerConfig struct {
@@ -154,10 +155,24 @@ type CORSConfig struct {
 	MaxAge           time.Duration `mapstructure:"max_age"`
 }
 
+type SwapConfig struct {
+	// SweepInterval is how often the swap sweep worker runs. The sweep
+	// releases escrow on-chain for created swap offers past their expiry and
+	// marks them expired (#243).
+	SweepInterval time.Duration `mapstructure:"sweep_interval"`
+}
+
 type RateLimitConfig struct {
 	Global        int `mapstructure:"global"`
 	Authenticated int `mapstructure:"authenticated"`
 	Auth          int `mapstructure:"auth"`
+	// FailClosed decides what happens when Redis is unreachable during a rate
+	// limit check. True (the default, and the single policy documented in
+	// docs/rate-limiting.md) refuses the request with 503 — the same posture
+	// the legacy JS middleware/rateLimiter.js always had. False falls back to
+	// the in-memory limiter (fails open). Individual routes may override this
+	// per-route via middleware.RateLimitMiddleware options.
+	FailClosed bool `mapstructure:"fail_closed"`
 }
 
 type LoggingConfig struct {
@@ -227,6 +242,7 @@ func Load(path string) (*Config, error) {
 	setDefault(v, "rate_limit.global", 100)
 	setDefault(v, "rate_limit.authenticated", 300)
 	setDefault(v, "rate_limit.auth", 10)
+	setDefault(v, "rate_limit.fail_closed", true)
 	setDefault(v, "logging.level", "debug")
 	setDefault(v, "logging.format", "json")
 	setDefault(v, "logging.output", "stdout")
@@ -241,6 +257,7 @@ func Load(path string) (*Config, error) {
 	setDefault(v, "notification.push.fcm_server_key", "")
 	setDefault(v, "yellow_card.api_key", "")
 	setDefault(v, "yellow_card.api_secret", "")
+	setDefault(v, "swap.sweep_interval", "1m")
 	setDefault(v, "security.wallet_pepper", "")
 	setDefault(v, "security.passkey_pepper", "")
 	setDefault(v, "security.encryption_key", "")
@@ -300,6 +317,7 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("rate_limit.global", 100)
 	v.SetDefault("rate_limit.authenticated", 300)
 	v.SetDefault("rate_limit.auth", 10)
+	v.SetDefault("rate_limit.fail_closed", true)
 	v.SetDefault("logging.level", "debug")
 	v.SetDefault("logging.format", "json")
 	v.SetDefault("logging.output", "stdout")

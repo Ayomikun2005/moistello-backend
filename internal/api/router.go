@@ -35,6 +35,7 @@ func NewRouter(
 	reputationHandler *handler.ReputationHandler,
 	referralHandler *handler.ReferralHandler,
 	consentHandler *handler.ConsentHandler,
+	adminJobQueueHandler *handler.AdminJobQueueHandler,
 	webhookRepo webhook.WebhookRepository,
 	jwtPublicKey []byte,
 ) *gin.Engine {
@@ -209,6 +210,7 @@ func NewRouter(
 			// Swap endpoints
 			authenticated.POST("/swap/offer", swapHandler.CreateSwapOffer)
 			authenticated.POST("/swap/accept", swapHandler.AcceptSwapOffer)
+			authenticated.POST("/swap/cancel", swapHandler.CancelSwapOffer)
 			authenticated.GET("/swap/history", swapHandler.GetSwapHistory)
 
 		authenticated.POST("/webhooks", webhookHandler.RegisterWebhook)
@@ -227,13 +229,8 @@ func NewRouter(
 				admin.GET("/audit-log", adminHandler.GetAuditLog)
 				admin.GET("/metrics", adminHandler.GetMetrics)
 				admin.POST("/feature-flags", adminHandler.UpdateFeatureFlag)
-				admin.GET("/jobs/dead-letter", func(c *gin.Context) {
-					c.JSON(200, gin.H{"dead_letter_jobs": []any{}})
-				})
-			admin.POST("/jobs/dead-letter/:id/retry", func(c *gin.Context) {
-				jobID := c.Param("id")
-				c.JSON(200, gin.H{"message": "dead letter job requeued successfully", "job_id": jobID})
-			})
+				admin.GET("/jobs/dead-letter", adminJobQueueHandler.GetDeadLetterJobs)
+			admin.POST("/jobs/dead-letter/:id/retry", adminJobQueueHandler.RetryDeadLetterJob)
 		}
 
 		optional := api.Group("")
