@@ -23,13 +23,13 @@ import (
 	"github.com/moistello/backend/config"
 	"github.com/moistello/backend/internal/api"
 	"github.com/moistello/backend/internal/api/handler"
+	"github.com/moistello/backend/internal/domain/admin"
 	"github.com/moistello/backend/internal/domain/audit"
 	"github.com/moistello/backend/internal/domain/auth"
 	"github.com/moistello/backend/internal/domain/circle"
 	"github.com/moistello/backend/internal/domain/community"
 	"github.com/moistello/backend/internal/domain/contribution"
 	"github.com/moistello/backend/internal/domain/email"
-	"github.com/moistello/backend/internal/domain/featureflag"
 	"github.com/moistello/backend/internal/domain/governance"
 	"github.com/moistello/backend/internal/domain/incentives"
 	"github.com/moistello/backend/internal/domain/invite"
@@ -44,13 +44,13 @@ import (
 	"github.com/moistello/backend/internal/domain/verification"
 	"github.com/moistello/backend/internal/domain/wallet"
 	"github.com/moistello/backend/internal/domain/yellowcard"
-	"github.com/moistello/backend/pkg/stellar"
-	"github.com/moistello/backend/pkg/stellar/soroban"
 	ws "github.com/moistello/backend/internal/websocket"
 	"github.com/moistello/backend/pkg/logger"
 	"github.com/moistello/backend/pkg/postgres"
 	"github.com/moistello/backend/pkg/rabbitmq"
 	"github.com/moistello/backend/pkg/redis"
+	"github.com/moistello/backend/pkg/stellar"
+	"github.com/moistello/backend/pkg/stellar/soroban"
 	"github.com/moistello/backend/pkg/tracing"
 	"github.com/moistello/backend/pkg/validator"
 	"github.com/moistello/backend/webhook"
@@ -120,18 +120,12 @@ func main() {
 	wsBroadcaster := ws.NewBroadcaster(wsHub, redisClient)
 	_ = ws.NewRedisBridge(wsHub, redisClient)
 
-	// RabbitMQ connection - initialize before notification service so it can publish events
-	rmqClient, rmqErr := rabbitmq.New(cfg.RabbitMQ)
-	if rmqErr != nil {
-		log.Warn().Err(rmqErr).Msg("RabbitMQ unavailable — notification events will not be published to queue")
-	}
-
 	userSvc := user.NewService(userRepo, circleRepo)
 	circleSvc := circle.NewService(circleRepo, &moiAdapter{repo: userRepo}, &communityAdapter{repo: communityRepo}, wsBroadcaster, circle.NewTransactor(db))
 	contribSvc := contribution.NewService(contribRepo, wsBroadcaster, contribution.NewTransactor(db))
 	payoutSvc := payout.NewService(payoutRepo)
 	reputationSvc := reputation.NewService(reputationRepo)
-	notificationSvc := notification.NewService(notificationRepo, rmqClient, wsBroadcaster)
+	notificationSvc := notification.NewService(notificationRepo, nil, wsBroadcaster)
 	authSvc, err := auth.NewService(redisClient, cfg.Auth.NonceTTL, cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL, cfg.Auth.JWTPrivateKeyPEM, cfg.Auth.JWTPublicKeyPEM)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to initialize auth service")
@@ -162,12 +156,8 @@ func main() {
 		log.Fatal().Err(err).Msg("failed to initialize wallet service")
 	}
 
-	governanceContractID := cfg.Stellar.GovernanceTokenContractID
-	if governanceContractID == "" && cfg.Contracts.GovernanceToken != "" {
-		governanceContractID = cfg.Contracts.GovernanceToken
-	}
 	tokenSvc, err := token.NewService(wallet.NewRepository(db), token.Config{
-		GovernanceTokenContractID: governanceContractID,
+		GovernanceTokenContractID: cfg.Stellar.GovernanceTokenContractID,
 		SorobanRPCURL:             cfg.Stellar.SorobanRPCURL,
 		NetworkPassphrase:         cfg.Stellar.NetworkPassphrase,
 		HorizonURL:                cfg.Stellar.HorizonURL,
@@ -188,10 +178,10 @@ func main() {
 	payoutH := handler.NewPayoutHandler(payoutSvc, payoutRepo)
 	inviteH := handler.NewInviteHandler(inviteSvc)
 	notifH := handler.NewNotificationHandler(notificationSvc, userSvc)
-	ffSvc := featureflag.NewService(featureflag.NewRepository(db))
-	adminH := handler.NewAdminHandler(userSvc, userRepo, circleSvc, auditRepo, ffSvc)
-	webhookH := handler.NewWebhookHandler()
+	adminMetricsSvc := admin.NewService(admin.NewRepository(db), 0)
+	adminH := handler.NewAdminHandler(userSvc, userRepo, circleSvc, auditRepo, adminMetricsSvc)
 	webhookRepo := webhook.NewPostgresRepository(db.DB)
+	webhookH := handler.NewWebhookHandler(webhookRepo)
 	healthH := handler.NewHealthHandler(db.DB, redisClient, cfg.Stellar.SorobanRPCURL, cfg.Stellar.HorizonURL)
 	passkeyCredH := handler.NewPasskeyCredentialHandler(db)
 	walletH := handler.NewWalletHandler(walletSvc)
@@ -201,7 +191,7 @@ func main() {
 	communityH := handler.NewCommunityHandler(communitySvc)
 
 	// Yellow Card integration
-	ycClient := yellowcard.NewClient(cfg.YellowCard.APIKey, cfg.YellowCard.APISecret, cfg.YellowCard.StellarAddress)
+	ycClient := yellowcard.NewClient(cfg.YellowCard.APIKey, cfg.YellowCard.APISecret)
 	depositH := handler.NewDepositHandler(ycClient, walletSvc)
 
 	// Savings goals
@@ -219,11 +209,7 @@ func main() {
 	accountMgr := stellar.NewAccountManager(horizonClient, cfg.Stellar.MasterPublicKey)
 
 	// Create escrow swap contract invoker and client
-	escrowSwapContractID := cfg.Stellar.EscrowSwapContractID
-	if escrowSwapContractID == "" && cfg.Contracts.Circle != "" {
-		escrowSwapContractID = cfg.Contracts.Circle
-	}
-	escrowSwapInvoker := soroban.NewContractInvoker(sorobanClient, signer, accountMgr, escrowSwapContractID)
+	escrowSwapInvoker := soroban.NewContractInvoker(sorobanClient, signer, accountMgr, cfg.Stellar.EscrowSwapContractID)
 	escrowSwapClient := soroban.NewEscrowSwapClient(escrowSwapInvoker)
 
 	// Swap service and handler
@@ -231,7 +217,7 @@ func main() {
 	swapSvc := swap.NewService(swapRepo, circleSvc, userSvc, escrowSwapClient)
 	swapH := handler.NewSwapHandler(swapSvc)
 
-	governanceSvc := governance.NewService(governance.NewRepository(db))
+	governanceSvc := governance.NewService()
 	governanceH := handler.NewGovernanceHandler(governanceSvc)
 
 	incentivesRepo := incentives.NewRepository(db)
@@ -242,10 +228,17 @@ func main() {
 	// GDPR cookie consent handler
 	consentH := handler.NewConsentHandler(db.DB)
 
+	// RabbitMQ connection for health checks and event publishing
+	rmqClient, rmqErr := rabbitmq.New(cfg.RabbitMQ)
+	if rmqErr != nil {
+		log.Warn().Err(rmqErr).Msg("RabbitMQ unavailable — health checks will report degraded")
+	} else {
+		defer rmqClient.Close()
+	}
+
 	// Wire RabbitMQ into health handler for /health and /health/ready probes
 	if rmqClient != nil {
 		healthH.WithRabbitMQ(rmqClient)
-		defer rmqClient.Close()
 	}
 
 	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, communityH, wsH, savingsH, tokenH, swapH, governanceH, reputationH, referralH, consentH, webhookRepo, jwtPublicKey)

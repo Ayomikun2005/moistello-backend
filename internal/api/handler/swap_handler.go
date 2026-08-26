@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -34,7 +33,7 @@ func NewSwapHandler(swapService *swap.Service) *SwapHandler {
 func (h *SwapHandler) CreateSwapOffer(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
-		response.ErrorWithCode(c, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
+		response.Unauthorized(c, "unauthorized")
 		return
 	}
 
@@ -55,7 +54,7 @@ func (h *SwapHandler) CreateSwapOffer(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, offer)
+	response.Created(c, offer)
 }
 
 // AcceptSwapOffer godoc
@@ -74,7 +73,7 @@ func (h *SwapHandler) CreateSwapOffer(c *gin.Context) {
 func (h *SwapHandler) AcceptSwapOffer(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
-		response.ErrorWithCode(c, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
+		response.Unauthorized(c, "unauthorized")
 		return
 	}
 
@@ -90,7 +89,7 @@ func (h *SwapHandler) AcceptSwapOffer(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, offer)
+	response.OK(c, offer)
 }
 
 // GetSwapHistory godoc
@@ -109,7 +108,7 @@ func (h *SwapHandler) AcceptSwapOffer(c *gin.Context) {
 func (h *SwapHandler) GetSwapHistory(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
-		response.ErrorWithCode(c, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
+		response.Unauthorized(c, "unauthorized")
 		return
 	}
 
@@ -139,5 +138,5 @@ func (h *SwapHandler) GetSwapHistory(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, history)
+	response.OK(c, history)
 }
