@@ -2,7 +2,6 @@ package handler
 
 import (
 	"net/http"
-	"sort"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -17,10 +16,10 @@ import (
 )
 
 type CircleHandler struct {
-	circleService  circle.Service
-	inviteService  invite.Service
-	contribService contribution.Service
-	payoutService  payout.Service
+	circleService   circle.Service
+	inviteService   invite.Service
+	contribService  contribution.Service
+	payoutService   payout.Service
 }
 
 func NewCircleHandler(circleSvc circle.Service, inviteSvc invite.Service, contribSvc contribution.Service, payoutSvc payout.Service) *CircleHandler {
@@ -316,75 +315,55 @@ func (h *CircleHandler) GetRounds(c *gin.Context) {
 		return
 	}
 
-	page, limit, _ := pagination.Parse(c)
-
-	contribs, contribTotal, err := h.contribService.GetCircleHistory(c.Request.Context(), circleID, page, limit)
+	contribs, _, err := h.contribService.GetCircleHistory(c.Request.Context(), circleID, 1, 100)
 	if err != nil {
 		contribs = nil
-		contribTotal = 0
 	}
 
-	payouts, payoutTotal, err := h.payoutService.GetCircleHistory(c.Request.Context(), circleID, page, limit)
+	payouts, _, err := h.payoutService.GetCircleHistory(c.Request.Context(), circleID, 1, 100)
 	if err != nil {
 		payouts = nil
-		payoutTotal = 0
 	}
 
 	roundMap := make(map[int]map[string]any)
-	if contribs != nil {
-		for _, c := range contribs {
-			entry, ok := roundMap[c.RoundNumber]
-			if !ok {
-				entry = map[string]any{
-					"roundNumber":   c.RoundNumber,
-					"contributions": []any{},
-				}
-				roundMap[c.RoundNumber] = entry
+	for _, c := range contribs {
+		entry, ok := roundMap[c.RoundNumber]
+		if !ok {
+			entry = map[string]any{
+				"roundNumber":  c.RoundNumber,
+				"contributions": []any{},
 			}
-			entry["contributions"] = append(entry["contributions"].([]any), c)
+			roundMap[c.RoundNumber] = entry
 		}
+		entry["contributions"] = append(entry["contributions"].([]any), c)
 	}
-	if payouts != nil {
-		for _, p := range payouts {
-			entry, ok := roundMap[p.RoundNumber]
-			if !ok {
-				entry = map[string]any{
-					"roundNumber":   p.RoundNumber,
-					"contributions": []any{},
-				}
-				roundMap[p.RoundNumber] = entry
+	for _, p := range payouts {
+		entry, ok := roundMap[p.RoundNumber]
+		if !ok {
+			entry = map[string]any{
+				"roundNumber":  p.RoundNumber,
+				"contributions": []any{},
 			}
-			entry["payout"] = p
+			roundMap[p.RoundNumber] = entry
 		}
-	}
-
-	total := contribTotal
-	if payoutTotal > total {
-		total = payoutTotal
+		entry["payout"] = p
 	}
 
 	rounds := make([]map[string]any, 0, len(roundMap))
 	for _, v := range roundMap {
 		rounds = append(rounds, v)
 	}
-	// Sort rounds ascending so the response is deterministic for clients.
-	sort.Slice(rounds, func(i, j int) bool {
-		a, _ := rounds[i]["roundNumber"].(int)
-		b, _ := rounds[j]["roundNumber"].(int)
-		return a < b
-	})
 
-	response.OKWithMeta(c, gin.H{
+	response.OK(c, gin.H{
 		"rounds":       rounds,
 		"currentRound": cir.CurrentRound,
 		"totalMembers": cir.MaxMembers,
-	}, response.NewPaginationMeta(page, limit, total))
+	})
 }
 
 func (h *CircleHandler) GetPayouts(c *gin.Context) {
 	circleID := c.Param("id")
-	page, limit, _ := pagination.Parse(c)
-	payouts, total, err := h.payoutService.GetCircleHistory(c.Request.Context(), circleID, page, limit)
+	payouts, total, err := h.payoutService.GetCircleHistory(c.Request.Context(), circleID, 1, 50)
 	if err != nil {
 		response.InternalError(c, "failed to get payouts")
 		return
@@ -392,7 +371,7 @@ func (h *CircleHandler) GetPayouts(c *gin.Context) {
 	if payouts == nil {
 		payouts = []payout.Payout{}
 	}
-	response.OKWithMeta(c, gin.H{"payouts": payouts}, response.NewPaginationMeta(page, limit, total))
+	response.OKWithMeta(c, gin.H{"payouts": payouts}, response.NewPaginationMeta(1, 50, total))
 }
 
 func (h *CircleHandler) Dispute(c *gin.Context) {

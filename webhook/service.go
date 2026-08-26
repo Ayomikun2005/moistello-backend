@@ -102,6 +102,9 @@ func (r *PostgresRepository) GetActiveWebhooks(ctx context.Context) ([]WebhookRe
 		}
 		list = append(list, *wh)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return list, nil
 }
 
@@ -127,6 +130,9 @@ func (r *PostgresRepository) GetByUserID(ctx context.Context, userID string) ([]
 			return nil, err
 		}
 		list = append(list, *wh)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return list, nil
 }

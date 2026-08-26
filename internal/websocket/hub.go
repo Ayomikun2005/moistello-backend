@@ -122,10 +122,16 @@ func (h *Hub) LeaveRoom(circleID, clientID string) {
 func (h *Hub) Broadcast(circleID string, msg Message) {
 	h.mu.RLock()
 	room, ok := h.rooms[circleID]
-	h.mu.RUnlock()
 	if !ok {
+		h.mu.RUnlock()
 		return
 	}
+	// Copy client refs under lock to avoid racing with LeaveRoom/Unregister.
+	clients := make([]*Client, 0, len(room))
+	for _, client := range room {
+		clients = append(clients, client)
+	}
+	h.mu.RUnlock()
 
 	data, err := json.Marshal(msg)
 	if err != nil {
@@ -133,7 +139,7 @@ func (h *Hub) Broadcast(circleID string, msg Message) {
 		return
 	}
 
-	for _, client := range room {
+	for _, client := range clients {
 		select {
 		case client.Send <- data:
 		default:

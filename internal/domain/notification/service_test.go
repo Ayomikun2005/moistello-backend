@@ -1,129 +1,261 @@
-package notification
+package notification_test
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+
+	"github.com/moistello/backend/internal/domain/notification"
+	notifMocks "github.com/moistello/backend/internal/domain/notification/mocks"
 )
 
-// stubRepo satisfies Repository without a database; it records Create calls.
-type stubRepo struct {
-	createCalls int
-	createErr   error
+// mockBroadcaster implements notification.Broadcaster for testing.
+type mockBroadcaster struct {
+	mock.Mock
 }
 
-func (s *stubRepo) Create(ctx context.Context, n *Notification) error {
-	s.createCalls++
-	return s.createErr
-}
-func (s *stubRepo) List(ctx context.Context, userID uuid.UUID, page, limit int, unreadOnly bool) ([]Notification, int, error) {
-	return nil, 0, nil
-}
-func (s *stubRepo) MarkRead(ctx context.Context, id, userID uuid.UUID) error { return nil }
-func (s *stubRepo) MarkAllRead(ctx context.Context, userID uuid.UUID) error  { return nil }
-
-type fakePublisher struct {
-	exchange   string
-	routingKey string
-	body       []byte
-	calls      int
-	err        error
+func (m *mockBroadcaster) NotificationCreated(ctx context.Context, userID, notificationID string) {
+	m.Called(ctx, userID, notificationID)
 }
 
-func (f *fakePublisher) Publish(exchange, routingKey string, body []byte) error {
-	f.calls++
-	f.exchange = exchange
-	f.routingKey = routingKey
-	f.body = body
-	return f.err
-}
+func TestService_Create_Success(t *testing.T) {
+	repo := new(notifMocks.Repository)
+	svc := notification.NewService(repo, nil, nil)
 
-type fakeBroadcaster struct {
-	userID, notificationID string
-	calls                  int
-}
-
-func (f *fakeBroadcaster) NotificationCreated(_ context.Context, userID, notificationID string) {
-	f.calls++
-	f.userID = userID
-	f.notificationID = notificationID
-}
-
-func validInput() CreateInput {
-	return CreateInput{
-		UserID:  "11111111-1111-1111-1111-111111111111",
-		Type:    "circle.created",
-		Title:   "Welcome",
-		Body:    "Your circle is ready",
-		Channel: ChannelInApp,
+	userID := uuid.New().String()
+	input := notification.CreateInput{
+		UserID:  userID,
+		Type:    notification.TypeCircleCreated,
+		Title:   "Circle Created",
+		Body:    "Your circle was created successfully",
+		Data:    json.RawMessage(`{"circleId":"abc"}`),
+		Channel: notification.ChannelInApp,
 	}
+
+	repo.On("Create", mock.Anything, mock.AnythingOfType("*notification.Notification")).Return(nil)
+
+	result, err := svc.Create(context.Background(), input)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, notification.TypeCircleCreated, result.Type)
+	assert.Equal(t, "Circle Created", result.Title)
+	assert.Equal(t, "Your circle was created successfully", result.Body)
+	assert.Equal(t, notification.ChannelInApp, result.Channel)
+	assert.False(t, result.IsRead)
+	assert.NotEqual(t, uuid.Nil, result.ID)
+	repo.AssertExpectations(t)
 }
 
-func TestCreate_PublishesEventToQueue(t *testing.T) {
-	repo := &stubRepo{}
+func TestService_Create_InvalidUUID(t *testing.T) {
+	repo := new(notifMocks.Repository)
+	svc := notification.NewService(repo, nil, nil)
 
-	pub := &fakePublisher{}
-	broad := &fakeBroadcaster{}
-	svc := NewService(repo, pub, broad)
+	input := notification.CreateInput{
+		UserID:  "not-a-uuid",
+		Type:    notification.TypeCircleCreated,
+		Title:   "Test",
+		Body:    "Test body",
+		Channel: notification.ChannelInApp,
+	}
 
-	n, err := svc.Create(context.Background(), validInput())
-	require.NoError(t, err)
-	require.NotNil(t, n)
+	result, err := svc.Create(context.Background(), input)
 
-	assert.Equal(t, 1, pub.calls, "event should be published exactly once")
-	assert.Equal(t, EventsExchange, pub.exchange)
-	assert.Equal(t, "notification.inapp", pub.routingKey)
-
-	var payload Notification
-	require.NoError(t, json.Unmarshal(pub.body, &payload))
-	assert.Equal(t, n.ID, payload.ID)
-	assert.Equal(t, "circle.created", string(payload.Type))
-
-	// The queue consumer owns real-time delivery when publishing succeeds.
-	assert.Equal(t, 0, broad.calls, "broadcaster must not double-deliver when queued")
-}
-
-func TestCreate_FallsBackToBroadcasterWithoutPublisher(t *testing.T) {
-	repo := &stubRepo{}
-
-	broad := &fakeBroadcaster{}
-	svc := NewService(repo, nil, broad)
-
-	n, err := svc.Create(context.Background(), validInput())
-	require.NoError(t, err)
-
-	assert.Equal(t, 0, (&fakePublisher{}).calls) // sanity: nothing published anywhere
-	assert.Equal(t, 1, broad.calls)
-	assert.Equal(t, "11111111-1111-1111-1111-111111111111", broad.userID)
-	assert.Equal(t, n.ID.String(), broad.notificationID)
-}
-
-func TestCreate_PublishErrorFallsBackToBroadcast(t *testing.T) {
-	repo := &stubRepo{}
-
-	pub := &fakePublisher{err: errors.New("broker down")}
-	broad := &fakeBroadcaster{}
-	svc := NewService(repo, pub, broad)
-
-	n, err := svc.Create(context.Background(), validInput())
-	require.NoError(t, err, "persistence succeeded so create must not fail")
-	require.NotNil(t, n)
-	assert.Equal(t, 1, pub.calls)
-	assert.Equal(t, 1, broad.calls, "broadcast should cover the failed publish")
-}
-
-func TestCreate_InvalidUserID(t *testing.T) {
-	svc := NewService(&stubRepo{}, nil, nil)
-
-	input := validInput()
-	input.UserID = "not-a-uuid"
-	n, err := svc.Create(context.Background(), input)
 	assert.Error(t, err)
-	assert.Nil(t, n)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "invalid UUID")
+}
+
+func TestService_Create_WithBroadcaster(t *testing.T) {
+	repo := new(notifMocks.Repository)
+	bc := new(mockBroadcaster)
+	svc := notification.NewService(repo, nil, bc)
+
+	userID := uuid.New().String()
+	input := notification.CreateInput{
+		UserID:  userID,
+		Type:    notification.TypePayoutReceived,
+		Title:   "Payout Received",
+		Body:    "You received a payout",
+		Channel: notification.ChannelInApp,
+	}
+
+	repo.On("Create", mock.Anything, mock.AnythingOfType("*notification.Notification")).Return(nil)
+	bc.On("NotificationCreated", mock.Anything, userID, mock.AnythingOfType("string")).Return()
+
+	result, err := svc.Create(context.Background(), input)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	bc.AssertCalled(t, "NotificationCreated", mock.Anything, userID, result.ID.String())
+	repo.AssertExpectations(t)
+	bc.AssertExpectations(t)
+}
+
+func TestService_Create_RepoError(t *testing.T) {
+	repo := new(notifMocks.Repository)
+	svc := notification.NewService(repo, nil, nil)
+
+	userID := uuid.New().String()
+	input := notification.CreateInput{
+		UserID:  userID,
+		Type:    notification.TypeCircleCreated,
+		Title:   "Test",
+		Body:    "Test body",
+		Channel: notification.ChannelInApp,
+	}
+
+	repo.On("Create", mock.Anything, mock.AnythingOfType("*notification.Notification")).
+		Return(assert.AnError)
+
+	result, err := svc.Create(context.Background(), input)
+
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "creating notification")
+	repo.AssertExpectations(t)
+}
+
+func TestService_List_Success(t *testing.T) {
+	repo := new(notifMocks.Repository)
+	svc := notification.NewService(repo, nil, nil)
+
+	userID := uuid.New()
+	expected := []notification.Notification{
+		{ID: uuid.New(), UserID: userID, Title: "Notif 1"},
+		{ID: uuid.New(), UserID: userID, Title: "Notif 2"},
+	}
+
+	repo.On("List", mock.Anything, userID, 1, 20, false).Return(expected, 2, nil)
+
+	results, total, err := svc.List(context.Background(), userID.String(), 1, 20, false)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 2, total)
+	assert.Len(t, results, 2)
+	assert.Equal(t, "Notif 1", results[0].Title)
+	repo.AssertExpectations(t)
+}
+
+func TestService_List_UnreadOnly(t *testing.T) {
+	repo := new(notifMocks.Repository)
+	svc := notification.NewService(repo, nil, nil)
+
+	userID := uuid.New()
+	expected := []notification.Notification{
+		{ID: uuid.New(), UserID: userID, Title: "Unread", IsRead: false},
+	}
+
+	repo.On("List", mock.Anything, userID, 1, 10, true).Return(expected, 1, nil)
+
+	results, total, err := svc.List(context.Background(), userID.String(), 1, 10, true)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 1, total)
+	assert.Len(t, results, 1)
+	repo.AssertExpectations(t)
+}
+
+func TestService_List_InvalidUUID(t *testing.T) {
+	repo := new(notifMocks.Repository)
+	svc := notification.NewService(repo, nil, nil)
+
+	results, total, err := svc.List(context.Background(), "bad-uuid", 1, 20, false)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid UUID")
+	assert.Nil(t, results)
+	assert.Equal(t, 0, total)
+}
+
+func TestService_MarkRead_Success(t *testing.T) {
+	repo := new(notifMocks.Repository)
+	svc := notification.NewService(repo, nil, nil)
+
+	notifID := uuid.New()
+	userID := uuid.New()
+
+	repo.On("MarkRead", mock.Anything, notifID, userID).Return(nil)
+
+	err := svc.MarkRead(context.Background(), notifID.String(), userID.String())
+
+	assert.NoError(t, err)
+	repo.AssertExpectations(t)
+}
+
+func TestService_MarkRead_InvalidNotificationID(t *testing.T) {
+	repo := new(notifMocks.Repository)
+	svc := notification.NewService(repo, nil, nil)
+
+	err := svc.MarkRead(context.Background(), "bad-id", uuid.New().String())
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid UUID")
+}
+
+func TestService_MarkRead_InvalidUserID(t *testing.T) {
+	repo := new(notifMocks.Repository)
+	svc := notification.NewService(repo, nil, nil)
+
+	err := svc.MarkRead(context.Background(), uuid.New().String(), "bad-user-id")
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid UUID")
+}
+
+func TestService_MarkRead_RepoError(t *testing.T) {
+	repo := new(notifMocks.Repository)
+	svc := notification.NewService(repo, nil, nil)
+
+	notifID := uuid.New()
+	userID := uuid.New()
+
+	repo.On("MarkRead", mock.Anything, notifID, userID).Return(assert.AnError)
+
+	err := svc.MarkRead(context.Background(), notifID.String(), userID.String())
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "marking notification read")
+	repo.AssertExpectations(t)
+}
+
+func TestService_MarkAllRead_Success(t *testing.T) {
+	repo := new(notifMocks.Repository)
+	svc := notification.NewService(repo, nil, nil)
+
+	userID := uuid.New()
+	repo.On("MarkAllRead", mock.Anything, userID).Return(nil)
+
+	err := svc.MarkAllRead(context.Background(), userID.String())
+
+	assert.NoError(t, err)
+	repo.AssertExpectations(t)
+}
+
+func TestService_MarkAllRead_InvalidUUID(t *testing.T) {
+	repo := new(notifMocks.Repository)
+	svc := notification.NewService(repo, nil, nil)
+
+	err := svc.MarkAllRead(context.Background(), "bad-uuid")
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid UUID")
+}
+
+func TestService_MarkAllRead_RepoError(t *testing.T) {
+	repo := new(notifMocks.Repository)
+	svc := notification.NewService(repo, nil, nil)
+
+	userID := uuid.New()
+	repo.On("MarkAllRead", mock.Anything, userID).Return(assert.AnError)
+
+	err := svc.MarkAllRead(context.Background(), userID.String())
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "marking all notifications read")
+	repo.AssertExpectations(t)
 }
