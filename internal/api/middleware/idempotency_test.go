@@ -60,9 +60,10 @@ func TestIdempotencyMiddleware_ConcurrentRequests(t *testing.T) {
 	okCount := 0
 	conflictCount := 0
 	for code := range statusCodes {
-		if code == http.StatusOK {
+		switch code {
+		case http.StatusOK:
 			okCount++
-		} else if code == http.StatusConflict {
+		case http.StatusConflict:
 			conflictCount++
 		}
 	}

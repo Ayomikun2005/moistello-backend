@@ -326,31 +326,27 @@ func (h *CircleHandler) GetRounds(c *gin.Context) {
 	}
 
 	roundMap := make(map[int]map[string]any)
-	if contribs != nil {
-		for _, c := range contribs {
-			entry, ok := roundMap[c.RoundNumber]
-			if !ok {
-				entry = map[string]any{
-					"roundNumber":  c.RoundNumber,
-					"contributions": []any{},
-				}
-				roundMap[c.RoundNumber] = entry
+	for _, c := range contribs {
+		entry, ok := roundMap[c.RoundNumber]
+		if !ok {
+			entry = map[string]any{
+				"roundNumber":  c.RoundNumber,
+				"contributions": []any{},
 			}
-			entry["contributions"] = append(entry["contributions"].([]any), c)
+			roundMap[c.RoundNumber] = entry
 		}
+		entry["contributions"] = append(entry["contributions"].([]any), c)
 	}
-	if payouts != nil {
-		for _, p := range payouts {
-			entry, ok := roundMap[p.RoundNumber]
-			if !ok {
-				entry = map[string]any{
-					"roundNumber":  p.RoundNumber,
-					"contributions": []any{},
-				}
-				roundMap[p.RoundNumber] = entry
+	for _, p := range payouts {
+		entry, ok := roundMap[p.RoundNumber]
+		if !ok {
+			entry = map[string]any{
+				"roundNumber":  p.RoundNumber,
+				"contributions": []any{},
 			}
-			entry["payout"] = p
+			roundMap[p.RoundNumber] = entry
 		}
+		entry["payout"] = p
 	}
 
 	rounds := make([]map[string]any, 0, len(roundMap))

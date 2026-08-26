@@ -34,13 +34,13 @@ func NewSwapHandler(swapService *swap.Service) *SwapHandler {
 func (h *SwapHandler) CreateSwapOffer(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, response.Error("unauthorized"))
+		response.Unauthorized(c, "unauthorized")
 		return
 	}
 
 	var req swap.SwapOfferRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("invalid request body: "+err.Error()))
+		response.BadRequest(c, "invalid request body: "+err.Error())
 		return
 	}
 
@@ -51,7 +51,7 @@ func (h *SwapHandler) CreateSwapOffer(c *gin.Context) {
 
 	offer, err := h.swapService.CreateSwapOffer(c.Request.Context(), userID.(string), req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, response.Error(err.Error()))
+		response.BadRequest(c, err.Error())
 		return
 	}
 
@@ -74,19 +74,19 @@ func (h *SwapHandler) CreateSwapOffer(c *gin.Context) {
 func (h *SwapHandler) AcceptSwapOffer(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, response.Error("unauthorized"))
+		response.Unauthorized(c, "unauthorized")
 		return
 	}
 
 	var req swap.SwapAcceptRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("invalid request body: "+err.Error()))
+		response.BadRequest(c, "invalid request body: "+err.Error())
 		return
 	}
 
 	offer, err := h.swapService.AcceptSwapOffer(c.Request.Context(), userID.(string), req.SwapOfferID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, response.Error(err.Error()))
+		response.BadRequest(c, err.Error())
 		return
 	}
 
@@ -109,7 +109,7 @@ func (h *SwapHandler) AcceptSwapOffer(c *gin.Context) {
 func (h *SwapHandler) GetSwapHistory(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, response.Error("unauthorized"))
+		response.Unauthorized(c, "unauthorized")
 		return
 	}
 
@@ -135,7 +135,7 @@ func (h *SwapHandler) GetSwapHistory(c *gin.Context) {
 
 	history, err := h.swapService.GetSwapHistory(c.Request.Context(), userID.(string), filter)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, response.Error(err.Error()))
+		response.InternalError(c, err.Error())
 		return
 	}
 
