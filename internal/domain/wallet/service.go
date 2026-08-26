@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,13 +34,30 @@ type Config struct {
 	USDCIssuer        string // Stellar USDC issuer (mainnet or testnet)
 	NetworkPassphrase string
 	MinBalanceXLM     float64 // XLM to fund per wallet (~2)
+	EncryptionKey     string  // 32-byte hex or string configured in security.encryption_key
 }
 
 type service struct {
-	repo    Repository
-	cfg     Config
-	horizon *horizonclient.Client
-	master  *keypair.Full
+	repo          Repository
+	cfg           Config
+	horizon       *horizonclient.Client
+	master        *keypair.Full
+	encryptionKey []byte
+}
+
+func ParseEncryptionKey(keyStr string) ([]byte, error) {
+	trimmed := strings.TrimSpace(keyStr)
+	if trimmed == "" {
+		return nil, fmt.Errorf("encryption key is required")
+	}
+	if raw, err := hex.DecodeString(trimmed); err == nil && len(raw) == 32 {
+		return raw, nil
+	}
+	if len(trimmed) == 32 {
+		return []byte(trimmed), nil
+	}
+	h := sha256.Sum256([]byte(trimmed))
+	return h[:], nil
 }
 
 func NewService(repo Repository, cfg Config) (Service, error) {
@@ -47,28 +65,36 @@ func NewService(repo Repository, cfg Config) (Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parsing master secret key: %w", err)
 	}
+	encKey, err := ParseEncryptionKey(cfg.EncryptionKey)
+	if err != nil {
+		return nil, fmt.Errorf("parsing encryption key: %w", err)
+	}
 	return &service{
-		repo:    repo,
-		cfg:     cfg,
-		horizon: horizonclient.DefaultTestNetClient,
-		master:  masterKP,
+		repo:          repo,
+		cfg:           cfg,
+		horizon:       horizonclient.DefaultTestNetClient,
+		master:        masterKP,
+		encryptionKey: encKey,
 	}, nil
 }
 
 func (s *service) CreateWallet(ctx context.Context, userID string, passkeySeed []byte) (*Wallet, error) {
-	// 1. Generate Stellar keypair from the deterministic seed
-	// The seed is derived from email + server pepper (see deriveWalletSeed in auth handler).
-	// This ensures the same email always produces the same wallet address.
+	// 1. Generate Stellar keypair from seed (deterministic from passkeySeed or random)
 	var rawSeed [32]byte
-	copy(rawSeed[:], passkeySeed[:32])
+	if len(passkeySeed) >= 32 {
+		copy(rawSeed[:], passkeySeed[:32])
+	} else {
+		h := sha256.Sum256(passkeySeed)
+		copy(rawSeed[:], h[:])
+	}
 	kp, err := keypair.FromRawSeed(rawSeed)
 	if err != nil {
 		log.Printf("[wallet] ERROR deriving keypair from seed: %v", err)
 		return nil, fmt.Errorf("deriving keypair from seed: %w", err)
 	}
 
-	// 2. Encrypt secret key with passkey seed
-	encKey, nonce, err := encryptSecret(kp.Seed(), passkeySeed)
+	// 2. Encrypt secret key with configured server encryption key (NOT passkeySeed)
+	encKey, nonce, err := encryptSecret(kp.Seed(), s.encryptionKey)
 	if err != nil {
 		log.Printf("[wallet] ERROR encrypting key: %v", err)
 		return nil, fmt.Errorf("encrypting secret key: %w", err)
@@ -283,7 +309,7 @@ func (s *service) SignTransaction(ctx context.Context, walletID string, passkeyS
 		return "", fmt.Errorf("wallet has no encrypted secret key")
 	}
 
-	secretKey, err := decryptSecret(wallet.EncryptedSecretKey, wallet.EncryptionNonce, passkeySeed)
+	secretKey, err := wallet.DecryptSecret(s.encryptionKey, passkeySeed)
 	if err != nil {
 		return "", fmt.Errorf("decrypting secret key: %w", err)
 	}
@@ -410,7 +436,7 @@ func (s *service) SendPayment(ctx context.Context, userID string, passkeySeed []
 	})
 
 	// ── Decrypt key and build transaction ──
-	secretKey, err := decryptSecret(w.EncryptedSecretKey, w.EncryptionNonce, passkeySeed)
+	secretKey, err := w.DecryptSecret(s.encryptionKey, passkeySeed)
 	if err != nil {
 		return "", fmt.Errorf("decrypting secret key: %w", err)
 	}
@@ -502,11 +528,16 @@ func (s *service) DeleteWallet(ctx context.Context, userID, walletID string) err
 	return s.repo.DeleteByOwner(ctx, walletID, userID)
 }
 
-// encryptSecret encrypts the Stellar secret key using AES-256-GCM
-// The encryption key is derived from the passkey seed via SHA-256
-func encryptSecret(secretKey string, passkeySeed []byte) (encrypted []byte, nonce []byte, err error) {
-	key := sha256.Sum256(passkeySeed)
-	block, err := aes.NewCipher(key[:])
+// encryptSecret encrypts the Stellar secret key using AES-256-GCM with the provided encryption key.
+func encryptSecret(secretKey string, encryptionKey []byte) (encrypted []byte, nonce []byte, err error) {
+	var aesKey [32]byte
+	if len(encryptionKey) == 32 {
+		copy(aesKey[:], encryptionKey)
+	} else {
+		aesKey = sha256.Sum256(encryptionKey)
+	}
+
+	block, err := aes.NewCipher(aesKey[:])
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating cipher: %w", err)
 	}
@@ -523,27 +554,6 @@ func encryptSecret(secretKey string, passkeySeed []byte) (encrypted []byte, nonc
 
 	ciphertext := aesGCM.Seal(nil, nonce, []byte(secretKey), nil)
 	return ciphertext, nonce, nil
-}
-
-// decryptSecret decrypts the Stellar secret key using the passkey seed
-func decryptSecret(encrypted []byte, nonce []byte, passkeySeed []byte) (string, error) {
-	key := sha256.Sum256(passkeySeed)
-	block, err := aes.NewCipher(key[:])
-	if err != nil {
-		return "", fmt.Errorf("creating cipher: %w", err)
-	}
-
-	aesGCM, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", fmt.Errorf("creating GCM: %w", err)
-	}
-
-	plaintext, err := aesGCM.Open(nil, nonce, encrypted, nil)
-	if err != nil {
-		return "", fmt.Errorf("decrypting: %w", err)
-	}
-
-	return string(plaintext), nil
 }
 
 // DeriveEncryptionKey is exposed for the frontend to use

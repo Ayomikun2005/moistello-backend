@@ -20,8 +20,8 @@ import (
 
 // rsaTestKeys holds a generated RSA key pair for use across tests in this package.
 type rsaTestKeys struct {
-	privateKey    *rsa.PrivateKey
-	publicKeyPEM  []byte
+	privateKey   *rsa.PrivateKey
+	publicKeyPEM []byte
 }
 
 // newRSATestKeys generates a 2048-bit RSA key pair and returns PEM-encoded public key.
@@ -232,6 +232,72 @@ func TestAdminMiddleware_RegularUser(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, 403, w.Code)
+}
+
+func TestAdminMiddleware_FullPipeline_AdminJWT(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	keys := newRSATestKeys(t)
+
+	claims := &middleware.Claims{
+		UserID: "admin-user-123",
+		Wallet: "GADMIN...",
+		Role:   "admin",
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+	}
+	tokenString := signRS256(t, keys.privateKey, claims)
+
+	r := gin.New()
+	r.Use(middleware.AuthMiddleware(keys.publicKeyPEM))
+	r.Use(middleware.AdminMiddleware())
+	r.GET("/admin/protected", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"userID": middleware.GetUserID(c),
+			"role":   middleware.GetRole(c),
+		})
+	})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/admin/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.Contains(t, w.Body.String(), "admin-user-123")
+	assert.Contains(t, w.Body.String(), "admin")
+}
+
+func TestAdminMiddleware_FullPipeline_UserJWT_Forbidden(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	keys := newRSATestKeys(t)
+
+	claims := &middleware.Claims{
+		UserID: "regular-user-456",
+		Wallet: "GUSER...",
+		Role:   "user",
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+	}
+	tokenString := signRS256(t, keys.privateKey, claims)
+
+	r := gin.New()
+	r.Use(middleware.AuthMiddleware(keys.publicKeyPEM))
+	r.Use(middleware.AdminMiddleware())
+	r.GET("/admin/protected", func(c *gin.Context) {
+		c.JSON(200, gin.H{"status": "ok"})
+	})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/admin/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, 403, w.Code)
+	assert.Contains(t, w.Body.String(), "admin access required")
 }
 
 func TestOptionalAuthMiddleware_WithValidToken(t *testing.T) {

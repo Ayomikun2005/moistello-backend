@@ -43,13 +43,13 @@ import (
 	"github.com/moistello/backend/internal/domain/verification"
 	"github.com/moistello/backend/internal/domain/wallet"
 	"github.com/moistello/backend/internal/domain/yellowcard"
-	"github.com/moistello/backend/pkg/stellar"
-	"github.com/moistello/backend/pkg/stellar/soroban"
 	ws "github.com/moistello/backend/internal/websocket"
 	"github.com/moistello/backend/pkg/logger"
 	"github.com/moistello/backend/pkg/postgres"
 	"github.com/moistello/backend/pkg/rabbitmq"
 	"github.com/moistello/backend/pkg/redis"
+	"github.com/moistello/backend/pkg/stellar"
+	"github.com/moistello/backend/pkg/stellar/soroban"
 	"github.com/moistello/backend/pkg/tracing"
 	"github.com/moistello/backend/pkg/validator"
 	"github.com/moistello/backend/webhook"
@@ -149,6 +149,7 @@ func main() {
 		USDCIssuer:        cfg.Stellar.USDCIssuer,
 		NetworkPassphrase: cfg.Stellar.NetworkPassphrase,
 		MinBalanceXLM:     cfg.Stellar.WalletMinBalance,
+		EncryptionKey:     cfg.Security.EncryptionKey,
 	}
 	walletSvc, err := wallet.NewService(wallet.NewRepository(db), walletCfg)
 	if err != nil {
@@ -160,6 +161,7 @@ func main() {
 		SorobanRPCURL:             cfg.Stellar.SorobanRPCURL,
 		NetworkPassphrase:         cfg.Stellar.NetworkPassphrase,
 		HorizonURL:                cfg.Stellar.HorizonURL,
+		EncryptionKey:             cfg.Security.EncryptionKey,
 	})
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to initialize token service")

@@ -14,8 +14,8 @@ import (
 
 type Service interface {
 	GetBalance(ctx context.Context, address string) (uint64, error)
-	Stake(ctx context.Context, userID string, passkeySeed []byte, amount uint64) (string, error)
-	Unstake(ctx context.Context, userID string, passkeySeed []byte, amount uint64) (string, error)
+	Stake(ctx context.Context, userID string, amount uint64) (string, error)
+	Unstake(ctx context.Context, userID string, amount uint64) (string, error)
 	GetStakedAmount(ctx context.Context, address string) (uint64, error)
 }
 
@@ -24,12 +24,14 @@ type Config struct {
 	SorobanRPCURL             string
 	NetworkPassphrase         string
 	HorizonURL                string
+	EncryptionKey             string
 }
 
 type service struct {
 	walletRepo    wallet.Repository
 	cfg           Config
 	sorobanClient *soroban.Client
+	encryptionKey []byte
 }
 
 func NewService(walletRepo wallet.Repository, cfg Config) (Service, error) {
@@ -37,10 +39,20 @@ func NewService(walletRepo wallet.Repository, cfg Config) (Service, error) {
 		return nil, fmt.Errorf("governance token contract ID is required")
 	}
 
+	var encKey []byte
+	if cfg.EncryptionKey != "" {
+		var err error
+		encKey, err = wallet.ParseEncryptionKey(cfg.EncryptionKey)
+		if err != nil {
+			return nil, fmt.Errorf("parsing encryption key: %w", err)
+		}
+	}
+
 	return &service{
 		walletRepo:    walletRepo,
 		cfg:           cfg,
 		sorobanClient: soroban.NewClient(cfg.SorobanRPCURL),
+		encryptionKey: encKey,
 	}, nil
 }
 
@@ -100,8 +112,8 @@ func (s *service) GetStakedAmount(ctx context.Context, address string) (uint64, 
 }
 
 // Stake calls the governance token contract's stake function
-func (s *service) Stake(ctx context.Context, userID string, passkeySeed []byte, amount uint64) (string, error) {
-	signer, err := s.userSigner(ctx, userID, passkeySeed)
+func (s *service) Stake(ctx context.Context, userID string, amount uint64) (string, error) {
+	signer, err := s.userSigner(ctx, userID)
 	if err != nil {
 		return "", err
 	}
@@ -115,8 +127,8 @@ func (s *service) Stake(ctx context.Context, userID string, passkeySeed []byte, 
 }
 
 // Unstake calls the governance token contract's unstake function
-func (s *service) Unstake(ctx context.Context, userID string, passkeySeed []byte, amount uint64) (string, error) {
-	signer, err := s.userSigner(ctx, userID, passkeySeed)
+func (s *service) Unstake(ctx context.Context, userID string, amount uint64) (string, error) {
+	signer, err := s.userSigner(ctx, userID)
 	if err != nil {
 		return "", err
 	}
@@ -131,12 +143,12 @@ func (s *service) Unstake(ctx context.Context, userID string, passkeySeed []byte
 
 // userSigner resolves the user's wallet, decrypts its secret key, and builds
 // the signing keypair for on-chain writes.
-func (s *service) userSigner(ctx context.Context, userID string, passkeySeed []byte) (*stellar.Signer, error) {
+func (s *service) userSigner(ctx context.Context, userID string) (*stellar.Signer, error) {
 	wallets, err := s.walletRepo.FindByUserID(ctx, userID)
 	if err != nil || len(wallets) == 0 {
 		return nil, fmt.Errorf("user wallet not found")
 	}
-	secretKey, err := wallets[0].DecryptSecret(passkeySeed)
+	secretKey, err := wallets[0].DecryptSecret(s.encryptionKey)
 	if err != nil {
 		return nil, fmt.Errorf("decrypting wallet secret: %w", err)
 	}
