@@ -322,7 +322,7 @@ func (h *AuthHandler) RegisterVerify(c *gin.Context) {
 
 	h.verificationSvc.DeletePendingRegistration(c.Request.Context(), req.Email)
 
-	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, sessionTTLFromUser(u), deviceInfoFromContext(c))
+	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, string(u.Role), sessionTTLFromUser(u), deviceInfoFromContext(c))
 	if err != nil {
 		response.InternalError(c, "failed to create session")
 		return
@@ -371,7 +371,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, sessionTTLFromUser(u), deviceInfoFromContext(c))
+	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, string(u.Role), sessionTTLFromUser(u), deviceInfoFromContext(c))
 	if err != nil {
 		response.InternalError(c, "failed to create session")
 		return
@@ -436,7 +436,7 @@ func (h *AuthHandler) PasskeyVerify(c *gin.Context) {
 		return
 	}
 
-	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, sessionTTLFromUser(u), deviceInfoFromContext(c))
+	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, string(u.Role), sessionTTLFromUser(u), deviceInfoFromContext(c))
 	if err != nil {
 		response.InternalError(c, "failed to create session")
 		return
@@ -552,7 +552,7 @@ func (h *AuthHandler) Recovery(c *gin.Context) {
 	u.BackupCodes = remaining
 	h.userRepo.Update(c.Request.Context(), u)
 
-	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, sessionTTLFromUser(u), deviceInfoFromContext(c))
+	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, string(u.Role), sessionTTLFromUser(u), deviceInfoFromContext(c))
 	if err != nil {
 		response.InternalError(c, "failed to create session")
 		return

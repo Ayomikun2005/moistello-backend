@@ -111,17 +111,10 @@ func main() {
 
 	// --- Optional Job Queue Worker ---
 	var jobWorker *jobqueue.Worker
-	if cfg.JobQueue.Enabled {
+	{
 		jobQueue := jobqueue.NewJobQueue(db)
-		jobWorker = jobqueue.NewWorker(jobQueue, jobqueue.WorkerOptions{
-			Concurrency:  cfg.JobQueue.Concurrency,
-			PollInterval: cfg.JobQueue.PollInterval,
-			Queues:       cfg.JobQueue.Queues,
-			MaxRetries:   cfg.JobQueue.MaxRetries,
-		})
-		if err := jobWorker.Start(ctx); err != nil {
-			log.Error().Err(err).Msg("failed to start job queue worker in indexer")
-		}
+		jobWorker = jobqueue.NewWorker(jobQueue, 3*time.Second)
+		jobWorker.Start(ctx)
 	}
 
 	log.Info().

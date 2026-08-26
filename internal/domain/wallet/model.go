@@ -4,6 +4,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 )
 
@@ -25,6 +26,19 @@ type Wallet struct {
 	IsPrimary          bool       `json:"isPrimary" db:"is_primary"`
 	CreatedAt          string     `json:"createdAt" db:"created_at"`
 	UpdatedAt          string     `json:"updatedAt" db:"updated_at"`
+}
+
+// ParseEncryptionKey decodes a hex-encoded encryption key into raw bytes.
+// The key must be exactly 32 bytes (64 hex characters).
+func ParseEncryptionKey(hexKey string) ([]byte, error) {
+	raw, err := hex.DecodeString(hexKey)
+	if err != nil {
+		return nil, fmt.Errorf("invalid hex encoding: %w", err)
+	}
+	if len(raw) != 32 {
+		return nil, fmt.Errorf("encryption key must be 32 bytes, got %d", len(raw))
+	}
+	return raw, nil
 }
 
 // DecryptSecret decrypts the Stellar secret key using the provided encryption keys.

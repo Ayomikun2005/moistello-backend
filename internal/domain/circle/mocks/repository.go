@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/stretch/testify/mock"
+	"github.com/stretchr/testify/mock"
 
 	"github.com/moistello/backend/internal/domain/circle"
 )
@@ -88,7 +88,7 @@ func (m Repository) IsMember(ctx context.Context, circleID, userID uuid.UUID) (b
 	return args.Bool(0), args.Error(1)
 }
 
-func (m Repository) FindCirclesByUserID(ctx context.Context, userID uuid.UUID) ([]ircle.Circle, error) {
+func (m Repository) FindCirclesByUserID(ctx context.Context, userID uuid.UUID) ([]circle.Circle, error) {
 	args := m.Called(ctx, userID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
