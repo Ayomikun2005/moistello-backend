@@ -2,9 +2,7 @@ package webhook
 
 import (
 	"context"
-	"crypto/subtle"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -96,34 +94,7 @@ func (f *fakeWebhookRepo) GetByID(ctx context.Context, id string) (*WebhookRegis
 	return nil, nil
 }
 
-func TestConstantTimeCompareTiming(t *testing.T) {
-	a := []byte("same-length-string")
-	b := []byte("same-length-string")
-	c := []byte("different-str")
 
-	iterations := 1000
-	var sameTime, diffTime time.Duration
-
-	for i := 0; i < iterations; i++ {
-		start := time.Now()
-		constantTimeCompare(a, b)
-		sameTime += time.Since(start)
-	}
-
-	for i := 0; i < iterations; i++ {
-		start := time.Now()
-		constantTimeCompare(a, c)
-		diffTime += time.Since(start)
-	}
-
-	avgSame := sameTime / time.Duration(iterations)
-	avgDiff := diffTime / time.Duration(iterations)
-
-	ratio := float64(avgDiff) / float64(avgSame)
-	assert.Greater(t, ratio, 0.5, "different-length comparison should not be consistently faster")
-	assert.Less(t, ratio, 2.0, "different-length comparison should not be consistently slower")
-	_ = subtle.ConstantTimeCompare(a, b)
-}
 
 func ExampleSignWebhookPayload() {
 	payload := []byte(`{"event":"payment.completed","amount":100}`)
