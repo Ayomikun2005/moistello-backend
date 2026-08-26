@@ -3,11 +3,13 @@ package redis
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
 
 	"github.com/moistello/backend/config"
+	"github.com/moistello/backend/pkg/tracing"
 )
 
 func New(cfg config.RedisConfig) (*redis.Client, error) {
@@ -35,7 +37,11 @@ func New(cfg config.RedisConfig) (*redis.Client, error) {
 	return client, nil
 }
 
-func Exists(ctx context.Context, client *redis.Client, key string) (bool, error) {
+func Exists(ctx context.Context, client *redis.Client, key string) (exists bool, err error) {
+	ctx, span := tracing.StartRedisSpan(ctx, "exists")
+	start := time.Now()
+	defer func() { tracing.EndSpan(span, err, start) }()
+
 	n, err := client.Exists(ctx, key).Result()
 	return n > 0, err
 }

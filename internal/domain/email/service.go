@@ -7,9 +7,13 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/moistello/backend/pkg/logger"
+	"github.com/moistello/backend/pkg/tracing"
 )
+
+const brevoAPIURL = "https://api.brevo.com/v3/smtp/email"
 
 // Config holds the Brevo email sending configuration.
 type Config struct {
@@ -66,7 +70,11 @@ func (s *Service) SendRecoveryCode(ctx context.Context, email, code string) erro
 	return s.sendBrevo(ctx, email, subject, body)
 }
 
-func (s *Service) sendBrevo(ctx context.Context, to, subject, htmlBody string) error {
+func (s *Service) sendBrevo(ctx context.Context, to, subject, htmlBody string) (err error) {
+	ctx, span := tracing.StartHTTPSpan(ctx, "brevo.send", "POST", brevoAPIURL)
+	start := time.Now()
+	defer func() { tracing.EndSpan(span, err, start) }()
+
 	if strings.TrimSpace(s.config.APIKey) == "" {
 		return fmt.Errorf("brevo api key is not configured")
 	}
@@ -88,13 +96,13 @@ func (s *Service) sendBrevo(ctx context.Context, to, subject, htmlBody string) e
 		return fmt.Errorf("marshaling payload: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.brevo.com/v3/smtp/email", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", brevoAPIURL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("api-key", s.config.APIKey)
-	if reqID, ok := ctx.Value("requestID").(string); ok && reqID != "" {
+	if reqID, ok := ctx.Value(logger.RequestIDKey).(string); ok && reqID != "" {
 		req.Header.Set("X-Request-ID", reqID)
 	}
 

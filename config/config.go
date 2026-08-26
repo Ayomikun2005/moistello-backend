@@ -10,7 +10,14 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"github.com/stellar/go/strkey"
 )
+
+// minPepperLength is the minimum acceptable length (in characters) for the
+// wallet and passkey peppers. Peppers are used as the salt component when
+// deriving deterministic wallet seeds with Argon2id, so they must carry enough
+// entropy (≥ 256 bits of random printable ASCII) to resist offline brute force.
+const minPepperLength = 32
 
 type Config struct {
 	Server       ServerConfig
@@ -332,6 +339,10 @@ func Load(path string) (*Config, error) {
 	cfg.Auth.JWTPublicKeyPEM = loadRequiredText(cfg.Auth.JWTPublicKeyPEM, cfg.Auth.JWTPublicKeyPath, "auth.jwt_public_key_pem", "auth.jwt_public_key_path")
 
 	validateHexKey(cfg.Security.EncryptionKey)
+	validateStellarSecretKey(cfg.Stellar.MasterSecretKey)
+	validateStellarPublicKey(cfg.Stellar.MasterPublicKey)
+	validatePepper("security.wallet_pepper", cfg.Security.WalletPepper)
+	validatePepper("security.passkey_pepper", cfg.Security.PasskeyPepper)
 	validateDuration("security.argon2_time", cfg.Security.Argon2Time > 0)
 	validateDuration("security.argon2_memory", cfg.Security.Argon2Memory > 0)
 	validateDuration("security.argon2_threads", cfg.Security.Argon2Threads > 0)
@@ -428,6 +439,33 @@ func validateHexKey(value string) {
 	raw, err := hex.DecodeString(strings.TrimSpace(value))
 	if err != nil || len(raw) != 32 {
 		panic(fmt.Errorf("config: security.encryption_key must be a 32-byte hex string"))
+	}
+}
+
+// validateStellarSecretKey fails fast at startup if the master secret key is not
+// a valid Stellar secret seed (S-prefixed strkey). Previously this was only
+// discovered later at runtime inside the wallet service, producing an opaque
+// error far from the misconfiguration.
+func validateStellarSecretKey(value string) {
+	value = strings.TrimSpace(value)
+	if _, err := strkey.Decode(strkey.VersionByteSeed, value); err != nil {
+		panic(fmt.Errorf("config: stellar.master_secret_key must be a valid Stellar secret key (S-prefixed strkey): %w", err))
+	}
+}
+
+// validateStellarPublicKey fails fast at startup if the master public key is not
+// a valid Stellar account ID (G-prefixed strkey).
+func validateStellarPublicKey(value string) {
+	value = strings.TrimSpace(value)
+	if _, err := strkey.Decode(strkey.VersionByteAccountID, value); err != nil {
+		panic(fmt.Errorf("config: stellar.master_public_key must be a valid Stellar public key (G-prefixed strkey): %w", err))
+	}
+}
+
+// validatePepper fails fast at startup if a pepper is too short to be secure.
+func validatePepper(field, value string) {
+	if len(value) < minPepperLength {
+		panic(fmt.Errorf("config: %s must be at least %d characters long, got %d", field, minPepperLength, len(value)))
 	}
 }
 

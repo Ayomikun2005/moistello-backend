@@ -1,9 +1,12 @@
 package response
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rs/zerolog/log"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type PaginationMeta struct {
@@ -45,19 +48,55 @@ func getReqID(c *gin.Context) string {
 }
 
 func ErrorWithCode(c *gin.Context, statusCode int, code, msg string) {
+	errorResponse(c, statusCode, code, msg, nil)
+}
+
+// Error responds with an error message derived from the given error. The
+// underlying error is logged (structured, requestID-correlated); only msg is
+// returned to the client.
+func Error(c *gin.Context, statusCode int, msg string, err error) {
+	errorResponse(c, statusCode, "ERROR", msg, err)
+}
+
+// errorResponse writes the error envelope and emits a structured log line that
+// ties the error response back to the originating request via its requestID.
+func errorResponse(c *gin.Context, statusCode int, code, msg string, underlying error) {
+	requestID := getReqID(c)
+
+	// Emit a structured, requestID-correlated log so an error response can be
+	// traced back to the exact request that produced it (#229).
+	evt := log.Warn()
+	if statusCode >= http.StatusInternalServerError {
+		evt = log.Error()
+	}
+	evt.
+		Str("requestID", requestID).
+		Str("method", c.Request.Method).
+		Str("path", c.Request.URL.Path).
+		Int("status", statusCode).
+		Str("code", code).
+		Str("message", msg).
+		Str("trace_id", traceIDFromContext(c.Request.Context()))
+	if underlying != nil {
+		evt = evt.Err(underlying)
+	}
+	evt.Msg("request error")
+
 	c.JSON(statusCode, APIResponse{
 		Success:    false,
 		Error:      msg,
 		Code:       code,
 		StatusCode: statusCode,
-		RequestID:  getReqID(c),
+		RequestID:  requestID,
 	})
 }
 
-// Error responds with an error message derived from the given error. The
-// underlying error is logged; only msg is returned to the client.
-func Error(c *gin.Context, statusCode int, msg string, err error) {
-	ErrorWithCode(c, statusCode, "ERROR", msg)
+func traceIDFromContext(ctx context.Context) string {
+	spanCtx := trace.SpanFromContext(ctx).SpanContext()
+	if spanCtx.HasTraceID() {
+		return spanCtx.TraceID().String()
+	}
+	return ""
 }
 
 // Success responds with a success envelope carrying data.
