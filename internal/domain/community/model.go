@@ -22,6 +22,7 @@ type Community struct {
 	IsFeatured  bool      `json:"isFeatured" db:"is_featured"`
 	CreatedAt   time.Time `json:"createdAt" db:"created_at"`
 	UpdatedAt   time.Time `json:"updatedAt" db:"updated_at"`
+	DeletedAt   *time.Time `json:"deletedAt,omitempty" db:"deleted_at"`
 }
 
 type CommunityMember struct {

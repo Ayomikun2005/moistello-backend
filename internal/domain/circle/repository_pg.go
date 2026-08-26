@@ -98,7 +98,7 @@ func (r *pgRepo) FindByID(ctx context.Context, id uuid.UUID) (*Circle, error) {
 		(SELECT COUNT(*) FROM circle_members WHERE circle_id = circles.id AND status = 'active') as member_count,
 		requires_invite,
 		start_date, end_date, status, current_round, total_contributions,
-		organizer_id, created_at, updated_at FROM circles WHERE id = $1`
+		organizer_id, created_at, updated_at FROM circles WHERE id = $1 AND deleted_at IS NULL`
 	return scanCircle(r.db.QueryRowxContext(ctx, query, id))
 }
 
@@ -109,7 +109,7 @@ func (r *pgRepo) FindByContractID(ctx context.Context, contractID string) (*Circ
 		(SELECT COUNT(*) FROM circle_members WHERE circle_id = circles.id AND status = 'active') as member_count,
 		requires_invite,
 		start_date, end_date, status, current_round, total_contributions,
-		organizer_id, created_at, updated_at FROM circles WHERE contract_id = $1`
+		organizer_id, created_at, updated_at FROM circles WHERE contract_id = $1 AND deleted_at IS NULL`
 	return scanCircle(r.db.QueryRowxContext(ctx, query, contractID))
 }
 
@@ -129,7 +129,7 @@ func (r *pgRepo) List(ctx context.Context, filter CircleFilter) ([]Circle, error
 		(SELECT COUNT(*) FROM circle_members WHERE circle_id = circles.id AND status = 'active') as member_count,
 		requires_invite,
 		start_date, end_date, status, current_round, total_contributions,
-		organizer_id, created_at, updated_at FROM circles`
+		organizer_id, created_at, updated_at FROM circles WHERE deleted_at IS NULL`
 
 	var args []interface{}
 	var whereClauses []string
@@ -165,7 +165,7 @@ func (r *pgRepo) List(ctx context.Context, filter CircleFilter) ([]Circle, error
 	}
 
 	if len(whereClauses) > 0 {
-		query += " WHERE " + strings.Join(whereClauses, " AND ")
+		query += " AND " + strings.Join(whereClauses, " AND ")
 	}
 
 	query += " ORDER BY created_at DESC LIMIT $" + fmt.Sprint(len(args)+1) + " OFFSET $" + fmt.Sprint(len(args)+2)
@@ -192,7 +192,7 @@ func (r *pgRepo) List(ctx context.Context, filter CircleFilter) ([]Circle, error
 }
 
 func (r *pgRepo) Count(ctx context.Context, filter CircleFilter) (int, error) {
-	query := "SELECT COUNT(*) FROM circles"
+	query := "SELECT COUNT(*) FROM circles WHERE deleted_at IS NULL"
 	var args []interface{}
 	var whereClauses []string
 
@@ -219,7 +219,7 @@ func (r *pgRepo) Count(ctx context.Context, filter CircleFilter) (int, error) {
 	}
 
 	if len(whereClauses) > 0 {
-		query += " WHERE " + strings.Join(whereClauses, " AND ")
+		query += " AND " + strings.Join(whereClauses, " AND ")
 	}
 
 	var count int
@@ -276,7 +276,7 @@ func (r *pgRepo) Update(ctx context.Context, c *Circle) error {
 }
 
 func (r *pgRepo) Delete(ctx context.Context, id uuid.UUID) error {
-	query := `DELETE FROM circles WHERE id = $1`
+	query := `UPDATE circles SET deleted_at = NOW() WHERE id = $1`
 	result, err := r.db.ExecContext(ctx, query, id)
 	if err != nil {
 		return fmt.Errorf("deleting circle: %w", err)
