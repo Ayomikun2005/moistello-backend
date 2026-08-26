@@ -149,6 +149,11 @@ func main() {
 		USDCIssuer:        cfg.Stellar.USDCIssuer,
 		NetworkPassphrase: cfg.Stellar.NetworkPassphrase,
 		MinBalanceXLM:     cfg.Stellar.WalletMinBalance,
+		// Deterministic seed derivation for email-based wallets (#166).
+		WalletPepper:  cfg.Security.WalletPepper,
+		Argon2Time:    cfg.Security.Argon2Time,
+		Argon2Memory:  cfg.Security.Argon2Memory,
+		Argon2Threads: cfg.Security.Argon2Threads,
 	}
 	walletSvc, err := wallet.NewService(wallet.NewRepository(db), walletCfg)
 	if err != nil {
@@ -170,7 +175,7 @@ func main() {
 
 	wsH := handler.NewWebSocketHandler(wsHub, cfg.CORS.AllowedOrigins)
 
-	authH := handler.NewAuthHandler(authSvc, userSvc, walletSvc, totpSvc, verificationSvc, emailSvc, redisClient, userRepo, cfg.Security)
+	authH := handler.NewAuthHandler(authSvc, userSvc, walletSvc, totpSvc, verificationSvc, emailSvc, redisClient, userRepo)
 	userH := handler.NewUserHandler(userSvc, redisClient)
 	circleH := handler.NewCircleHandler(circleSvc, inviteSvc, contribSvc, payoutSvc)
 	contribH := handler.NewContributionHandler(contribSvc, contribRepo)

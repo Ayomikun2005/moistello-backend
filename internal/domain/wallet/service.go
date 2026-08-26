@@ -15,9 +15,13 @@ import (
 	"github.com/stellar/go/clients/horizonclient"
 	"github.com/stellar/go/keypair"
 	"github.com/stellar/go/txnbuild"
+	"golang.org/x/crypto/argon2"
 )
 
 type Service interface {
+	// DeriveWalletSeed derives a deterministic wallet seed for an email-based
+	// account (Argon2id over the email, keyed by the configured wallet pepper).
+	DeriveWalletSeed(ctx context.Context, email string) (string, error)
 	CreateWallet(ctx context.Context, userID string, passkeySeed []byte) (*Wallet, error)
 	SignTransaction(ctx context.Context, walletID string, passkeySeed []byte, txnXDR string) (string, error)
 	GetWallets(ctx context.Context, userID string) ([]Wallet, error)
@@ -33,6 +37,13 @@ type Config struct {
 	USDCIssuer        string // Stellar USDC issuer (mainnet or testnet)
 	NetworkPassphrase string
 	MinBalanceXLM     float64 // XLM to fund per wallet (~2)
+	// Deterministic seed derivation (email-based wallets). The pepper is the
+	// server secret that keeps seeds unguessable; the argon2 parameters mirror
+	// the security config (zero values fall back to conservative defaults).
+	WalletPepper  string
+	Argon2Time    int
+	Argon2Memory  int
+	Argon2Threads int
 }
 
 type service struct {
@@ -55,9 +66,41 @@ func NewService(repo Repository, cfg Config) (Service, error) {
 	}, nil
 }
 
+// DeriveWalletSeed derives a deterministic Stellar wallet seed from an email.
+// Uses Argon2id(email, salt=pepper+email) so the output is both deterministic
+// (recoverable given the same email and pepper) and unique per user — if the
+// pepper is ever compromised, an attacker still cannot precompute seeds for
+// all users because the email acts as a per-user salt component.
+//
+// Cost parameters come from the service config with conservative defaults.
+func (s *service) DeriveWalletSeed(ctx context.Context, email string) (string, error) {
+	pepper := s.cfg.WalletPepper
+	if pepper == "" {
+		return "", fmt.Errorf("wallet pepper is not configured")
+	}
+
+	argonTime := s.cfg.Argon2Time
+	if argonTime <= 0 {
+		argonTime = 1
+	}
+	argonMemory := s.cfg.Argon2Memory
+	if argonMemory <= 0 {
+		argonMemory = 64 * 1024 // 64 MiB
+	}
+	argonThreads := s.cfg.Argon2Threads
+	if argonThreads <= 0 {
+		argonThreads = 4
+	}
+
+	// Use pepper+email as the salt so each user has a unique salt.
+	salt := []byte(pepper + email)
+	key := argon2.IDKey([]byte(email), salt, uint32(argonTime), uint32(argonMemory), uint8(argonThreads), 32)
+	return hex.EncodeToString(key), nil
+}
+
 func (s *service) CreateWallet(ctx context.Context, userID string, passkeySeed []byte) (*Wallet, error) {
 	// 1. Generate Stellar keypair from the deterministic seed
-	// The seed is derived from email + server pepper (see deriveWalletSeed in auth handler).
+	// The seed is derived from email + server pepper (see DeriveWalletSeed).
 	// This ensures the same email always produces the same wallet address.
 	var rawSeed [32]byte
 	copy(rawSeed[:], passkeySeed[:32])

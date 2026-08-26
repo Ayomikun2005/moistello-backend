@@ -408,6 +408,62 @@ func TestClaimIncentive_Expired(t *testing.T) {
 	assert.Contains(t, err.Error(), "expired")
 }
 
+func TestEnsureNoIncentive_NoExisting(t *testing.T) {
+	repo := newMockRepository()
+	userID := uuid.New()
+
+	err := ensureNoIncentive(context.Background(), repo, userID, IncentiveTypeFirstDeposit, nil, "already received")
+
+	assert.NoError(t, err)
+}
+
+func TestEnsureNoIncentive_AnyExistingConflicts(t *testing.T) {
+	repo := newMockRepository()
+	userID := uuid.New()
+
+	repo.userIncentives = []Incentive{
+		{ID: uuid.New(), UserID: userID, Type: IncentiveTypeFirstDeposit},
+	}
+
+	err := ensureNoIncentive(context.Background(), repo, userID, IncentiveTypeFirstDeposit, nil, "already received first deposit bonus")
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "already received")
+}
+
+func TestEnsureNoIncentive_PredicateMatch(t *testing.T) {
+	repo := newMockRepository()
+	userID := uuid.New()
+	circleID := uuid.New().String()
+
+	repo.userIncentives = []Incentive{
+		{ID: uuid.New(), UserID: userID, Type: IncentiveTypeCircleCompletion, ReferenceID: sql.NullString{String: circleID, Valid: true}},
+	}
+
+	err := ensureNoIncentive(context.Background(), repo, userID, IncentiveTypeCircleCompletion, func(inc Incentive) bool {
+		return inc.ReferenceID.Valid && inc.ReferenceID.String == circleID
+	}, "already received completion reward for this circle")
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "already received")
+}
+
+func TestEnsureNoIncentive_PredicateNoMatch(t *testing.T) {
+	repo := newMockRepository()
+	userID := uuid.New()
+
+	// Same type, but a different reference ID than the one being granted.
+	repo.userIncentives = []Incentive{
+		{ID: uuid.New(), UserID: userID, Type: IncentiveTypeCircleCompletion, ReferenceID: sql.NullString{String: uuid.New().String(), Valid: true}},
+	}
+
+	err := ensureNoIncentive(context.Background(), repo, userID, IncentiveTypeCircleCompletion, func(inc Incentive) bool {
+		return inc.ReferenceID.Valid && inc.ReferenceID.String == uuid.New().String()
+	}, "already received completion reward for this circle")
+
+	assert.NoError(t, err)
+}
+
 func TestGetUserSummary(t *testing.T) {
 	repo := newMockRepository()
 	service := NewService(repo)

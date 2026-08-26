@@ -3,21 +3,15 @@ package handler
 import (
 	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
-	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
-
-	"golang.org/x/crypto/argon2"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/moistello/backend/internal/api/middleware"
-	"github.com/moistello/backend/config"
 	"github.com/moistello/backend/internal/domain/auth"
 	"github.com/moistello/backend/internal/domain/email"
 	"github.com/moistello/backend/internal/domain/totp"
@@ -29,33 +23,28 @@ import (
 )
 
 type AuthHandler struct {
-	authService      auth.Service
-	userService      user.Service
-	walletSvc        wallet.Service
-	totpService      *totp.Service
-	verificationSvc  *verification.Service
-	emailSvc         *email.Service
-	redisClient      *redis.Client
-	userRepo         user.Repository
-	security         config.SecurityConfig
+	authService     auth.Service
+	userService     user.Service
+	walletSvc       wallet.Service
+	totpService     *totp.Service
+	verificationSvc *verification.Service
+	emailSvc        *email.Service
+	redisClient     *redis.Client
+	userRepo        user.Repository
 }
 
 func NewAuthHandler(authSvc auth.Service, userSvc user.Service, walletSvc wallet.Service,
 	totpSvc *totp.Service, verificationSvc *verification.Service, emailSvc *email.Service,
-	redisClient *redis.Client, userRepo user.Repository, security ...config.SecurityConfig) *AuthHandler {
-	securityCfg := config.SecurityConfig{}
-	if len(security) > 0 {
-		securityCfg = security[0]
-	}
+	redisClient *redis.Client, userRepo user.Repository) *AuthHandler {
 	return &AuthHandler{
 		authService:     authSvc,
 		userService:     userSvc,
 		walletSvc:       walletSvc,
 		totpService:     totpSvc,
 		verificationSvc: verificationSvc,
+		emailSvc:        emailSvc,
 		redisClient:     redisClient,
 		userRepo:        userRepo,
-		security:        securityCfg,
 	}
 }
 
@@ -235,7 +224,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	walletSeed, err := h.deriveWalletSeed(req.Email)
+	walletSeed, err := h.walletSvc.DeriveWalletSeed(c.Request.Context(), req.Email)
 	if err != nil {
 		response.InternalError(c, "wallet seed derivation failed: "+err.Error())
 		return
@@ -323,7 +312,7 @@ func (h *AuthHandler) RegisterVerify(c *gin.Context) {
 	// and store AES-256-GCM-encrypted secret key in the wallets table.
 	// Wallet creation is non-blocking — a failure is logged but does NOT
 	// abort registration. The user can retry via POST /auth/wallet/init.
-	walletSeed, seedErr := h.deriveWalletSeed(req.Email)
+	walletSeed, seedErr := h.walletSvc.DeriveWalletSeed(c.Request.Context(), req.Email)
 	if seedErr == nil {
 		if _, wErr := h.walletSvc.CreateWallet(c.Request.Context(), u.ID.String(), []byte(walletSeed)); wErr != nil {
 			// Log but don't fail registration
@@ -600,7 +589,7 @@ func (h *AuthHandler) InitWallet(c *gin.Context) {
 		return
 	}
 
-	walletSeed, err := h.deriveWalletSeed(email)
+	walletSeed, err := h.walletSvc.DeriveWalletSeed(c.Request.Context(), email)
 	if err != nil {
 		response.InternalError(c, "wallet seed derivation failed: "+err.Error())
 		return
@@ -724,48 +713,6 @@ func emailToWalletAddr(email string) string {
 	return fmt.Sprintf("EMAIL:%x", emailHash[:16])
 }
 
-// deriveWalletSeed derives a deterministic Stellar wallet seed from an email.
-// Uses Argon2id(email, salt=pepper+email) so the output is both deterministic
-// (recoverable given the same email and pepper) and unique per user — if the
-// pepper is ever compromised, an attacker still cannot precompute seeds for
-// all users because the email acts as a per-user salt component.
-//
-// Cost parameters are loaded from config with conservative defaults.
-func (h *AuthHandler) deriveWalletSeed(email string) (string, error) {
-	pepper := h.security.WalletPepper
-	if pepper == "" {
-		return "", errors.New("wallet pepper is not configured")
-	}
-
-	argonTime := h.security.Argon2Time
-	if argonTime <= 0 {
-		argonTime = 1
-	}
-	argonMemory := h.security.Argon2Memory
-	if argonMemory <= 0 {
-		argonMemory = 64 * 1024 // 64 MiB
-	}
-	argonThreads := h.security.Argon2Threads
-	if argonThreads <= 0 {
-		argonThreads = 4
-	}
-
-	// Use pepper+email as the salt so each user has a unique salt.
-	salt := []byte(pepper + email)
-	key := argon2.IDKey([]byte(email), salt, uint32(argonTime), uint32(argonMemory), uint8(argonThreads), 32)
-	return hex.EncodeToString(key), nil
-}
-
-// getPasskeyPepper returns the passkey pepper for wallet seed derivation.
-func getPasskeyPepper() (string, error) {
-	p := os.Getenv("MOISTELLO_PASSKEY_PEPPER")
-	if p == "" {
-		return "", errors.New("MOISTELLO_PASSKEY_PEPPER environment variable is not set")
-	}
-	return p, nil
-}
-
-// sha256HashForLogout computes SHA-256 for refresh token session lookup.
 func sessionTTLFromUser(u *user.User) time.Duration {
 	ttl := u.SessionTTLMinutes
 	if ttl < 60 {
