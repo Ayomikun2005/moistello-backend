@@ -31,7 +31,8 @@ type Config struct {
 	Indexer      IndexerConfig
 	Notification NotificationConfig
 	CORS         CORSConfig
-	RateLimit    RateLimitConfig `mapstructure:"rate_limit"`
+	RateLimit    RateLimitConfig  `mapstructure:"rate_limit"`
+	Contracts    ContractsConfig  `mapstructure:"contracts"`
 	Logging      LoggingConfig
 	Environment  string
 	YellowCard   YellowCardConfig `mapstructure:"yellow_card"`
@@ -171,6 +172,50 @@ type LoggingConfig struct {
 	Level  string `mapstructure:"level"`
 	Format string `mapstructure:"format"`
 	Output string `mapstructure:"output"`
+}
+
+type ContractsConfig struct {
+	CircleFactory       string `mapstructure:"circle_factory"`
+	Circle              string `mapstructure:"circle"`
+	ReputationRegistry  string `mapstructure:"reputation_registry"`
+	GovernanceToken     string `mapstructure:"governance_token"`
+	Treasury            string `mapstructure:"treasury"`
+}
+
+func (c ContractsConfig) Validate() error {
+	required := map[string]string{
+		"circle_factory":      c.CircleFactory,
+		"circle":              c.Circle,
+		"reputation_registry": c.ReputationRegistry,
+		"governance_token":    c.GovernanceToken,
+		"treasury":            c.Treasury,
+	}
+	for name, value := range required {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("config: contracts.%s is required", name)
+		}
+		if !isValidContractID(value) {
+			return fmt.Errorf("config: contracts.%s must be a valid Stellar contract ID (C...56 chars)", name)
+		}
+	}
+	return nil
+}
+
+func isValidContractID(id string) bool {
+	id = strings.TrimSpace(id)
+	if len(id) != 56 {
+		return false
+	}
+	if id[0] != 'C' {
+		return false
+	}
+	// Stellar contract IDs are base32-encoded, must only contain valid base32 chars
+	for _, c := range id {
+		if !((c >= 'A' && c <= 'Z') || (c >= '2' && c <= '7')) {
+			return false
+		}
+	}
+	return true
 }
 
 type TracingConfig struct {
@@ -349,6 +394,10 @@ func Load(path string) (*Config, error) {
 
 	if cfg.Environment != "development" && strings.Contains(cfg.Database.URL, "sslmode=disable") {
 		panic(fmt.Errorf("database.url must not use sslmode=disable outside development; use sslmode=require or stronger"))
+	}
+
+	if err := cfg.Contracts.Validate(); err != nil {
+		panic(err)
 	}
 
 	return &cfg, nil

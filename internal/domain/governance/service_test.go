@@ -9,7 +9,7 @@ import (
 )
 
 func TestProposalLifecycle(t *testing.T) {
-	svc := NewService()
+	svc := NewService(nil)
 	creatorID := uuid.New()
 
 	created, err := svc.CreateProposal(context.Background(), CreateProposalInput{

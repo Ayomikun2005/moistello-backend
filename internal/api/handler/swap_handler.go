@@ -1,10 +1,10 @@
 package handler
 
 import (
+	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"github.com/moistello/backend/internal/api/middleware"
 	"github.com/moistello/backend/internal/domain/swap"
 	"github.com/moistello/backend/pkg/response"
 )
@@ -27,13 +27,13 @@ func NewSwapHandler(swapService *swap.Service) *SwapHandler {
 // @Produce      json
 // @Param        request body swap.SwapOfferRequest true "Swap offer creation request"
 // @Success      201  {object}  swap.SwapOffer
-// @Failure      400  {object}  response.APIResponse
-// @Failure      401  {object}  response.APIResponse
-// @Failure      403  {object}  response.APIResponse
+// @Failure      400  {object}  response.ErrorResponse
+// @Failure      401  {object}  response.ErrorResponse
+// @Failure      403  {object}  response.ErrorResponse
 // @Router       /v1/swap/offer [post]
 func (h *SwapHandler) CreateSwapOffer(c *gin.Context) {
-	userID := middleware.GetUserID(c)
-	if userID == "" {
+	userID, exists := c.Get("user_id")
+	if !exists {
 		response.Unauthorized(c, "unauthorized")
 		return
 	}
@@ -49,13 +49,13 @@ func (h *SwapHandler) CreateSwapOffer(c *gin.Context) {
 		req.ExpiresIn = 24 // Default 24 hours
 	}
 
-	offer, err := h.swapService.CreateSwapOffer(c.Request.Context(), userID, req)
+	offer, err := h.swapService.CreateSwapOffer(c.Request.Context(), userID.(string), req)
 	if err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
 
-	response.Created(c, offer)
+	c.JSON(http.StatusCreated, offer)
 }
 
 // AcceptSwapOffer godoc
@@ -66,14 +66,14 @@ func (h *SwapHandler) CreateSwapOffer(c *gin.Context) {
 // @Produce      json
 // @Param        request body swap.SwapAcceptRequest true "Swap acceptance request"
 // @Success      200  {object}  swap.SwapOffer
-// @Failure      400  {object}  response.APIResponse
-// @Failure      401  {object}  response.APIResponse
-// @Failure      403  {object}  response.APIResponse
-// @Failure      404  {object}  response.APIResponse
+// @Failure      400  {object}  response.ErrorResponse
+// @Failure      401  {object}  response.ErrorResponse
+// @Failure      403  {object}  response.ErrorResponse
+// @Failure      404  {object}  response.ErrorResponse
 // @Router       /v1/swap/accept [post]
 func (h *SwapHandler) AcceptSwapOffer(c *gin.Context) {
-	userID := middleware.GetUserID(c)
-	if userID == "" {
+	userID, exists := c.Get("user_id")
+	if !exists {
 		response.Unauthorized(c, "unauthorized")
 		return
 	}
@@ -84,13 +84,13 @@ func (h *SwapHandler) AcceptSwapOffer(c *gin.Context) {
 		return
 	}
 
-	offer, err := h.swapService.AcceptSwapOffer(c.Request.Context(), userID, req.SwapOfferID)
+	offer, err := h.swapService.AcceptSwapOffer(c.Request.Context(), userID.(string), req.SwapOfferID)
 	if err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
 
-	response.OK(c, offer)
+	c.JSON(http.StatusOK, offer)
 }
 
 // GetSwapHistory godoc
@@ -104,11 +104,11 @@ func (h *SwapHandler) AcceptSwapOffer(c *gin.Context) {
 // @Param        circleId query string false "Filter by circle ID"
 // @Param        status query string false "Filter by swap status"
 // @Success      200  {object}  swap.SwapHistoryResponse
-// @Failure      401  {object}  response.APIResponse
+// @Failure      401  {object}  response.ErrorResponse
 // @Router       /v1/swap/history [get]
 func (h *SwapHandler) GetSwapHistory(c *gin.Context) {
-	userID := middleware.GetUserID(c)
-	if userID == "" {
+	userID, exists := c.Get("user_id")
+	if !exists {
 		response.Unauthorized(c, "unauthorized")
 		return
 	}
@@ -133,11 +133,11 @@ func (h *SwapHandler) GetSwapHistory(c *gin.Context) {
 		filter.Status = &status
 	}
 
-	history, err := h.swapService.GetSwapHistory(c.Request.Context(), userID, filter)
+	history, err := h.swapService.GetSwapHistory(c.Request.Context(), userID.(string), filter)
 	if err != nil {
 		response.InternalError(c, err.Error())
 		return
 	}
 
-	response.OK(c, history)
+	c.JSON(http.StatusOK, history)
 }
