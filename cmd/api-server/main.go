@@ -117,7 +117,7 @@ func main() {
 
 	wsHub := ws.NewHub()
 	wsBroadcaster := ws.NewBroadcaster(wsHub, redisClient)
-	_ = ws.NewRedisBridge(wsHub, redisClient)
+	redisBridge := ws.NewRedisBridge(wsHub, redisClient)
 
 	userSvc := user.NewService(userRepo, circleRepo)
 	circleSvc := circle.NewService(circleRepo, &moiAdapter{repo: userRepo}, &communityAdapter{repo: communityRepo}, wsBroadcaster, circle.NewTransactor(db))
@@ -241,7 +241,11 @@ func main() {
 
 	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, communityH, wsH, savingsH, tokenH, swapH, governanceH, reputationH, referralH, consentH, webhookRepo, jwtPublicKey)
 
-	if err := api.RunServer(router, cfg.Server); err != nil {
+	if err := api.RunServer(router, cfg.Server, func(ctx context.Context) {
+		log.Info().Msg("draining WebSocket connections and Redis bridge...")
+		wsHub.Drain()
+		redisBridge.Close()
+	}); err != nil {
 		log.Fatal().Err(err).Msg("server error")
 	}
 }

@@ -40,6 +40,10 @@ func (w *Wallet) DecryptSecret(passkeySeed []byte) (string, error) {
 		return "", fmt.Errorf("creating GCM: %w", err)
 	}
 
+	if len(w.EncryptionNonce) != aesGCM.NonceSize() {
+		return "", fmt.Errorf("invalid nonce length")
+	}
+
 	plaintext, err := aesGCM.Open(nil, w.EncryptionNonce, w.EncryptedSecretKey, nil)
 	if err != nil {
 		return "", fmt.Errorf("decrypting: %w", err)

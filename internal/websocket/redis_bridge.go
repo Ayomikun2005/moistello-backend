@@ -3,6 +3,7 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"sync"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
@@ -12,25 +13,34 @@ import (
 // events and relays them to the local Hub. One RedisBridge should be started
 // per API server instance.
 type RedisBridge struct {
-	hub  *Hub
-	rdb  *redis.Client
-	stop chan struct{}
+	hub       *Hub
+	rdb       *redis.Client
+	stop      chan struct{}
+	closeOnce sync.Once
+	wg        sync.WaitGroup
 }
 
 // NewRedisBridge creates a RedisBridge and starts consuming events from the
 // Redis channel in a background goroutine. Call Close to stop consumption.
 func NewRedisBridge(hub *Hub, rdb *redis.Client) *RedisBridge {
 	b := &RedisBridge{hub: hub, rdb: rdb, stop: make(chan struct{})}
-	go b.consume()
+	if rdb != nil {
+		b.wg.Add(1)
+		go b.consume()
+	}
 	return b
 }
 
-// Close stops the background goroutine that consumes Redis events.
+// Close stops the background goroutine that consumes Redis events and waits for it to finish.
 func (b *RedisBridge) Close() {
-	close(b.stop)
+	b.closeOnce.Do(func() {
+		close(b.stop)
+	})
+	b.wg.Wait()
 }
 
 func (b *RedisBridge) consume() {
+	defer b.wg.Done()
 	pubsub := b.rdb.Subscribe(context.Background(), redisChannel)
 	defer pubsub.Close()
 
