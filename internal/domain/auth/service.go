@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
+	"github.com/stellar/go/strkey"
 	"golang.org/x/crypto/argon2"
 
 	"github.com/moistello/backend/pkg/apperrors"
@@ -471,74 +472,17 @@ func (s *authService) RefreshToken(ctx context.Context, refreshToken string) (*T
 	return newPair, nil
 }
 
-// stellarBase32Alphabet is the RFC 4648 Base32 alphabet used by Stellar StrKey.
-const stellarBase32Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
-
-var stellarBase32Decode [256]byte
-
-func init() {
-	for i := range stellarBase32Decode {
-		stellarBase32Decode[i] = 0xFF
-	}
-	for i, c := range stellarBase32Alphabet {
-		stellarBase32Decode[c] = byte(i)
-	}
-}
-
-// decodeStellarPublicKey decodes a Stellar G... address to an Ed25519 public key.
-// Stellar addresses use StrKey encoding: Base32 + 1 version byte + 2 CRC16 checksum.
+// decodeStellarPublicKey decodes a Stellar G... address to an Ed25519 public
+// key using the canonical StrKey implementation from the Stellar SDK (Base32 +
+// version byte + CRC-16 checksum, all validated by strkey.Decode). This
+// replaces the hand-rolled Base32/CRC16 code that risked diverging from the
+// SDK (#167).
 func decodeStellarPublicKey(address string) (ed25519.PublicKey, error) {
-	if len(address) != 56 {
-		return nil, fmt.Errorf("invalid stellar address length: got %d, want 56", len(address))
+	raw, err := strkey.Decode(strkey.VersionByteAccountID, address)
+	if err != nil {
+		return nil, fmt.Errorf("decoding stellar address: %w", err)
 	}
-	if address[0] != 'G' {
-		return nil, fmt.Errorf("invalid stellar address prefix: got %c, want G", address[0])
-	}
-
-	// Base32 decode: 56 chars → 35 bytes (1 version + 32 key + 2 checksum)
-	decoded := make([]byte, 35)
-	for i := 0; i < 56; i++ {
-		c := address[i]
-		val := stellarBase32Decode[c]
-		if val == 0xFF {
-			return nil, fmt.Errorf("invalid character %c at position %d", c, i)
-		}
-		bitPos := uint(i * 5)
-		byteIdx := bitPos / 8
-		bitOffset := bitPos % 8
-		decoded[byteIdx] |= val << (3 - bitOffset)
-		if bitOffset > 3 {
-			decoded[byteIdx+1] |= val >> (bitOffset - 3)
-		}
-	}
-
-	// Verify XDR CRC-16 checksum
-	payload := decoded[:33]
-	checksum := decoded[33:35]
-	crc := xdrCRC16(payload)
-	if checksum[0] != byte(crc>>8) || checksum[1] != byte(crc) {
-		return nil, fmt.Errorf("stellar address checksum mismatch")
-	}
-
-	// Strip version byte (index 0), return 32-byte public key
-	return ed25519.PublicKey(decoded[1:33]), nil
-}
-
-// xdrCRC16 computes the XDR CRC-16 used by Stellar for address checksums.
-func xdrCRC16(data []byte) uint16 {
-	const poly uint16 = 0x8005
-	var crc uint16
-	for _, b := range data {
-		crc ^= uint16(b) << 8
-		for i := 0; i < 8; i++ {
-			if crc&0x8000 != 0 {
-				crc = (crc << 1) ^ poly
-			} else {
-				crc <<= 1
-			}
-		}
-	}
-	return crc
+	return ed25519.PublicKey(raw), nil
 }
 
 // SessionRole extracts the role claim from a stored session data string.

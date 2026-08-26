@@ -110,8 +110,11 @@ type AuthConfig struct {
 }
 
 type SecurityConfig struct {
+	// WalletPepper is the single server-side secret used for deterministic
+	// wallet seed derivation. The former, unused PasskeyPepper field and its
+	// MOISTELLO_PASSKEY_PEPPER env binding were removed in #163 so there is
+	// exactly one pepper source of truth.
 	WalletPepper  string `mapstructure:"wallet_pepper"`
-	PasskeyPepper string `mapstructure:"passkey_pepper"`
 	EncryptionKey string `mapstructure:"encryption_key"`
 	Argon2Time    int    `mapstructure:"argon2_time"`
 	Argon2Memory  int    `mapstructure:"argon2_memory"`
@@ -267,7 +270,6 @@ func Load(path string) (*Config, error) {
 	mustBindEnv(v, "stellar.master_secret_key", "MOISTELLO_STELLAR_MASTER_SECRET_KEY", "STELLAR_MASTER_SECRET_KEY")
 	mustBindEnv(v, "stellar.master_public_key", "MOISTELLO_STELLAR_MASTER_PUBLIC_KEY", "STELLAR_MASTER_PUBLIC_KEY")
 	mustBindEnv(v, "security.wallet_pepper", "MOISTELLO_WALLET_PEPPER")
-	mustBindEnv(v, "security.passkey_pepper", "MOISTELLO_PASSKEY_PEPPER")
 	mustBindEnv(v, "security.encryption_key", "ENCRYPTION_KEY")
 	mustBindEnv(v, "auth.jwt_private_key_pem", "JWT_PRIVATE_KEY")
 	mustBindEnv(v, "auth.jwt_public_key_pem", "JWT_PUBLIC_KEY")
@@ -343,7 +345,6 @@ func Load(path string) (*Config, error) {
 	cfg.Stellar.MasterSecretKey = requireString("stellar.master_secret_key", cfg.Stellar.MasterSecretKey, "set MOISTELLO_STELLAR_MASTER_SECRET_KEY or STELLAR_MASTER_SECRET_KEY")
 	cfg.Stellar.MasterPublicKey = requireString("stellar.master_public_key", cfg.Stellar.MasterPublicKey, "set MOISTELLO_STELLAR_MASTER_PUBLIC_KEY or STELLAR_MASTER_PUBLIC_KEY")
 	cfg.Security.WalletPepper = requireString("security.wallet_pepper", cfg.Security.WalletPepper, "set MOISTELLO_WALLET_PEPPER")
-	cfg.Security.PasskeyPepper = requireString("security.passkey_pepper", cfg.Security.PasskeyPepper, "set MOISTELLO_PASSKEY_PEPPER")
 	cfg.Security.EncryptionKey = requireString("security.encryption_key", cfg.Security.EncryptionKey, "set ENCRYPTION_KEY")
 
 	cfg.Auth.JWTPrivateKeyPEM = loadRequiredText(cfg.Auth.JWTPrivateKeyPEM, cfg.Auth.JWTPrivateKeyPath, "auth.jwt_private_key_pem", "auth.jwt_private_key_path")

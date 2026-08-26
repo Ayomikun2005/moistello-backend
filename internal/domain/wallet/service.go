@@ -9,16 +9,19 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/stellar/go/clients/horizonclient"
 	"github.com/stellar/go/keypair"
 	"github.com/stellar/go/txnbuild"
+	"golang.org/x/crypto/argon2"
 )
 
 type Service interface {
+	// DeriveWalletSeed derives a deterministic wallet seed for an email-based
+	// account (Argon2id over the email, keyed by the configured wallet pepper).
+	DeriveWalletSeed(ctx context.Context, email string) (string, error)
 	CreateWallet(ctx context.Context, userID string, passkeySeed []byte) (*Wallet, error)
 	SignTransaction(ctx context.Context, walletID string, passkeySeed []byte, txnXDR string) (string, error)
 	GetWallets(ctx context.Context, userID string) ([]Wallet, error)
@@ -34,30 +37,20 @@ type Config struct {
 	USDCIssuer        string // Stellar USDC issuer (mainnet or testnet)
 	NetworkPassphrase string
 	MinBalanceXLM     float64 // XLM to fund per wallet (~2)
-	EncryptionKey     string  // 32-byte hex or string configured in security.encryption_key
+	// Deterministic seed derivation (email-based wallets). The pepper is the
+	// server secret that keeps seeds unguessable; the argon2 parameters mirror
+	// the security config (zero values fall back to conservative defaults).
+	WalletPepper  string
+	Argon2Time    int
+	Argon2Memory  int
+	Argon2Threads int
 }
 
 type service struct {
-	repo          Repository
-	cfg           Config
-	horizon       *horizonclient.Client
-	master        *keypair.Full
-	encryptionKey []byte
-}
-
-func ParseEncryptionKey(keyStr string) ([]byte, error) {
-	trimmed := strings.TrimSpace(keyStr)
-	if trimmed == "" {
-		return nil, fmt.Errorf("encryption key is required")
-	}
-	if raw, err := hex.DecodeString(trimmed); err == nil && len(raw) == 32 {
-		return raw, nil
-	}
-	if len(trimmed) == 32 {
-		return []byte(trimmed), nil
-	}
-	h := sha256.Sum256([]byte(trimmed))
-	return h[:], nil
+	repo    Repository
+	cfg     Config
+	horizon *horizonclient.Client
+	master  *keypair.Full
 }
 
 func NewService(repo Repository, cfg Config) (Service, error) {
@@ -65,36 +58,60 @@ func NewService(repo Repository, cfg Config) (Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parsing master secret key: %w", err)
 	}
-	encKey, err := ParseEncryptionKey(cfg.EncryptionKey)
-	if err != nil {
-		return nil, fmt.Errorf("parsing encryption key: %w", err)
-	}
 	return &service{
-		repo:          repo,
-		cfg:           cfg,
-		horizon:       horizonclient.DefaultTestNetClient,
-		master:        masterKP,
-		encryptionKey: encKey,
+		repo:    repo,
+		cfg:     cfg,
+		horizon: horizonclient.DefaultTestNetClient,
+		master:  masterKP,
 	}, nil
 }
 
-func (s *service) CreateWallet(ctx context.Context, userID string, passkeySeed []byte) (*Wallet, error) {
-	// 1. Generate Stellar keypair from seed (deterministic from passkeySeed or random)
-	var rawSeed [32]byte
-	if len(passkeySeed) >= 32 {
-		copy(rawSeed[:], passkeySeed[:32])
-	} else {
-		h := sha256.Sum256(passkeySeed)
-		copy(rawSeed[:], h[:])
+// DeriveWalletSeed derives a deterministic Stellar wallet seed from an email.
+// Uses Argon2id(email, salt=pepper+email) so the output is both deterministic
+// (recoverable given the same email and pepper) and unique per user — if the
+// pepper is ever compromised, an attacker still cannot precompute seeds for
+// all users because the email acts as a per-user salt component.
+//
+// Cost parameters come from the service config with conservative defaults.
+func (s *service) DeriveWalletSeed(ctx context.Context, email string) (string, error) {
+	pepper := s.cfg.WalletPepper
+	if pepper == "" {
+		return "", fmt.Errorf("wallet pepper is not configured")
 	}
+
+	argonTime := s.cfg.Argon2Time
+	if argonTime <= 0 {
+		argonTime = 1
+	}
+	argonMemory := s.cfg.Argon2Memory
+	if argonMemory <= 0 {
+		argonMemory = 64 * 1024 // 64 MiB
+	}
+	argonThreads := s.cfg.Argon2Threads
+	if argonThreads <= 0 {
+		argonThreads = 4
+	}
+
+	// Use pepper+email as the salt so each user has a unique salt.
+	salt := []byte(pepper + email)
+	key := argon2.IDKey([]byte(email), salt, uint32(argonTime), uint32(argonMemory), uint8(argonThreads), 32)
+	return hex.EncodeToString(key), nil
+}
+
+func (s *service) CreateWallet(ctx context.Context, userID string, passkeySeed []byte) (*Wallet, error) {
+	// 1. Generate Stellar keypair from the deterministic seed
+	// The seed is derived from email + server pepper (see DeriveWalletSeed).
+	// This ensures the same email always produces the same wallet address.
+	var rawSeed [32]byte
+	copy(rawSeed[:], passkeySeed[:32])
 	kp, err := keypair.FromRawSeed(rawSeed)
 	if err != nil {
 		log.Printf("[wallet] ERROR deriving keypair from seed: %v", err)
 		return nil, fmt.Errorf("deriving keypair from seed: %w", err)
 	}
 
-	// 2. Encrypt secret key with configured server encryption key (NOT passkeySeed)
-	encKey, nonce, err := encryptSecret(kp.Seed(), s.encryptionKey)
+	// 2. Encrypt secret key with passkey seed
+	encKey, nonce, err := encryptSecret(kp.Seed(), passkeySeed)
 	if err != nil {
 		log.Printf("[wallet] ERROR encrypting key: %v", err)
 		return nil, fmt.Errorf("encrypting secret key: %w", err)
@@ -309,7 +326,7 @@ func (s *service) SignTransaction(ctx context.Context, walletID string, passkeyS
 		return "", fmt.Errorf("wallet has no encrypted secret key")
 	}
 
-	secretKey, err := wallet.DecryptSecret(s.encryptionKey, passkeySeed)
+	secretKey, err := decryptSecret(wallet.EncryptedSecretKey, wallet.EncryptionNonce, passkeySeed)
 	if err != nil {
 		return "", fmt.Errorf("decrypting secret key: %w", err)
 	}
@@ -436,7 +453,7 @@ func (s *service) SendPayment(ctx context.Context, userID string, passkeySeed []
 	})
 
 	// ── Decrypt key and build transaction ──
-	secretKey, err := w.DecryptSecret(s.encryptionKey, passkeySeed)
+	secretKey, err := decryptSecret(w.EncryptedSecretKey, w.EncryptionNonce, passkeySeed)
 	if err != nil {
 		return "", fmt.Errorf("decrypting secret key: %w", err)
 	}
@@ -528,16 +545,11 @@ func (s *service) DeleteWallet(ctx context.Context, userID, walletID string) err
 	return s.repo.DeleteByOwner(ctx, walletID, userID)
 }
 
-// encryptSecret encrypts the Stellar secret key using AES-256-GCM with the provided encryption key.
-func encryptSecret(secretKey string, encryptionKey []byte) (encrypted []byte, nonce []byte, err error) {
-	var aesKey [32]byte
-	if len(encryptionKey) == 32 {
-		copy(aesKey[:], encryptionKey)
-	} else {
-		aesKey = sha256.Sum256(encryptionKey)
-	}
-
-	block, err := aes.NewCipher(aesKey[:])
+// encryptSecret encrypts the Stellar secret key using AES-256-GCM
+// The encryption key is derived from the passkey seed via SHA-256
+func encryptSecret(secretKey string, passkeySeed []byte) (encrypted []byte, nonce []byte, err error) {
+	key := sha256.Sum256(passkeySeed)
+	block, err := aes.NewCipher(key[:])
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating cipher: %w", err)
 	}
@@ -554,6 +566,27 @@ func encryptSecret(secretKey string, encryptionKey []byte) (encrypted []byte, no
 
 	ciphertext := aesGCM.Seal(nil, nonce, []byte(secretKey), nil)
 	return ciphertext, nonce, nil
+}
+
+// decryptSecret decrypts the Stellar secret key using the passkey seed
+func decryptSecret(encrypted []byte, nonce []byte, passkeySeed []byte) (string, error) {
+	key := sha256.Sum256(passkeySeed)
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return "", fmt.Errorf("creating cipher: %w", err)
+	}
+
+	aesGCM, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", fmt.Errorf("creating GCM: %w", err)
+	}
+
+	plaintext, err := aesGCM.Open(nil, nonce, encrypted, nil)
+	if err != nil {
+		return "", fmt.Errorf("decrypting: %w", err)
+	}
+
+	return string(plaintext), nil
 }
 
 // DeriveEncryptionKey is exposed for the frontend to use

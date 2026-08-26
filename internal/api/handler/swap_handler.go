@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -34,13 +33,13 @@ func NewSwapHandler(swapService *swap.Service) *SwapHandler {
 func (h *SwapHandler) CreateSwapOffer(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
-		response.Error(c, http.StatusUnauthorized, "unauthorized", nil)
+		response.Unauthorized(c, "unauthorized")
 		return
 	}
 
 	var req swap.SwapOfferRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid request body", err)
+		response.BadRequest(c, "invalid request body: "+err.Error())
 		return
 	}
 
@@ -51,11 +50,11 @@ func (h *SwapHandler) CreateSwapOffer(c *gin.Context) {
 
 	offer, err := h.swapService.CreateSwapOffer(c.Request.Context(), userID.(string), req)
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error(), err)
+		response.BadRequest(c, err.Error())
 		return
 	}
 
-	c.JSON(http.StatusCreated, offer)
+	response.Created(c, offer)
 }
 
 // AcceptSwapOffer godoc
@@ -74,23 +73,23 @@ func (h *SwapHandler) CreateSwapOffer(c *gin.Context) {
 func (h *SwapHandler) AcceptSwapOffer(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
-		response.Error(c, http.StatusUnauthorized, "unauthorized", nil)
+		response.Unauthorized(c, "unauthorized")
 		return
 	}
 
 	var req swap.SwapAcceptRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid request body", err)
+		response.BadRequest(c, "invalid request body: "+err.Error())
 		return
 	}
 
 	offer, err := h.swapService.AcceptSwapOffer(c.Request.Context(), userID.(string), req.SwapOfferID)
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error(), err)
+		response.BadRequest(c, err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, offer)
+	response.OK(c, offer)
 }
 
 // GetSwapHistory godoc
@@ -109,7 +108,7 @@ func (h *SwapHandler) AcceptSwapOffer(c *gin.Context) {
 func (h *SwapHandler) GetSwapHistory(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
-		response.Error(c, http.StatusUnauthorized, "unauthorized", nil)
+		response.Unauthorized(c, "unauthorized")
 		return
 	}
 
@@ -135,9 +134,9 @@ func (h *SwapHandler) GetSwapHistory(c *gin.Context) {
 
 	history, err := h.swapService.GetSwapHistory(c.Request.Context(), userID.(string), filter)
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, err.Error(), err)
+		response.InternalError(c, err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, history)
+	response.OK(c, history)
 }

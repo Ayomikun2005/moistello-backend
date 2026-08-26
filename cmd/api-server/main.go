@@ -18,13 +18,11 @@ package main
 
 import (
 	"context"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/moistello/backend/config"
 	"github.com/moistello/backend/internal/api"
 	"github.com/moistello/backend/internal/api/handler"
-	"github.com/moistello/backend/internal/domain/admin"
 	"github.com/moistello/backend/internal/domain/audit"
 	"github.com/moistello/backend/internal/domain/auth"
 	"github.com/moistello/backend/internal/domain/circle"
@@ -45,14 +43,13 @@ import (
 	"github.com/moistello/backend/internal/domain/verification"
 	"github.com/moistello/backend/internal/domain/wallet"
 	"github.com/moistello/backend/internal/domain/yellowcard"
+	"github.com/moistello/backend/pkg/stellar"
+	"github.com/moistello/backend/pkg/stellar/soroban"
 	ws "github.com/moistello/backend/internal/websocket"
-	"github.com/moistello/backend/pkg/jobqueue"
 	"github.com/moistello/backend/pkg/logger"
 	"github.com/moistello/backend/pkg/postgres"
 	"github.com/moistello/backend/pkg/rabbitmq"
 	"github.com/moistello/backend/pkg/redis"
-	"github.com/moistello/backend/pkg/stellar"
-	"github.com/moistello/backend/pkg/stellar/soroban"
 	"github.com/moistello/backend/pkg/tracing"
 	"github.com/moistello/backend/pkg/validator"
 	"github.com/moistello/backend/webhook"
@@ -105,7 +102,7 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to connect to redis")
 	}
-	defer func() { _ = redisClient.Close() }()
+	defer redisClient.Close()
 
 	userRepo := user.NewRepository(db)
 	circleRepo := circle.NewRepository(db)
@@ -140,14 +137,6 @@ func main() {
 		FromAddress: cfg.Brevo.FromEmail,
 		FromName:    cfg.Brevo.FromName,
 	})
-	verificationSvc.WithEmailSender(
-		func(emailAddr, code string) error {
-			return emailSvc.SendOTP(context.Background(), emailAddr, code)
-		},
-		func(emailAddr, code string) error {
-			return emailSvc.SendRecoveryCode(context.Background(), emailAddr, code)
-		},
-	)
 
 	inviteSvc := invite.NewService(inviteRepo)
 	_ = auditRepo
@@ -160,7 +149,11 @@ func main() {
 		USDCIssuer:        cfg.Stellar.USDCIssuer,
 		NetworkPassphrase: cfg.Stellar.NetworkPassphrase,
 		MinBalanceXLM:     cfg.Stellar.WalletMinBalance,
-		EncryptionKey:     cfg.Security.EncryptionKey,
+		// Deterministic seed derivation for email-based wallets (#166).
+		WalletPepper:  cfg.Security.WalletPepper,
+		Argon2Time:    cfg.Security.Argon2Time,
+		Argon2Memory:  cfg.Security.Argon2Memory,
+		Argon2Threads: cfg.Security.Argon2Threads,
 	}
 	walletSvc, err := wallet.NewService(wallet.NewRepository(db), walletCfg)
 	if err != nil {
@@ -172,7 +165,6 @@ func main() {
 		SorobanRPCURL:             cfg.Stellar.SorobanRPCURL,
 		NetworkPassphrase:         cfg.Stellar.NetworkPassphrase,
 		HorizonURL:                cfg.Stellar.HorizonURL,
-		EncryptionKey:             cfg.Security.EncryptionKey,
 	})
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to initialize token service")
@@ -183,17 +175,16 @@ func main() {
 
 	wsH := handler.NewWebSocketHandler(wsHub, cfg.CORS.AllowedOrigins)
 
-	authH := handler.NewAuthHandler(authSvc, userSvc, walletSvc, totpSvc, verificationSvc, emailSvc, redisClient, userRepo, cfg.Security)
+	authH := handler.NewAuthHandler(authSvc, userSvc, walletSvc, totpSvc, verificationSvc, emailSvc, redisClient, userRepo)
 	userH := handler.NewUserHandler(userSvc, redisClient)
 	circleH := handler.NewCircleHandler(circleSvc, inviteSvc, contribSvc, payoutSvc)
 	contribH := handler.NewContributionHandler(contribSvc, contribRepo)
 	payoutH := handler.NewPayoutHandler(payoutSvc, payoutRepo)
 	inviteH := handler.NewInviteHandler(inviteSvc)
 	notifH := handler.NewNotificationHandler(notificationSvc, userSvc)
-	adminMetricsSvc := admin.NewService(admin.NewRepository(db), 0)
-	adminH := handler.NewAdminHandler(userSvc, userRepo, circleSvc, auditRepo, adminMetricsSvc)
+	adminH := handler.NewAdminHandler(userSvc, userRepo, circleSvc, auditRepo)
+	webhookH := handler.NewWebhookHandler()
 	webhookRepo := webhook.NewPostgresRepository(db.DB)
-	webhookH := handler.NewWebhookHandler(webhookRepo)
 	healthH := handler.NewHealthHandler(db.DB, redisClient, cfg.Stellar.SorobanRPCURL, cfg.Stellar.HorizonURL)
 	passkeyCredH := handler.NewPasskeyCredentialHandler(db)
 	walletH := handler.NewWalletHandler(walletSvc)
@@ -204,7 +195,7 @@ func main() {
 
 	// Yellow Card integration
 	ycClient := yellowcard.NewClient(cfg.YellowCard.APIKey, cfg.YellowCard.APISecret)
-	depositH := handler.NewDepositHandler(ycClient, walletSvc).WithRedis(redisClient).WithConfig(cfg.YellowCard)
+	depositH := handler.NewDepositHandler(ycClient, walletSvc)
 
 	// Savings goals
 	savingsRepo := savings.NewRepository(db)
@@ -229,24 +220,6 @@ func main() {
 	swapSvc := swap.NewService(swapRepo, circleSvc, userSvc, escrowSwapClient)
 	swapH := handler.NewSwapHandler(swapSvc)
 
-	// Swap expiry sweep (#243): periodically releases escrow on-chain for
-	// created swap offers past their expiry and marks them expired.
-	swapSweeper := swap.NewSweeper(swapSvc, cfg.Swap.SweepInterval)
-	sweepCtx, sweepCancel := context.WithCancel(context.Background())
-	defer sweepCancel()
-	swapSweeper.Start(sweepCtx)
-
-	// Admin job-queue (#162): the worker loop plus the admin routes that
-	// inspect and retry dead-letter jobs. Queues register handlers as
-	// producers appear:
-	//   jobWorker.RegisterHandler("emails", sendEmailHandler)
-	jobQueue := jobqueue.NewJobQueue(db)
-	jobWorker := jobqueue.NewWorker(jobQueue, 2*time.Second)
-	jobWorkerCtx, jobWorkerCancel := context.WithCancel(context.Background())
-	defer jobWorkerCancel()
-	jobWorker.Start(jobWorkerCtx)
-	adminJobQueueH := handler.NewAdminJobQueueHandler(jobQueue)
-
 	governanceSvc := governance.NewService()
 	governanceH := handler.NewGovernanceHandler(governanceSvc)
 
@@ -257,28 +230,6 @@ func main() {
 
 	// GDPR cookie consent handler
 	consentH := handler.NewConsentHandler(db.DB)
-
-	// Job queue and consumer worker
-	jobQueue := jobqueue.NewJobQueue(db)
-	if cfg.JobQueue.Enabled {
-		workerCtx, workerCancel := context.WithCancel(context.Background())
-		defer workerCancel()
-
-		jobWorker := jobqueue.NewWorker(jobQueue, jobqueue.WorkerOptions{
-			Concurrency:  cfg.JobQueue.Concurrency,
-			PollInterval: cfg.JobQueue.PollInterval,
-			Queues:       cfg.JobQueue.Queues,
-			MaxRetries:   cfg.JobQueue.MaxRetries,
-		})
-
-		if err := jobWorker.Start(workerCtx); err != nil {
-			log.Error().Err(err).Msg("failed to start job queue worker")
-		} else {
-			defer jobWorker.Stop()
-		}
-	}
-
-	adminJobQueueH := handler.NewAdminJobQueueHandler(jobQueue)
 
 	// RabbitMQ connection for health checks and event publishing
 	rmqClient, rmqErr := rabbitmq.New(cfg.RabbitMQ)
@@ -293,7 +244,7 @@ func main() {
 		healthH.WithRabbitMQ(rmqClient)
 	}
 
-	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, communityH, wsH, savingsH, tokenH, swapH, governanceH, reputationH, referralH, consentH, adminJobQueueH, webhookRepo, jwtPublicKey)
+	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, communityH, wsH, savingsH, tokenH, swapH, governanceH, reputationH, referralH, consentH, webhookRepo, jwtPublicKey)
 
 	if err := api.RunServer(router, cfg.Server); err != nil {
 		log.Fatal().Err(err).Msg("server error")
