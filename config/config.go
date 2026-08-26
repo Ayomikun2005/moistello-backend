@@ -10,14 +10,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
-	"github.com/stellar/go/strkey"
 )
-
-// minPepperLength is the minimum acceptable length (in characters) for the
-// wallet and passkey peppers. Peppers are used as the salt component when
-// deriving deterministic wallet seeds with Argon2id, so they must carry enough
-// entropy (≥ 256 bits of random printable ASCII) to resist offline brute force.
-const minPepperLength = 32
 
 type Config struct {
 	Server       ServerConfig
@@ -31,8 +24,7 @@ type Config struct {
 	Indexer      IndexerConfig
 	Notification NotificationConfig
 	CORS         CORSConfig
-	RateLimit    RateLimitConfig  `mapstructure:"rate_limit"`
-	Contracts    ContractsConfig  `mapstructure:"contracts"`
+	RateLimit    RateLimitConfig `mapstructure:"rate_limit"`
 	Logging      LoggingConfig
 	Environment  string
 	YellowCard   YellowCardConfig `mapstructure:"yellow_card"`
@@ -101,9 +93,12 @@ func (s StellarConfig) String() string {
 }
 
 type YellowCardConfig struct {
-	APIKey         string `mapstructure:"api_key"`
-	APISecret      string `mapstructure:"api_secret"`
-	StellarAddress string `mapstructure:"stellar_address"`
+	APIKey               string  `mapstructure:"api_key"`
+	APISecret            string  `mapstructure:"api_secret"`
+	MaxDepositNGN        float64 `mapstructure:"max_deposit_ngn"`
+	MaxWithdrawUSDC      float64 `mapstructure:"max_withdraw_usdc"`
+	DailyDepositCapNGN   float64 `mapstructure:"daily_deposit_cap_ngn"`
+	DailyWithdrawCapUSDC float64 `mapstructure:"daily_withdraw_cap_usdc"`
 }
 
 type AuthConfig struct {
@@ -173,50 +168,6 @@ type LoggingConfig struct {
 	Level  string `mapstructure:"level"`
 	Format string `mapstructure:"format"`
 	Output string `mapstructure:"output"`
-}
-
-type ContractsConfig struct {
-	CircleFactory       string `mapstructure:"circle_factory"`
-	Circle              string `mapstructure:"circle"`
-	ReputationRegistry  string `mapstructure:"reputation_registry"`
-	GovernanceToken     string `mapstructure:"governance_token"`
-	Treasury            string `mapstructure:"treasury"`
-}
-
-func (c ContractsConfig) Validate() error {
-	required := map[string]string{
-		"circle_factory":      c.CircleFactory,
-		"circle":              c.Circle,
-		"reputation_registry": c.ReputationRegistry,
-		"governance_token":    c.GovernanceToken,
-		"treasury":            c.Treasury,
-	}
-	for name, value := range required {
-		if strings.TrimSpace(value) == "" {
-			return fmt.Errorf("config: contracts.%s is required", name)
-		}
-		if !isValidContractID(value) {
-			return fmt.Errorf("config: contracts.%s must be a valid Stellar contract ID (C...56 chars)", name)
-		}
-	}
-	return nil
-}
-
-func isValidContractID(id string) bool {
-	id = strings.TrimSpace(id)
-	if len(id) != 56 {
-		return false
-	}
-	if id[0] != 'C' {
-		return false
-	}
-	// Stellar contract IDs are base32-encoded, must only contain valid base32 chars
-	for _, c := range id {
-		if !((c >= 'A' && c <= 'Z') || (c >= '2' && c <= '7')) {
-			return false
-		}
-	}
-	return true
 }
 
 type TracingConfig struct {
@@ -294,7 +245,6 @@ func Load(path string) (*Config, error) {
 	setDefault(v, "notification.push.fcm_server_key", "")
 	setDefault(v, "yellow_card.api_key", "")
 	setDefault(v, "yellow_card.api_secret", "")
-	setDefault(v, "yellow_card.stellar_address", "")
 	setDefault(v, "security.wallet_pepper", "")
 	setDefault(v, "security.passkey_pepper", "")
 	setDefault(v, "security.encryption_key", "")
@@ -313,7 +263,6 @@ func Load(path string) (*Config, error) {
 	mustBindEnv(v, "brevo.from_name", "MOISTELLO_BREVO_FROM_NAME", "MOISTELLO_NOTIFICATION_EMAIL_FROM_NAME")
 	mustBindEnv(v, "yellow_card.api_key", "YELLOW_CARD_API_KEY")
 	mustBindEnv(v, "yellow_card.api_secret", "YELLOW_CARD_API_SECRET")
-	mustBindEnv(v, "yellow_card.stellar_address", "YELLOW_CARD_STELLAR_ADDRESS")
 	v.SetDefault("server.port", 1100)
 	v.SetDefault("server.host", "0.0.0.0")
 	v.SetDefault("server.read_timeout", "10s")
@@ -387,20 +336,12 @@ func Load(path string) (*Config, error) {
 	cfg.Auth.JWTPublicKeyPEM = loadRequiredText(cfg.Auth.JWTPublicKeyPEM, cfg.Auth.JWTPublicKeyPath, "auth.jwt_public_key_pem", "auth.jwt_public_key_path")
 
 	validateHexKey(cfg.Security.EncryptionKey)
-	validateStellarSecretKey(cfg.Stellar.MasterSecretKey)
-	validateStellarPublicKey(cfg.Stellar.MasterPublicKey)
-	validatePepper("security.wallet_pepper", cfg.Security.WalletPepper)
-	validatePepper("security.passkey_pepper", cfg.Security.PasskeyPepper)
 	validateDuration("security.argon2_time", cfg.Security.Argon2Time > 0)
 	validateDuration("security.argon2_memory", cfg.Security.Argon2Memory > 0)
 	validateDuration("security.argon2_threads", cfg.Security.Argon2Threads > 0)
 
 	if cfg.Environment != "development" && strings.Contains(cfg.Database.URL, "sslmode=disable") {
 		panic(fmt.Errorf("database.url must not use sslmode=disable outside development; use sslmode=require or stronger"))
-	}
-
-	if err := cfg.Contracts.Validate(); err != nil {
-		panic(err)
 	}
 
 	return &cfg, nil
@@ -491,33 +432,6 @@ func validateHexKey(value string) {
 	raw, err := hex.DecodeString(strings.TrimSpace(value))
 	if err != nil || len(raw) != 32 {
 		panic(fmt.Errorf("config: security.encryption_key must be a 32-byte hex string"))
-	}
-}
-
-// validateStellarSecretKey fails fast at startup if the master secret key is not
-// a valid Stellar secret seed (S-prefixed strkey). Previously this was only
-// discovered later at runtime inside the wallet service, producing an opaque
-// error far from the misconfiguration.
-func validateStellarSecretKey(value string) {
-	value = strings.TrimSpace(value)
-	if _, err := strkey.Decode(strkey.VersionByteSeed, value); err != nil {
-		panic(fmt.Errorf("config: stellar.master_secret_key must be a valid Stellar secret key (S-prefixed strkey): %w", err))
-	}
-}
-
-// validateStellarPublicKey fails fast at startup if the master public key is not
-// a valid Stellar account ID (G-prefixed strkey).
-func validateStellarPublicKey(value string) {
-	value = strings.TrimSpace(value)
-	if _, err := strkey.Decode(strkey.VersionByteAccountID, value); err != nil {
-		panic(fmt.Errorf("config: stellar.master_public_key must be a valid Stellar public key (G-prefixed strkey): %w", err))
-	}
-}
-
-// validatePepper fails fast at startup if a pepper is too short to be secure.
-func validatePepper(field, value string) {
-	if len(value) < minPepperLength {
-		panic(fmt.Errorf("config: %s must be at least %d characters long, got %d", field, minPepperLength, len(value)))
 	}
 }
 

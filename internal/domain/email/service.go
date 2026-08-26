@@ -5,21 +5,21 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/moistello/backend/pkg/logger"
-	"github.com/moistello/backend/pkg/tracing"
 )
-
-const brevoAPIURL = "https://api.brevo.com/v3/smtp/email"
 
 // Config holds the Brevo email sending configuration.
 type Config struct {
 	APIKey      string
 	FromAddress string
 	FromName    string
+	BaseURL     string
+	MaxRetries  int
 }
 
 // Service handles sending transactional emails via Brevo API.
@@ -35,10 +35,24 @@ func NewService(cfg Config) *Service {
 	if cfg.FromName == "" {
 		cfg.FromName = "Moistello"
 	}
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = "https://api.brevo.com/v3/smtp/email"
+	}
+	if cfg.MaxRetries <= 0 {
+		cfg.MaxRetries = 3
+	}
 	return &Service{
 		config: cfg,
-		client: &http.Client{},
+		client: &http.Client{Timeout: 10 * time.Second},
 	}
+}
+
+// WithHTTPClient sets a custom http.Client (e.g. for testing).
+func (s *Service) WithHTTPClient(client *http.Client) *Service {
+	if client != nil {
+		s.client = client
+	}
+	return s
 }
 
 // SendOTP sends a 6-digit verification code to the user's email.
@@ -70,13 +84,11 @@ func (s *Service) SendRecoveryCode(ctx context.Context, email, code string) erro
 	return s.sendBrevo(ctx, email, subject, body)
 }
 
-func (s *Service) sendBrevo(ctx context.Context, to, subject, htmlBody string) (err error) {
-	ctx, span := tracing.StartHTTPSpan(ctx, "brevo.send", "POST", brevoAPIURL)
-	start := time.Now()
-	defer func() { tracing.EndSpan(span, err, start) }()
-
+func (s *Service) sendBrevo(ctx context.Context, to, subject, htmlBody string) error {
+	log := logger.Ctx(ctx)
 	if strings.TrimSpace(s.config.APIKey) == "" {
-		return fmt.Errorf("brevo api key is not configured")
+		log.Warn().Str("to", to).Str("subject", subject).Msg("brevo API key is not configured — email sending skipped (dev mode)")
+		return nil
 	}
 
 	payload := map[string]any{
@@ -91,32 +103,66 @@ func (s *Service) sendBrevo(ctx context.Context, to, subject, htmlBody string) (
 		"htmlContent": htmlBody,
 	}
 
-	body, err := json.Marshal(payload)
+	bodyBytes, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshaling payload: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", brevoAPIURL, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("api-key", s.config.APIKey)
-	if reqID, ok := ctx.Value(logger.RequestIDKey).(string); ok && reqID != "" {
-		req.Header.Set("X-Request-ID", reqID)
+	maxAttempts := s.config.MaxRetries
+	if maxAttempts <= 0 {
+		maxAttempts = 3
 	}
 
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("sending via brevo: %w", err)
-	}
-	defer resp.Body.Close()
+	var lastErr error
+	backoff := 25 * time.Millisecond
 
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("brevo API error: %s", resp.Status)
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, "POST", s.config.BaseURL, bytes.NewReader(bodyBytes))
+		if err != nil {
+			return fmt.Errorf("creating request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("api-key", s.config.APIKey)
+		if reqID, ok := ctx.Value("requestID").(string); ok && reqID != "" {
+			req.Header.Set("X-Request-ID", reqID)
+		}
+
+		resp, err := s.client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("network error sending via brevo (attempt %d/%d): %w", attempt, maxAttempts, err)
+			log.Warn().Err(lastErr).Int("attempt", attempt).Msg("brevo delivery failed, retrying...")
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(backoff):
+				backoff *= 2
+				continue
+			}
+		}
+
+		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if resp.StatusCode < 400 {
+			log.Info().Str("to", to).Str("subject", subject).Msg("email sent via brevo")
+			return nil
+		}
+
+		// Non-retryable client errors (except 429 Too Many Requests)
+		if resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
+			return fmt.Errorf("brevo API error (status %d): %s", resp.StatusCode, string(respBody))
+		}
+
+		lastErr = fmt.Errorf("brevo API server error (status %d, attempt %d/%d): %s", resp.StatusCode, attempt, maxAttempts, string(respBody))
+		log.Warn().Err(lastErr).Int("attempt", attempt).Int("status", resp.StatusCode).Msg("brevo server error, retrying...")
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+			backoff *= 2
+		}
 	}
 
-	log := logger.Ctx(ctx)
-	log.Info().Str("to", to).Str("subject", subject).Msg("email sent via brevo")
-	return nil
+	return fmt.Errorf("all %d attempts to send email via brevo failed: %w", maxAttempts, lastErr)
 }

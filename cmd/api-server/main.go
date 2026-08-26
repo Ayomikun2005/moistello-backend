@@ -138,6 +138,14 @@ func main() {
 		FromAddress: cfg.Brevo.FromEmail,
 		FromName:    cfg.Brevo.FromName,
 	})
+	verificationSvc.WithEmailSender(
+		func(emailAddr, code string) error {
+			return emailSvc.SendOTP(context.Background(), emailAddr, code)
+		},
+		func(emailAddr, code string) error {
+			return emailSvc.SendRecoveryCode(context.Background(), emailAddr, code)
+		},
+	)
 
 	inviteSvc := invite.NewService(inviteRepo)
 	_ = auditRepo
@@ -192,7 +200,7 @@ func main() {
 
 	// Yellow Card integration
 	ycClient := yellowcard.NewClient(cfg.YellowCard.APIKey, cfg.YellowCard.APISecret)
-	depositH := handler.NewDepositHandler(ycClient, walletSvc)
+	depositH := handler.NewDepositHandler(ycClient, walletSvc).WithRedis(redisClient).WithConfig(cfg.YellowCard)
 
 	// Savings goals
 	savingsRepo := savings.NewRepository(db)

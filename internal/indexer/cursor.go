@@ -36,9 +36,10 @@ func (c *CursorTracker) GetCurrent(ctx context.Context) (*Cursor, error) {
 }
 
 // Update writes the new cursor position after successful processing.
+// It is parallel-safe: it only advances the cursor if lastLedger > current last_ledger.
 func (c *CursorTracker) Update(ctx context.Context, lastLedger int64) error {
 	_, err := c.db.ExecContext(ctx,
-		"UPDATE indexer_cursor SET last_ledger = $1, last_processed_at = $2 WHERE chain = 'stellar'",
+		"UPDATE indexer_cursor SET last_ledger = $1, last_processed_at = $2 WHERE chain = 'stellar' AND last_ledger < $1",
 		lastLedger, time.Now())
 	if err != nil {
 		return fmt.Errorf("updating cursor: %w", err)

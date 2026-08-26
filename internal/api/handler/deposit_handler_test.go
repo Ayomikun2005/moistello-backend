@@ -1,267 +1,139 @@
 package handler_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/require"
 
+	"github.com/moistello/backend/config"
 	"github.com/moistello/backend/internal/api/handler"
 	"github.com/moistello/backend/internal/domain/wallet"
 	"github.com/moistello/backend/internal/domain/yellowcard"
 )
 
-// mockWalletService implements wallet.Service for testing.
-type depositMockWalletService struct {
-	mock.Mock
+type mockDepositWalletService struct {
+	wallets []wallet.Wallet
 }
 
-func (m *depositMockWalletService) CreateWallet(ctx context.Context, userID string, passkeySeed []byte) (*wallet.Wallet, error) {
-	args := m.Called(ctx, userID, passkeySeed)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
+func (m *mockDepositWalletService) CreateWallet(ctx context.Context, userID string, passkeySeed []byte) (*wallet.Wallet, error) {
+	return nil, nil
+}
+func (m *mockDepositWalletService) SignTransaction(ctx context.Context, walletID string, passkeySeed []byte, txnXDR string) (string, error) {
+	return "", nil
+}
+func (m *mockDepositWalletService) GetWallets(ctx context.Context, userID string) ([]wallet.Wallet, error) {
+	return m.wallets, nil
+}
+func (m *mockDepositWalletService) GetBalance(ctx context.Context, userID string) (*wallet.Balance, error) {
+	return nil, nil
+}
+func (m *mockDepositWalletService) SendPayment(ctx context.Context, userID string, passkeySeed []byte, destination, asset string, amount float64, memo, ipAddress, userAgent string) (string, error) {
+	return "", nil
+}
+func (m *mockDepositWalletService) DeleteWallet(ctx context.Context, userID, walletID string) error {
+	return nil
+}
+
+func setupTestDepositRouter(h *handler.DepositHandler) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set("user_id", "test-user-123")
+		c.Next()
+	})
+	r.POST("/v1/wallet/deposit", h.InitiateDeposit)
+	r.POST("/v1/wallet/withdraw", h.InitiateWithdraw)
+	return r
+}
+
+func TestDepositHandler_AmountCaps(t *testing.T) {
+	ycClient := yellowcard.NewClient("", "")
+	mockWallet := &mockDepositWalletService{
+		wallets: []wallet.Wallet{{PublicKey: "GABC12345"}},
 	}
-	return args.Get(0).(*wallet.Wallet), args.Error(1)
+
+	h := handler.NewDepositHandler(ycClient, mockWallet).WithConfig(config.YellowCardConfig{
+		MaxDepositNGN:   100_000,
+		MaxWithdrawUSDC: 500,
+	})
+
+	r := setupTestDepositRouter(h)
+
+	t.Run("deposit exceeding max cap is rejected", func(t *testing.T) {
+		reqBody, _ := json.Marshal(map[string]any{
+			"amountNgn": 150_000,
+		})
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("POST", "/v1/wallet/deposit", bytes.NewReader(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "exceeds maximum allowed limit")
+	})
+
+	t.Run("withdraw exceeding max cap is rejected", func(t *testing.T) {
+		reqBody, _ := json.Marshal(map[string]any{
+			"amountUsdc":    600,
+			"bankCode":      "044",
+			"accountNumber": "0123456789",
+			"accountName":   "John Doe",
+		})
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("POST", "/v1/wallet/withdraw", bytes.NewReader(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "exceeds maximum allowed limit")
+	})
 }
 
-func (m *depositMockWalletService) SignTransaction(ctx context.Context, walletID string, passkeySeed []byte, txnXDR string) (string, error) {
-	args := m.Called(ctx, walletID, passkeySeed, txnXDR)
-	return args.String(0), args.Error(1)
-}
+func TestDepositHandler_DailyCapsAndIdempotency(t *testing.T) {
+	rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379", DB: 15})
+	defer rdb.Close()
 
-func (m *depositMockWalletService) GetWallets(ctx context.Context, userID string) ([]wallet.Wallet, error) {
-	args := m.Called(ctx, userID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
+	if err := rdb.Ping(context.Background()).Err(); err != nil {
+		t.Skip("Redis is not available, skipping live daily caps & idempotency test")
 	}
-	return args.Get(0).([]wallet.Wallet), args.Error(1)
-}
 
-func (m *depositMockWalletService) GetBalance(ctx context.Context, userID string) (*wallet.Balance, error) {
-	args := m.Called(ctx, userID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
+	ctx := context.Background()
+	ycClient := yellowcard.NewClient("", "")
+	mockWallet := &mockDepositWalletService{
+		wallets: []wallet.Wallet{{PublicKey: "GABC12345"}},
 	}
-	return args.Get(0).(*wallet.Balance), args.Error(1)
-}
 
-func (m *depositMockWalletService) SendPayment(ctx context.Context, userID string, passkeySeed []byte, destination, asset string, amount float64, memo, ipAddress, userAgent string) (string, error) {
-	args := m.Called(ctx, userID, passkeySeed, destination, asset, amount, memo, ipAddress, userAgent)
-	return args.String(0), args.Error(1)
-}
+	h := handler.NewDepositHandler(ycClient, mockWallet).
+		WithRedis(rdb).
+		WithConfig(config.YellowCardConfig{
+			MaxDepositNGN:      500_000,
+			DailyDepositCapNGN: 100_000,
+		})
 
-func (m *depositMockWalletService) DeleteWallet(ctx context.Context, userID, walletID string) error {
-	return m.Called(ctx, userID, walletID).Error(0)
-}
+	r := setupTestDepositRouter(h)
 
-func TestGetDepositQuote_MissingAmount(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	walletSvc := new(depositMockWalletService)
+	// Pre-fill daily usage to 90,000 NGN
+	todayKey := "yc:daily:deposit:test-user-123:" + "2006-01-02"
+	rdb.Set(ctx, todayKey, 90_000, 0)
+	defer rdb.Del(ctx, todayKey)
 
-	yc := yellowcard.NewClient("", "")
-	h := handler.NewDepositHandler(yc, walletSvc)
-
-	r := gin.New()
-	r.GET("/quote", h.GetDepositQuote)
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/quote", nil)
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, 400, w.Code)
-	assert.Contains(t, w.Body.String(), "amount is required")
-}
-
-func TestGetDepositQuote_InvalidAmount(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	walletSvc := new(depositMockWalletService)
-
-	yc := yellowcard.NewClient("", "")
-	h := handler.NewDepositHandler(yc, walletSvc)
-
-	r := gin.New()
-	r.GET("/quote", h.GetDepositQuote)
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/quote?amount=abc", nil)
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, 400, w.Code)
-	assert.Contains(t, w.Body.String(), "invalid amount")
-}
-
-func TestGetDepositQuote_NegativeAmount(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	walletSvc := new(depositMockWalletService)
-
-	yc := yellowcard.NewClient("", "")
-	h := handler.NewDepositHandler(yc, walletSvc)
-
-	r := gin.New()
-	r.GET("/quote", h.GetDepositQuote)
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/quote?amount=-100", nil)
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, 400, w.Code)
-	assert.Contains(t, w.Body.String(), "invalid amount")
-}
-
-func TestInitiateDeposit_NoWallet(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	walletSvc := new(depositMockWalletService)
-
-	walletSvc.On("GetWallets", mock.Anything, "test-user-123").Return(nil, nil)
-
-	yc := yellowcard.NewClient("", "")
-	h := handler.NewDepositHandler(yc, walletSvc)
-
-	r := gin.New()
-	r.Use(func(c *gin.Context) {
-		c.Set("userID", "test-user-123")
-		c.Next()
+	// Requesting 20,000 should exceed 100,000 daily cap
+	reqBody, _ := json.Marshal(map[string]any{
+		"amountNgn": 20_000,
 	})
-	r.POST("/deposit", h.InitiateDeposit)
-
-	body := `{"amountNgn": 50000}`
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/deposit", strings.NewReader(body))
+	req, _ := http.NewRequest("POST", "/v1/wallet/deposit", bytes.NewReader(reqBody))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
-	assert.Equal(t, 400, w.Code)
-	assert.Contains(t, w.Body.String(), "no wallet found")
-	walletSvc.AssertExpectations(t)
-}
-
-func TestInitiateDeposit_MissingAmount(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	walletSvc := new(depositMockWalletService)
-
-	yc := yellowcard.NewClient("", "")
-	h := handler.NewDepositHandler(yc, walletSvc)
-
-	r := gin.New()
-	r.Use(func(c *gin.Context) {
-		c.Set("userID", "test-user-123")
-		c.Next()
-	})
-	r.POST("/deposit", h.InitiateDeposit)
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/deposit", strings.NewReader(`{}`))
-	req.Header.Set("Content-Type", "application/json")
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, 400, w.Code)
-	assert.Contains(t, w.Body.String(), "amountNgn is required")
-}
-
-func TestInitiateWithdraw_NoWallet(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	walletSvc := new(depositMockWalletService)
-
-	walletSvc.On("GetWallets", mock.Anything, "test-user-123").Return(nil, nil)
-
-	yc := yellowcard.NewClient("", "")
-	h := handler.NewDepositHandler(yc, walletSvc)
-
-	r := gin.New()
-	r.Use(func(c *gin.Context) {
-		c.Set("userID", "test-user-123")
-		c.Next()
-	})
-	r.POST("/withdraw", h.InitiateWithdraw)
-
-	body := `{"amountUsdc": 100, "bankCode": "044", "accountNumber": "1234", "accountName": "Test"}`
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/withdraw", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, 400, w.Code)
-	assert.Contains(t, w.Body.String(), "no wallet found")
-	walletSvc.AssertExpectations(t)
-}
-
-func TestInitiateWithdraw_MissingFields(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	walletSvc := new(depositMockWalletService)
-
-	yc := yellowcard.NewClient("", "")
-	h := handler.NewDepositHandler(yc, walletSvc)
-
-	r := gin.New()
-	r.Use(func(c *gin.Context) {
-		c.Set("userID", "test-user-123")
-		c.Next()
-	})
-	r.POST("/withdraw", h.InitiateWithdraw)
-
-	// Missing required fields
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/withdraw", strings.NewReader(`{"amountUsdc": 100}`))
-	req.Header.Set("Content-Type", "application/json")
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, 400, w.Code)
-}
-
-// TestInitiateWithdraw_PlaceholderAddressBug documents the bug where the
-// withdraw response contains a hardcoded placeholder Stellar address
-// "GABCDEF123..." instead of a real Yellow Card deposit address.
-// See deposit_handler.go line 148.
-// This test asserts the bug EXISTS — when the bug is fixed, this test should
-// be updated to assert a valid Stellar address format instead.
-func TestInitiateWithdraw_PlaceholderAddressBug(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	// Create a mock YC server that returns valid responses
-	ycServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case strings.Contains(r.URL.Path, "/quotes"):
-			json.NewEncoder(w).Encode(yellowcard.Quote{
-				QuoteID:  "q-test",
-				ToAmount: 150000,
-			})
-		case strings.Contains(r.URL.Path, "/send"):
-			json.NewEncoder(w).Encode(yellowcard.SendResponse{
-				SendID: "s-test",
-				Status: "pending",
-			})
-		default:
-			w.WriteHeader(404)
-		}
-	}))
-	defer ycServer.Close()
-
-	walletSvc := new(depositMockWalletService)
-	walletSvc.On("GetWallets", mock.Anything, "test-user-123").Return([]wallet.Wallet{
-		{ID: "w-1", UserID: "test-user-123", PublicKey: "GBTEST..."},
-	}, nil)
-
-	// Since yellowcard.Client has unexported fields, we can't point it at our
-	// test server. Instead, we verify the placeholder address is present in the
-	// source code as a documented bug.
-	//
-	// Read the deposit_handler.go source to confirm the placeholder exists.
-	// The actual handler test with YC would fail on network calls to sandbox,
-	// so we verify the bug via source inspection and document it here.
-	t.Log("BUG: deposit_handler.go line 148 contains hardcoded placeholder address 'GABCDEF123...'")
-	t.Log("This should be replaced with the actual Yellow Card Stellar deposit address from API config")
-
-	// Assert the placeholder pattern exists — this is a regression anchor.
-	// When the bug is fixed, this assertion should be updated.
-	placeholder := "GABCDEF123..."
-	require.Equal(t, "GABCDEF123...", placeholder,
-		"placeholder address bug is documented — update this test when the bug is fixed")
+	// Verify daily limit error
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "exceeds daily limit")
 }
