@@ -26,6 +26,7 @@ type Service interface {
 	GetMembers(ctx context.Context, circleID string) ([]CircleMember, error)
 	IsMember(ctx context.Context, circleID, userID string) (bool, error)
 	RemoveMember(ctx context.Context, circleID, callerID, memberAddress string, reason string) error
+	ProcessMissedContributions(ctx context.Context, circleID string, roundNumber int) error
 }
 
 type UserMOIFetcher interface {
@@ -42,6 +43,7 @@ type Broadcaster interface {
 	MemberJoined(ctx context.Context, circleID, userID string)
 	MemberLeft(ctx context.Context, circleID, userID string)
 	ContributionRecorded(ctx context.Context, circleID, userID string, roundNumber int, amount float64)
+	MemberPenalized(ctx context.Context, circleID, userID string, roundNumber int, penaltyAmount float64)
 }
 
 type CommunityMembershipChecker interface {
@@ -660,4 +662,74 @@ func (s *circleService) RemoveMember(ctx context.Context, circleID, callerID, me
 
 func ceilFloat(f float64) float64 {
 	return math.Ceil(f*100) / 100
+}
+
+
+func (s *circleService) ProcessMissedContributions(ctx context.Context, circleID string, roundNumber int) error {
+	cID, err := uuid.Parse(circleID)
+	if err != nil {
+		return apperrors.ErrInvalidInput
+	}
+
+	c, err := s.repo.FindByID(ctx, cID)
+	if err != nil {
+		return err
+	}
+	if c == nil {
+		return apperrors.ErrNotFound
+	}
+
+	members, err := s.repo.GetMembers(ctx, cID)
+	if err != nil {
+		return err
+	}
+
+	contributedUserIDs, err := s.repo.GetContributionsByCircleAndRound(ctx, cID, roundNumber)
+	if err != nil {
+		return err
+	}
+
+	contributedMap := make(map[uuid.UUID]bool)
+	for _, uid := range contributedUserIDs {
+		contributedMap[uid] = true
+	}
+
+	for _, member := range members {
+		if member.Status != MemberStatusActive {
+			continue
+		}
+		if !contributedMap[member.UserID] {
+			// Member missed contribution, apply penalty
+			penaltyAmt := CalculateLateFee(c.ContributionAmount, c.LateFeePercent)
+			strikes := ApplyStrikes(&member, "late") // default late penalty
+
+			p := &Penalty{
+				ID:             uuid.New(),
+				CircleID:       cID,
+				UserID:         member.UserID,
+				RoundNumber:    roundNumber,
+				PenaltyType:    PenaltyTypeLate,
+				Amount:         penaltyAmt,
+				StrikesApplied: strikes,
+				Reason:         sql.NullString{String: fmt.Sprintf("Missed contribution for round %d", roundNumber), Valid: true},
+				CreatedAt:      time.Now(),
+			}
+
+			err = s.repo.CreatePenalty(ctx, p)
+			if err != nil {
+				return err
+			}
+
+			// Broadcast event for notification/indexer
+			// We can use a new method like MemberPenalized or just use existing ones.
+			// The Acceptance Criteria mentions: "Notify affected members"
+			// This will likely be handled by an event listener on the indexer or notification service.
+			// But for now, we process it here.
+			if s.broadcaster != nil {
+				s.broadcaster.MemberPenalized(ctx, circleID, member.UserID.String(), roundNumber, penaltyAmt)
+			}
+		}
+	}
+
+	return nil
 }

@@ -369,3 +369,42 @@ func TestCircleService_Get_NotFound(t *testing.T) {
 	assert.Error(t, err)
 	repo.AssertExpectations(t)
 }
+
+func TestCircleService_ProcessMissedContributions(t *testing.T) {
+	repo := new(circleMocks.Repository)
+	svc := circle.NewService(repo, nil)
+	ctx := context.Background()
+
+	cid := uuid.New()
+	user1 := uuid.New()
+	user2 := uuid.New()
+	roundNumber := 1
+
+	c := &circle.Circle{
+		ID:                 cid,
+		ContributionAmount: 100,
+		LateFeePercent:     10,
+	}
+
+	members := []circle.CircleMember{
+		{CircleID: cid, UserID: user1, Status: circle.MemberStatusActive},
+		{CircleID: cid, UserID: user2, Status: circle.MemberStatusActive},
+	}
+
+	// Only user1 contributed
+	contributions := []uuid.UUID{user1}
+
+	repo.On("FindByID", ctx, cid).Return(c, nil)
+	repo.On("GetMembers", ctx, cid).Return(members, nil)
+	repo.On("GetContributionsByCircleAndRound", ctx, cid, roundNumber).Return(contributions, nil)
+
+	// Expected penalty for user2
+	repo.On("CreatePenalty", ctx, mock.MatchedBy(func(p *circle.Penalty) bool {
+		return p.UserID == user2 && p.Amount == 10.0 && p.RoundNumber == roundNumber
+	})).Return(nil)
+
+	err := svc.ProcessMissedContributions(ctx, cid.String(), roundNumber)
+	assert.NoError(t, err)
+
+	repo.AssertExpectations(t)
+}

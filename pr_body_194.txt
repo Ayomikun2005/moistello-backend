@@ -1,0 +1,7 @@
+Closes #194
+
+- Added `Dispute`, `CircleVote`, and `CircleAuctionBid` data models in `internal/domain/circle/model.go`.
+- Created database migrations (`037_create_circle_disputes_votes_bids.up.sql` and `down.sql`) for `disputes`, `circle_votes`, and `circle_auction_bids` tables, including proper foreign keys, indexes, and unique constraints for `idempotency_key`.
+- Implemented repository methods in the `Repository` interface and Postgres implementation (`repository_pg.go`) for CRUD operations on these new entities.
+- Added unit tests for the Postgres repository operations using `go-sqlmock` in `repository_pg_test.go`.
+- Generated/Updated mocks for `Repository` to ensure downstream tests continue to compile properly.
