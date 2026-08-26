@@ -1,9 +1,12 @@
 package websocket
 
 import (
+	"context"
+	"runtime"
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -136,4 +139,54 @@ func TestHub_Stats(t *testing.T) {
 	c, r := hub.Stats()
 	assert.Equal(t, 0, c)
 	assert.Equal(t, 0, r)
+}
+
+func TestHub_NoGoroutineLeakOnFullBufferBroadcast(t *testing.T) {
+	hub := NewHub()
+	const numClients = 50
+
+	for i := 0; i < numClients; i++ {
+		// Client with zero/full buffer capacity
+		client := &Client{
+			ID:   string(rune('A' + i)),
+			Send: make(chan []byte, 1),
+			Hub:  hub,
+		}
+		client.Send <- []byte("already full")
+		hub.Register(client)
+		hub.JoinRoom("room-leak-test", client.ID)
+	}
+
+	beforeGoroutines := runtime.NumGoroutine()
+
+	// Broadcast 20 times to room with all full buffers
+	for i := 0; i < 20; i++ {
+		hub.Broadcast("room-leak-test", Message{Type: "test", Payload: "data"})
+	}
+
+	afterGoroutines := runtime.NumGoroutine()
+	// All full-buffer clients should have been unregistered deterministically
+	assert.LessOrEqual(t, afterGoroutines, beforeGoroutines+2, "goroutine count should not explode")
+	assert.Equal(t, 0, hub.ClientCount(), "all dropped clients should be unregistered")
+}
+
+func TestRedisBridge_CloseExitsCleanly(t *testing.T) {
+	rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379", DB: 15})
+	defer rdb.Close()
+
+	if err := rdb.Ping(context.Background()).Err(); err != nil {
+		t.Skip("Redis not running, skipping live RedisBridge test")
+	}
+
+	hub := NewHub()
+	before := runtime.NumGoroutine()
+
+	bridge := NewRedisBridge(hub, rdb)
+	time.Sleep(20 * time.Millisecond)
+
+	bridge.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	after := runtime.NumGoroutine()
+	assert.LessOrEqual(t, after, before+2, "RedisBridge should exit cleanly without leaking goroutines")
 }

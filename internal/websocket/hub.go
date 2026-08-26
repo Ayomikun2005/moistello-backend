@@ -85,24 +85,36 @@ func (h *Hub) LeaveRoom(circleID, clientID string) {
 func (h *Hub) Broadcast(circleID string, msg Message) {
 	h.mu.RLock()
 	room, ok := h.rooms[circleID]
-	h.mu.RUnlock()
 	if !ok {
+		h.mu.RUnlock()
 		return
 	}
 
 	data, err := json.Marshal(msg)
 	if err != nil {
+		h.mu.RUnlock()
 		log.Warn().Err(err).Str("type", msg.Type).Msg("marshaling broadcast message")
 		return
 	}
 
+	clients := make([]*Client, 0, len(room))
 	for _, client := range room {
+		clients = append(clients, client)
+	}
+	h.mu.RUnlock()
+
+	var dropped []*Client
+	for _, client := range clients {
 		select {
 		case client.Send <- data:
 		default:
-			// Client's send buffer is full — assume disconnected
-			go h.Unregister(client)
+			// Client's send buffer is full — mark for deterministic unregister
+			dropped = append(dropped, client)
 		}
+	}
+
+	for _, client := range dropped {
+		h.Unregister(client)
 	}
 }
 
@@ -126,7 +138,7 @@ func (h *Hub) BroadcastToUser(userID string, msg Message) {
 	select {
 	case client.Send <- data:
 	default:
-		go h.Unregister(client)
+		h.Unregister(client)
 	}
 }
 
