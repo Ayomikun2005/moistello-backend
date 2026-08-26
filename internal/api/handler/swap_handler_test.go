@@ -104,6 +104,9 @@ func (m *swapMockRepoForHandler) ListCircleSwapOffers(ctx context.Context, circl
 	return nil, 0, nil
 }
 func (m *swapMockRepoForHandler) CancelExpiredOffers(ctx context.Context) error { return nil }
+func (m *swapMockRepoForHandler) ListExpiredCreatedOffers(ctx context.Context, now time.Time) ([]swap.SwapOffer, error) {
+	return nil, nil
+}
 
 func TestSwapHandler_GetSwapHistory_Success(t *testing.T) {
 	repo := &swapMockRepoForHandler{offers: make(map[string]*swap.SwapOffer)}

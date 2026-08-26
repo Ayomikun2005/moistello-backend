@@ -128,7 +128,7 @@ func TestCreateSession_AtomicWrites(t *testing.T) {
 	userID := uuid.New()
 	ctx := context.Background()
 
-	tp, err := svc.CreateSession(ctx, userID, 15*time.Minute, "mobile-app")
+	tp, err := svc.CreateSession(ctx, userID, "user", 15*time.Minute, "mobile-app")
 	require.NoError(t, err)
 	require.NotNil(t, tp)
 	assert.NotEmpty(t, tp.AccessToken)
@@ -172,7 +172,7 @@ func TestCreateSession_RollbackOnFailure(t *testing.T) {
 	userID := uuid.New()
 	ctx := context.Background()
 
-	tp, err := svc.CreateSession(ctx, userID, 15*time.Minute, "mobile-app")
+	tp, err := svc.CreateSession(ctx, userID, "user", 15*time.Minute, "mobile-app")
 	assert.Error(t, err)
 	assert.Nil(t, tp)
 	assert.Contains(t, err.Error(), "storing session and CSRF in redis")

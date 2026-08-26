@@ -40,6 +40,9 @@ func (m *mockDepositWalletService) SendPayment(ctx context.Context, userID strin
 func (m *mockDepositWalletService) DeleteWallet(ctx context.Context, userID, walletID string) error {
 	return nil
 }
+func (m *mockDepositWalletService) DeriveWalletSeed(ctx context.Context, email string) (string, error) {
+	return "mock-seed", nil
+}
 
 func setupTestDepositRouter(h *handler.DepositHandler) *gin.Engine {
 	gin.SetMode(gin.TestMode)

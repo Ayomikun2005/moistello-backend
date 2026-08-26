@@ -149,6 +149,9 @@ func (m *mockCircleService) IsMember(_ context.Context, _, _ string) (bool, erro
 func (m *mockCircleService) RemoveMember(_ context.Context, _, _, _ string, _ string) error {
 	return nil
 }
+func (m *mockCircleService) ProcessMissedContributions(_ context.Context, _ string, _ int) error {
+	return nil
+}
 
 type mockInviteService struct{}
 

@@ -47,6 +47,10 @@ func (r *listRepo) GetActiveWebhooks(ctx context.Context) ([]WebhookRegistration
 func (r *listRepo) GetByID(ctx context.Context, id string) (*WebhookRegistration, error) {
 	return nil, nil
 }
+func (r *listRepo) Delete(ctx context.Context, id string) error   { return nil }
+func (r *listRepo) ListDeliveries(ctx context.Context, webhookID string, page, limit int) ([]DeliveryLog, int, error) {
+	return nil, 0, nil
+}
 
 func TestQueuedDispatcher_PublishesEnvelopePerRegistration(t *testing.T) {
 	repo := &listRepo{webhooks: []WebhookRegistration{

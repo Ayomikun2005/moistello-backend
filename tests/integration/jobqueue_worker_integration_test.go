@@ -2,6 +2,7 @@ package integration_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -31,12 +32,12 @@ func TestIntegration_JobQueueWorker_FullLifecycle(t *testing.T) {
 	var webhookProcessed int32
 	var webhookAttempts int32
 
-	worker.RegisterHandler("notifications", func(ctx context.Context, job *jobqueue.Job) error {
+	worker.RegisterHandler("notifications", func(ctx context.Context, payload json.RawMessage) error {
 		atomic.AddInt32(&notifProcessed, 1)
 		return nil
 	})
 
-	worker.RegisterHandler("webhooks", func(ctx context.Context, job *jobqueue.Job) error {
+	worker.RegisterHandler("webhooks", func(ctx context.Context, payload json.RawMessage) error {
 		attempts := atomic.AddInt32(&webhookAttempts, 1)
 		if attempts <= 1 {
 			return errors.New("simulated webhook endpoint timeout")
@@ -97,7 +98,7 @@ func TestIntegration_JobQueueWorker_DeadLetterAndAdminRetry(t *testing.T) {
 	shouldFail := true
 	var processedSuccess int32
 
-	worker.RegisterHandler("critical", func(ctx context.Context, job *jobqueue.Job) error {
+	worker.RegisterHandler("critical", func(ctx context.Context, payload json.RawMessage) error {
 		mu.Lock()
 		fail := shouldFail
 		mu.Unlock()

@@ -107,6 +107,13 @@ func (f *fakeWebhookRepo) GetByID(ctx context.Context, id string) (*WebhookRegis
 	}
 	return nil, nil
 }
+func (f *fakeWebhookRepo) Delete(ctx context.Context, id string) error {
+	delete(f.webhooks, id)
+	return nil
+}
+func (f *fakeWebhookRepo) ListDeliveries(ctx context.Context, webhookID string, page, limit int) ([]DeliveryLog, int, error) {
+	return nil, 0, nil
+}
 
 func TestDispatchPayload_DetachedBackgroundContext(t *testing.T) {
 	received := make(chan []byte, 1)
