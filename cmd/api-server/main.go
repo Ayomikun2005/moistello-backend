@@ -117,14 +117,37 @@ func main() {
 
 	wsHub := ws.NewHub()
 	wsBroadcaster := ws.NewBroadcaster(wsHub, redisClient)
-	redisBridge := ws.NewRedisBridge(wsHub, redisClient)
+	_ = ws.NewRedisBridge(wsHub, redisClient)
+
+	// RabbitMQ connection for event publishing, consumers and health checks.
+	// It must be initialised before the services that publish through it; a
+	// broker outage degrades to in-process delivery instead of failing boot.
+	rmqClient, rmqErr := rabbitmq.New(cfg.RabbitMQ)
+	if rmqErr != nil {
+		log.Warn().Err(rmqErr).Msg("RabbitMQ unavailable — falling back to in-process delivery, health checks will report degraded")
+	} else {
+		defer rmqClient.Close()
+
+		if err := rmqClient.EnsureQueue(cfg.RabbitMQ.Queues.Notifications, cfg.RabbitMQ.Exchange, "notification.*"); err != nil {
+			log.Warn().Err(err).Msg("ensuring notifications queue")
+		}
+		if err := rmqClient.EnsureQueue(cfg.RabbitMQ.Queues.Webhooks, cfg.RabbitMQ.Exchange, webhook.WebhookRoutingKey); err != nil {
+			log.Warn().Err(err).Msg("ensuring webhooks queue")
+		}
+	}
 
 	userSvc := user.NewService(userRepo, circleRepo)
 	circleSvc := circle.NewService(circleRepo, &moiAdapter{repo: userRepo}, &communityAdapter{repo: communityRepo}, wsBroadcaster, circle.NewTransactor(db))
 	contribSvc := contribution.NewService(contribRepo, wsBroadcaster, contribution.NewTransactor(db))
 	payoutSvc := payout.NewService(payoutRepo)
 	reputationSvc := reputation.NewService(reputationRepo)
-	notificationSvc := notification.NewService(notificationRepo, nil, wsBroadcaster)
+	// Keep the Publisher interface nil when RabbitMQ is unavailable — assigning
+	// the typed-nil rmqClient directly would make the interface non-nil.
+	var notificationPublisher notification.Publisher
+	if rmqClient != nil {
+		notificationPublisher = rmqClient
+	}
+	notificationSvc := notification.NewService(notificationRepo, notificationPublisher, wsBroadcaster)
 	authSvc, err := auth.NewService(redisClient, cfg.Auth.NonceTTL, cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL, cfg.Auth.JWTPrivateKeyPEM, cfg.Auth.JWTPublicKeyPEM)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to initialize auth service")
@@ -226,14 +249,6 @@ func main() {
 	// GDPR cookie consent handler
 	consentH := handler.NewConsentHandler(db.DB)
 
-	// RabbitMQ connection for health checks and event publishing
-	rmqClient, rmqErr := rabbitmq.New(cfg.RabbitMQ)
-	if rmqErr != nil {
-		log.Warn().Err(rmqErr).Msg("RabbitMQ unavailable — health checks will report degraded")
-	} else {
-		defer rmqClient.Close()
-	}
-
 	// Wire RabbitMQ into health handler for /health and /health/ready probes
 	if rmqClient != nil {
 		healthH.WithRabbitMQ(rmqClient)
@@ -241,11 +256,26 @@ func main() {
 
 	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, communityH, wsH, savingsH, tokenH, swapH, governanceH, reputationH, referralH, consentH, webhookRepo, jwtPublicKey)
 
-	if err := api.RunServer(router, cfg.Server, func(ctx context.Context) {
-		log.Info().Msg("draining WebSocket connections and Redis bridge...")
-		wsHub.Drain()
-		redisBridge.Close()
-	}); err != nil {
+	// Background consumers: durable queues drive real-time notification fan-out
+	// and webhook HTTP delivery. Both stop when the process exits.
+	if rmqClient != nil {
+		consumerCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		go func() {
+			if err := notification.StartQueueConsumer(consumerCtx, rmqClient, cfg.RabbitMQ.Exchange, cfg.RabbitMQ.Queues.Notifications, wsBroadcaster); err != nil && consumerCtx.Err() == nil {
+				log.Error().Err(err).Msg("notification queue consumer stopped")
+			}
+		}()
+
+		go func() {
+			if err := webhook.StartQueueConsumer(consumerCtx, rmqClient, cfg.RabbitMQ.Exchange, cfg.RabbitMQ.Queues.Webhooks); err != nil && consumerCtx.Err() == nil {
+				log.Error().Err(err).Msg("webhook queue consumer stopped")
+			}
+		}()
+	}
+
+	if err := api.RunServer(router, cfg.Server); err != nil {
 		log.Fatal().Err(err).Msg("server error")
 	}
 }
