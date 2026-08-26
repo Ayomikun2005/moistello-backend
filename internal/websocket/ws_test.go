@@ -52,15 +52,65 @@ func TestHub_Broadcast(t *testing.T) {
 
 func TestHub_BroadcastToUser(t *testing.T) {
 	hub := NewHub()
-	c1 := &Client{ID: "u1", Send: make(chan []byte, 10), Hub: hub}
+	// Client has random UUID ID and authentic UserID
+	c1 := &Client{ID: "conn-uuid-1", UserID: "user-42", Send: make(chan []byte, 10), Hub: hub}
 	hub.Register(c1)
-	hub.BroadcastToUser("u1", Message{Type: "private", Payload: "secret"})
+
+	hub.BroadcastToUser("user-42", Message{Type: "private", Payload: "secret"})
 	select {
 	case msg := <-c1.Send:
 		assert.Contains(t, string(msg), "private")
+		assert.Contains(t, string(msg), "secret")
 	case <-time.After(200 * time.Millisecond):
-		t.Fatal("timeout")
+		t.Fatal("timeout waiting for user broadcast")
 	}
+}
+
+func TestHub_BroadcastToUser_MultipleConnections(t *testing.T) {
+	hub := NewHub()
+	// Two connections for the same user (e.g. phone and laptop)
+	c1 := &Client{ID: "conn-phone", UserID: "user-99", Send: make(chan []byte, 10), Hub: hub}
+	c2 := &Client{ID: "conn-laptop", UserID: "user-99", Send: make(chan []byte, 10), Hub: hub}
+	cOther := &Client{ID: "conn-other", UserID: "user-other", Send: make(chan []byte, 10), Hub: hub}
+
+	hub.Register(c1)
+	hub.Register(c2)
+	hub.Register(cOther)
+
+	assert.Equal(t, 2, hub.UserClientCount("user-99"))
+	assert.Equal(t, 1, hub.UserClientCount("user-other"))
+
+	hub.BroadcastToUser("user-99", Message{Type: "notification.new", Payload: "badge"})
+
+	// Both c1 and c2 should receive
+	select {
+	case msg := <-c1.Send:
+		assert.Contains(t, string(msg), "notification.new")
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("timeout on c1")
+	}
+
+	select {
+	case msg := <-c2.Send:
+		assert.Contains(t, string(msg), "notification.new")
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("timeout on c2")
+	}
+
+	// cOther should not receive
+	select {
+	case <-cOther.Send:
+		t.Fatal("cOther should not receive message for user-99")
+	default:
+	}
+
+	// Unregister one connection
+	hub.Unregister(c1)
+	assert.Equal(t, 1, hub.UserClientCount("user-99"))
+
+	// Unregister second connection
+	hub.Unregister(c2)
+	assert.Equal(t, 0, hub.UserClientCount("user-99"))
 }
 
 func TestHub_Broadcast_DifferentRoom(t *testing.T) {
