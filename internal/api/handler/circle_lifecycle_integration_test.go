@@ -164,6 +164,12 @@ func (s *lifecycleContributionService) GetUserHistory(
 	return s.store.contributions, len(s.store.contributions), nil
 }
 
+func (s *lifecycleContributionService) UpdateVerification(
+	_ context.Context, _ string, _ bool, _ contribution.VerificationStatus,
+) error {
+	return nil
+}
+
 func (s *lifecycleContributionService) GetCircleHistory(
 	context.Context, string, int, int,
 ) ([]contribution.Contribution, int, error) {
@@ -185,6 +191,12 @@ func (s *lifecyclePayoutService) Record(
 	s.store.payouts = append(s.store.payouts, record)
 	s.store.mu.Unlock()
 	return &record, nil
+}
+
+func (s *lifecyclePayoutService) UpdateVerification(
+	_ context.Context, _ string, _ bool, _ payout.VerificationStatus,
+) error {
+	return nil
 }
 
 func (s *lifecyclePayoutService) GetUserHistory(

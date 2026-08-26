@@ -11,18 +11,21 @@ import (
 
 type Service interface {
 	Record(ctx context.Context, input RecordInput) (*Payout, error)
+	UpdateVerification(ctx context.Context, id string, verifiedOnchain bool, status VerificationStatus) error
 	GetUserHistory(ctx context.Context, userID string, page, limit int) ([]Payout, int, error)
 	GetCircleHistory(ctx context.Context, circleID string, page, limit int) ([]Payout, int, error)
 }
 
 type RecordInput struct {
-	CircleID    string     `json:"circleId" validate:"required"`
-	RecipientID string     `json:"recipientId" validate:"required"`
-	RoundNumber int        `json:"roundNumber" validate:"required,gte=1"`
-	Amount      float64    `json:"amount" validate:"required,gt=0"`
-	FeeAmount   float64    `json:"feeAmount" validate:"gte=0"`
-	TxnHash     string     `json:"txnHash"`
-	PayoutType  PayoutType `json:"payoutType" validate:"required,oneof=random fixed auction vote"`
+	CircleID           string              `json:"circleId" validate:"required"`
+	RecipientID        string              `json:"recipientId" validate:"required"`
+	RoundNumber        int                 `json:"roundNumber" validate:"required,gte=1"`
+	Amount             float64             `json:"amount" validate:"required,gt=0"`
+	FeeAmount          float64             `json:"feeAmount" validate:"gte=0"`
+	TxnHash            string              `json:"txnHash"`
+	PayoutType         PayoutType          `json:"payoutType" validate:"required,oneof=random fixed auction vote"`
+	VerifiedOnchain    *bool               `json:"verifiedOnchain,omitempty"`
+	VerificationStatus *VerificationStatus `json:"verificationStatus,omitempty"`
 }
 
 type payoutService struct {
@@ -56,22 +59,43 @@ func (s *payoutService) Record(ctx context.Context, input RecordInput) (*Payout,
 		txnHash = sql.NullString{String: input.TxnHash, Valid: true}
 	}
 
+	verifiedOnchain := false
+	if input.VerifiedOnchain != nil {
+		verifiedOnchain = *input.VerifiedOnchain
+	}
+	verificationStatus := VerificationStatusUnverified
+	if input.VerificationStatus != nil {
+		verificationStatus = *input.VerificationStatus
+	} else if verifiedOnchain {
+		verificationStatus = VerificationStatusVerified
+	}
+
 	p := &Payout{
-		ID:          uuid.New(),
-		CircleID:    circleID,
-		RecipientID: recipientID,
-		RoundNumber: input.RoundNumber,
-		Amount:      input.Amount,
-		FeeAmount:   input.FeeAmount,
-		TxnHash:     txnHash,
-		PayoutType:  input.PayoutType,
-		CreatedAt:   time.Now().UTC(),
+		ID:                 uuid.New(),
+		CircleID:           circleID,
+		RecipientID:        recipientID,
+		RoundNumber:        input.RoundNumber,
+		Amount:             input.Amount,
+		FeeAmount:          input.FeeAmount,
+		TxnHash:            txnHash,
+		PayoutType:         input.PayoutType,
+		VerifiedOnchain:    verifiedOnchain,
+		VerificationStatus: verificationStatus,
+		CreatedAt:          time.Now().UTC(),
 	}
 
 	if err := s.repo.Create(ctx, p); err != nil {
 		return nil, fmt.Errorf("recording payout: %w", err)
 	}
 	return p, nil
+}
+
+func (s *payoutService) UpdateVerification(ctx context.Context, id string, verifiedOnchain bool, status VerificationStatus) error {
+	uid, err := parseUUID(id)
+	if err != nil {
+		return err
+	}
+	return s.repo.UpdateVerificationStatus(ctx, uid, verifiedOnchain, status)
 }
 
 func (s *payoutService) GetUserHistory(ctx context.Context, userID string, page, limit int) ([]Payout, int, error) {

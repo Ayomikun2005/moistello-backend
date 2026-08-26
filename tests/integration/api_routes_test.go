@@ -168,6 +168,9 @@ type mockContribService struct{}
 func (m *mockContribService) Record(_ context.Context, input contribution.RecordInput) (*contribution.Contribution, error) {
 	return &contribution.Contribution{ID: uuid.New(), RoundNumber: input.RoundNumber, Amount: input.Amount, Status: contribution.StatusPending}, nil
 }
+func (m *mockContribService) UpdateVerification(_ context.Context, _ string, _ bool, _ contribution.VerificationStatus) error {
+	return nil
+}
 func (m *mockContribService) GetUserHistory(_ context.Context, _ string, _, _ int) ([]contribution.Contribution, int, error) {
 	return []contribution.Contribution{}, 0, nil
 }
@@ -187,6 +190,9 @@ func (m *mockContribRepo) Create(_ context.Context, _ *contribution.Contribution
 func (m *mockContribRepo) UpdateStatus(_ context.Context, _ uuid.UUID, _ contribution.ContributionStatus, _ string) error {
 	return nil
 }
+func (m *mockContribRepo) UpdateVerificationStatus(_ context.Context, _ uuid.UUID, _ bool, _ contribution.VerificationStatus) error {
+	return nil
+}
 func (m *mockContribRepo) ListByUser(_ context.Context, _ uuid.UUID, _, _ int) ([]contribution.Contribution, int, error) {
 	return []contribution.Contribution{}, 0, nil
 }
@@ -198,6 +204,9 @@ type mockPayoutService struct{}
 
 func (m *mockPayoutService) Record(_ context.Context, input payout.RecordInput) (*payout.Payout, error) {
 	return &payout.Payout{ID: uuid.New(), RoundNumber: input.RoundNumber, Amount: input.Amount, PayoutType: input.PayoutType}, nil
+}
+func (m *mockPayoutService) UpdateVerification(_ context.Context, _ string, _ bool, _ payout.VerificationStatus) error {
+	return nil
 }
 func (m *mockPayoutService) GetUserHistory(_ context.Context, _ string, _, _ int) ([]payout.Payout, int, error) {
 	return []payout.Payout{}, 0, nil
@@ -211,7 +220,10 @@ type mockPayoutRepo struct{}
 func (m *mockPayoutRepo) FindByID(_ context.Context, _ uuid.UUID) (*payout.Payout, error) {
 	return nil, apperrors.ErrNotFound
 }
-func (m *mockPayoutRepo) Create(_ context.Context, _ *payout.Payout) error               { return nil }
+func (m *mockPayoutRepo) Create(_ context.Context, _ *payout.Payout) error { return nil }
+func (m *mockPayoutRepo) UpdateVerificationStatus(_ context.Context, _ uuid.UUID, _ bool, _ payout.VerificationStatus) error {
+	return nil
+}
 func (m *mockPayoutRepo) ListByUser(_ context.Context, _ uuid.UUID, _, _ int) ([]payout.Payout, int, error) {
 	return []payout.Payout{}, 0, nil
 }
