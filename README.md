@@ -193,4 +193,4 @@ docker-compose -f docker-compose.prod.yml up
 
 ## License
 
-Apache 2.0// trigger CI
+Apache 2.0
