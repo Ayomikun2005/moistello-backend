@@ -201,7 +201,7 @@ func main() {
 	communityH := handler.NewCommunityHandler(communitySvc)
 
 	// Yellow Card integration
-	ycClient := yellowcard.NewClient(cfg.YellowCard.APIKey, cfg.YellowCard.APISecret)
+	ycClient := yellowcard.NewClient(cfg.YellowCard.APIKey, cfg.YellowCard.APISecret, cfg.YellowCard.StellarAddress)
 	depositH := handler.NewDepositHandler(ycClient, walletSvc)
 
 	// Savings goals

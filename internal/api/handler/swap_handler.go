@@ -34,7 +34,7 @@ func NewSwapHandler(swapService *swap.Service) *SwapHandler {
 func (h *SwapHandler) CreateSwapOffer(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
-		response.Unauthorized(c, "unauthorized")
+		response.ErrorWithCode(c, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
 		return
 	}
 
@@ -74,7 +74,7 @@ func (h *SwapHandler) CreateSwapOffer(c *gin.Context) {
 func (h *SwapHandler) AcceptSwapOffer(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
-		response.Unauthorized(c, "unauthorized")
+		response.ErrorWithCode(c, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
 		return
 	}
 
@@ -109,7 +109,7 @@ func (h *SwapHandler) AcceptSwapOffer(c *gin.Context) {
 func (h *SwapHandler) GetSwapHistory(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
-		response.Unauthorized(c, "unauthorized")
+		response.ErrorWithCode(c, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
 		return
 	}
 
