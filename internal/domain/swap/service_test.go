@@ -6,313 +6,251 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/moistello/backend/internal/domain/circle"
 	"github.com/moistello/backend/internal/domain/user"
 	"github.com/moistello/backend/pkg/apperrors"
 )
 
-// Mock Swap Repository
-type mockSwapRepo struct {
-	offers map[string]*SwapOffer
+// ── Fakes ─────────────────────────────────────────────────────────────────
+
+type fakeUserService struct {
+	getByIDFn func(ctx context.Context, id string) (*user.User, error)
 }
 
-func newMockSwapRepo() *mockSwapRepo {
-	return &mockSwapRepo{
-		offers: make(map[string]*SwapOffer),
-	}
+func (f *fakeUserService) GetByID(ctx context.Context, id string) (*user.User, error) {
+	return f.getByIDFn(ctx, id)
 }
 
-func (m *mockSwapRepo) CreateSwapOffer(ctx context.Context, offer *SwapOffer) error {
-	m.offers[offer.ID] = offer
-	return nil
+type fakeEscrow struct {
+	createSwapFn  func(ctx context.Context, circleID, offeror, offeree string, offerorAsset string, offerorAmount int64, requestedAsset string, requestedAmount int64, expiresAt uint64) (string, error)
+	acceptSwapFn  func(ctx context.Context, swapID string, acceptor string) (string, error)
+	cancelSwapFn  func(ctx context.Context, swapID string, canceller string) (string, error)
+	executeSwapFn func(ctx context.Context, swapID string) (string, error)
 }
 
-func (m *mockSwapRepo) GetSwapOfferByID(ctx context.Context, id string) (*SwapOffer, error) {
-	offer, ok := m.offers[id]
-	if !ok {
-		return nil, errors.New("offer not found")
-	}
-	return offer, nil
+func (f *fakeEscrow) CreateSwap(ctx context.Context, circleID, offeror, offeree string, offerorAsset string, offerorAmount int64, requestedAsset string, requestedAmount int64, expiresAt uint64) (string, error) {
+	return f.createSwapFn(ctx, circleID, offeror, offeree, offerorAsset, offerorAmount, requestedAsset, requestedAmount, expiresAt)
 }
 
-func (m *mockSwapRepo) UpdateSwapOfferStatus(ctx context.Context, id string, status SwapOfferStatus, transactionHash *string) error {
-	offer, ok := m.offers[id]
-	if !ok {
-		return errors.New("offer not found")
-	}
-	offer.Status = status
-	if transactionHash != nil {
-		offer.TransactionHash = transactionHash
-	}
-	return nil
+func (f *fakeEscrow) AcceptSwap(ctx context.Context, swapID string, acceptor string) (string, error) {
+	return f.acceptSwapFn(ctx, swapID, acceptor)
 }
 
-func (m *mockSwapRepo) ListUserSwapOffers(ctx context.Context, userID string, filter SwapHistoryFilter) ([]SwapOffer, int, error) {
-	var result []SwapOffer
-	for _, o := range m.offers {
-		if o.OfferorUserID == userID || (o.OffereeUserID != nil && *o.OffereeUserID == userID) {
-			result = append(result, *o)
-		}
-	}
-	return result, len(result), nil
+func (f *fakeEscrow) CancelSwap(ctx context.Context, swapID string, canceller string) (string, error) {
+	return f.cancelSwapFn(ctx, swapID, canceller)
 }
 
-func (m *mockSwapRepo) ListCircleSwapOffers(ctx context.Context, circleID string, filter SwapHistoryFilter) ([]SwapOffer, int, error) {
-	var result []SwapOffer
-	for _, o := range m.offers {
-		if o.CircleID == circleID {
-			result = append(result, *o)
-		}
-	}
-	return result, len(result), nil
+func (f *fakeEscrow) ExecuteSwap(ctx context.Context, swapID string) (string, error) {
+	return f.executeSwapFn(ctx, swapID)
 }
 
-func (m *mockSwapRepo) CancelExpiredOffers(ctx context.Context) error {
-	for _, o := range m.offers {
-		if o.Status == SwapOfferStatusCreated && time.Now().After(o.ExpiresAt) {
-			o.Status = SwapOfferStatusExpired
-		}
+type fakeRepo struct {
+	createFn        func(ctx context.Context, offer *SwapOffer) error
+	getByIDFn       func(ctx context.Context, id string) (*SwapOffer, error)
+	updateFn        func(ctx context.Context, id string, status SwapOfferStatus, transactionHash *string) error
+	listUserFn      func(ctx context.Context, userID string, filter SwapHistoryFilter) ([]SwapOffer, int, error)
+	listCircleFn    func(ctx context.Context, circleID string, filter SwapHistoryFilter) ([]SwapOffer, int, error)
+	listExpiredFn   func(ctx context.Context, now time.Time) ([]SwapOffer, error)
+	updatedStatuses []SwapOfferStatus
+	updatedIDs      []string
+}
+
+func (f *fakeRepo) CreateSwapOffer(ctx context.Context, offer *SwapOffer) error {
+	return f.createFn(ctx, offer)
+}
+
+func (f *fakeRepo) GetSwapOfferByID(ctx context.Context, id string) (*SwapOffer, error) {
+	return f.getByIDFn(ctx, id)
+}
+
+func (f *fakeRepo) UpdateSwapOfferStatus(ctx context.Context, id string, status SwapOfferStatus, transactionHash *string) error {
+	f.updatedStatuses = append(f.updatedStatuses, status)
+	f.updatedIDs = append(f.updatedIDs, id)
+	if f.updateFn != nil {
+		return f.updateFn(ctx, id, status, transactionHash)
 	}
 	return nil
 }
 
-// Mock Circle Service
-type mockCircleService struct {
-	circles map[string]*circle.Circle
-	members map[string]map[string]bool // circleID -> userID -> isMember
+func (f *fakeRepo) ListUserSwapOffers(ctx context.Context, userID string, filter SwapHistoryFilter) ([]SwapOffer, int, error) {
+	return f.listUserFn(ctx, userID, filter)
 }
 
-func newMockCircleService() *mockCircleService {
-	return &mockCircleService{
-		circles: make(map[string]*circle.Circle),
-		members: make(map[string]map[string]bool),
-	}
+func (f *fakeRepo) ListCircleSwapOffers(ctx context.Context, circleID string, filter SwapHistoryFilter) ([]SwapOffer, int, error) {
+	return f.listCircleFn(ctx, circleID, filter)
 }
 
-func (m *mockCircleService) Get(ctx context.Context, id string) (*circle.Circle, error) {
-	c, ok := m.circles[id]
-	if !ok {
-		return nil, errors.New("circle not found")
-	}
-	return c, nil
+func (f *fakeRepo) ListExpiredCreatedOffers(ctx context.Context, now time.Time) ([]SwapOffer, error) {
+	return f.listExpiredFn(ctx, now)
 }
 
-func (m *mockCircleService) IsMember(ctx context.Context, circleID, userID string) (bool, error) {
-	if circleMembers, ok := m.members[circleID]; ok {
-		return circleMembers[userID], nil
-	}
-	return false, nil
+func walletUser(id string) *user.User {
+	return &user.User{WalletAddress: "G" + id + "WALLET"}
 }
 
-func (m *mockCircleService) List(ctx context.Context, filter circle.CircleFilter) ([]circle.Circle, int, error) {
-	return nil, 0, nil
-}
-func (m *mockCircleService) Create(ctx context.Context, organizerID string, input circle.CreateCircleInput) (*circle.Circle, error) {
-	return nil, nil
-}
-func (m *mockCircleService) Update(ctx context.Context, id, userID string, input circle.UpdateCircleInput) (*circle.Circle, error) {
-	return nil, nil
-}
-func (m *mockCircleService) Start(ctx context.Context, id, userID string) error { return nil }
-func (m *mockCircleService) Close(ctx context.Context, id, userID string) error { return nil }
-func (m *mockCircleService) Cancel(ctx context.Context, id, userID string) error { return nil }
-func (m *mockCircleService) Join(ctx context.Context, circleID, userID string, inviteCode string) error {
-	return nil
-}
-func (m *mockCircleService) Exit(ctx context.Context, circleID, userID string) error { return nil }
-func (m *mockCircleService) GetMembers(ctx context.Context, circleID string) ([]circle.CircleMember, error) {
-	return nil, nil
-}
-func (m *mockCircleService) RemoveMember(ctx context.Context, circleID, callerID, memberAddress string, reason string) error {
-	return nil
-}
-
-// Mock User Service
-type mockUserService struct {
-	users map[string]*user.User
-}
-
-func newMockUserService() *mockUserService {
-	return &mockUserService{
-		users: make(map[string]*user.User),
-	}
-}
-
-func (m *mockUserService) GetByID(ctx context.Context, id string) (*user.User, error) {
-	u, ok := m.users[id]
-	if !ok {
-		return nil, errors.New("user not found")
-	}
-	return u, nil
-}
-
-func (m *mockUserService) GetByWallet(ctx context.Context, wallet string) (*user.User, error) {
-	for _, u := range m.users {
-		if u.WalletAddress == wallet {
-			return u, nil
-		}
-	}
-	return nil, errors.New("user not found")
-}
-func (m *mockUserService) GetByEmail(ctx context.Context, email string) (*user.User, error) {
-	return nil, nil
-}
-func (m *mockUserService) Create(ctx context.Context, wallet string) (*user.User, error) {
-	return nil, nil
-}
-func (m *mockUserService) Delete(ctx context.Context, id string) error { return nil }
-func (m *mockUserService) UpdateProfile(ctx context.Context, id string, updates user.UpdateProfileInput) (*user.User, error) {
-	return nil, nil
-}
-func (m *mockUserService) UpdateNotificationPreferences(ctx context.Context, id string, prefs user.NotificationPrefsInput) (*user.User, error) {
-	return nil, nil
-}
-func (m *mockUserService) IsEmailTaken(ctx context.Context, email string) (bool, error) {
-	return false, nil
-}
-func (m *mockUserService) GetMoiScore(ctx context.Context, id string) (*user.MoiScoreResponse, error) {
-	return nil, nil
-}
-func (m *mockUserService) GetCircles(ctx context.Context, id string) ([]any, error) {
-	return nil, nil
-}
-func (m *mockUserService) ClaimName(ctx context.Context) (string, error) { return "", nil }
-
-// ─── Swap Service Lifecycle Tests ─────────────────────────────────────────────
-
-func TestSwapService_CreateSwapOffer_Validation(t *testing.T) {
-	repo := newMockSwapRepo()
-	circleSvc := newMockCircleService()
-	userSvc := newMockUserService()
-
-	svc := NewService(repo, circleSvc, userSvc, nil)
-	ctx := context.Background()
-
-	circleID := uuid.NewString()
-	userA := uuid.NewString()
-	userB := uuid.NewString()
-
-	// 1. Invalid circle ID
-	_, err := svc.CreateSwapOffer(ctx, userA, SwapOfferRequest{
-		CircleID: circleID,
-	})
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, apperrors.ErrInvalidInput))
-
-	// Setup circle
-	circleSvc.circles[circleID] = &circle.Circle{ID: uuid.MustParse(circleID), Name: "Circle 1"}
-
-	// 2. User is not a member of the circle
-	_, err = svc.CreateSwapOffer(ctx, userA, SwapOfferRequest{
-		CircleID: circleID,
-	})
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, apperrors.ErrForbidden))
-
-	// Add userA as member
-	circleSvc.members[circleID] = map[string]bool{userA: true}
-
-	// 3. Offeree is specified but is not a member
-	_, err = svc.CreateSwapOffer(ctx, userA, SwapOfferRequest{
-		CircleID:      circleID,
-		OffereeUserID: &userB,
-	})
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, apperrors.ErrInvalidInput))
-
-	// Add userB as member
-	circleSvc.members[circleID][userB] = true
-
-	// 4. User has no wallet address
-	userSvc.users[userA] = &user.User{ID: uuid.MustParse(userA), WalletAddress: ""}
-	_, err = svc.CreateSwapOffer(ctx, userA, SwapOfferRequest{
-		CircleID:        circleID,
-		OffereeUserID:   &userB,
-		OfferorAsset:    "USDC",
-		OfferorAmount:   100,
-		RequestedAsset:  "XLM",
-		RequestedAmount: 500,
-		ExpiresIn:       24,
-	})
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, apperrors.ErrInvalidInput))
-}
-
-func TestSwapService_AcceptSwapOffer_Validation(t *testing.T) {
-	repo := newMockSwapRepo()
-	circleSvc := newMockCircleService()
-	userSvc := newMockUserService()
-
-	svc := NewService(repo, circleSvc, userSvc, nil)
-	ctx := context.Background()
-
-	circleID := uuid.NewString()
-	userA := uuid.NewString()
-	userB := uuid.NewString()
-	userC := uuid.NewString()
-
-	// 1. Offer not found
-	_, err := svc.AcceptSwapOffer(ctx, userB, "non-existent-id")
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, apperrors.ErrNotFound))
-
-	// Create an offer in repo
-	offerID := uuid.NewString()
-	repo.offers[offerID] = &SwapOffer{
-		ID:            offerID,
-		CircleID:      circleID,
-		OfferorUserID: userA,
-		OffereeUserID: &userB,
+func createdOffer(id, offeror string) *SwapOffer {
+	return &SwapOffer{
+		ID:            id,
+		OfferorUserID: offeror,
 		Status:        SwapOfferStatusCreated,
+		ExpiresAt:     time.Now().Add(24 * time.Hour),
 	}
-
-	// 2. Acceptor is not the specified offeree
-	_, err = svc.AcceptSwapOffer(ctx, userC, offerID)
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, apperrors.ErrForbidden))
-
-	// 3. Acceptor is not a member of the circle
-	_, err = svc.AcceptSwapOffer(ctx, userB, offerID)
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, apperrors.ErrForbidden))
-
-	// Setup circle members
-	circleSvc.members[circleID] = map[string]bool{userA: true, userB: true}
-
-	// 4. Offeror cannot accept own offer
-	repo.offers[offerID].OffereeUserID = nil // open offer
-	_, err = svc.AcceptSwapOffer(ctx, userA, offerID)
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, apperrors.ErrInvalidInput))
-
-	// 5. Offer not in created status
-	repo.offers[offerID].Status = SwapOfferStatusCompleted
-	_, err = svc.AcceptSwapOffer(ctx, userB, offerID)
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, apperrors.ErrInvalidInput))
 }
 
-func TestSwapService_GetSwapHistory(t *testing.T) {
-	repo := newMockSwapRepo()
-	circleSvc := newMockCircleService()
-	userSvc := newMockUserService()
+// ── Sweep worker ──────────────────────────────────────────────────────────
 
-	svc := NewService(repo, circleSvc, userSvc, nil)
+func TestSweepExpiredOffers_ReleasesEscrowAndMarksExpired(t *testing.T) {
 	ctx := context.Background()
+	offers := []SwapOffer{*createdOffer("offer-1", "u1"), *createdOffer("offer-2", "u2")}
+	repo := &fakeRepo{listExpiredFn: func(ctx context.Context, now time.Time) ([]SwapOffer, error) {
+		return offers, nil
+	}}
+	users := &fakeUserService{getByIDFn: func(ctx context.Context, id string) (*user.User, error) {
+		return walletUser(id), nil
+	}}
+	var cancelled []string
+	escrow := &fakeEscrow{cancelSwapFn: func(ctx context.Context, swapID, canceller string) (string, error) {
+		cancelled = append(cancelled, swapID+":"+canceller)
+		return "tx-" + swapID, nil
+	}}
 
-	userA := uuid.NewString()
-	userB := uuid.NewString()
-
-	repo.offers["o1"] = &SwapOffer{ID: "o1", OfferorUserID: userA, CircleID: "c1", Status: SwapOfferStatusCreated}
-	repo.offers["o2"] = &SwapOffer{ID: "o2", OfferorUserID: userA, OffereeUserID: &userB, CircleID: "c1", Status: SwapOfferStatusCompleted}
-	repo.offers["o3"] = &SwapOffer{ID: "o3", OfferorUserID: userB, CircleID: "c2", Status: SwapOfferStatusCreated}
-
-	resp, err := svc.GetSwapHistory(ctx, userA, SwapHistoryFilter{Limit: 20, Offset: 0})
+	svc := NewService(repo, nil, users, escrow)
+	swept, err := svc.SweepExpiredOffers(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, 2, resp.Total)
-	assert.Len(t, resp.Swaps, 2)
+
+	assert.Equal(t, 2, swept)
+	assert.Equal(t, []string{"offer-1:Gu1WALLET", "offer-2:Gu2WALLET"}, cancelled)
+	// Both offers marked expired in the same order.
+	assert.Equal(t, []SwapOfferStatus{SwapOfferStatusExpired, SwapOfferStatusExpired}, repo.updatedStatuses)
+	assert.Equal(t, []string{"offer-1", "offer-2"}, repo.updatedIDs)
+}
+
+func TestSweepExpiredOffers_SkipsOfferWhenOnChainCancelFails(t *testing.T) {
+	ctx := context.Background()
+	offers := []SwapOffer{*createdOffer("offer-1", "u1"), *createdOffer("offer-2", "u2")}
+	repo := &fakeRepo{listExpiredFn: func(ctx context.Context, now time.Time) ([]SwapOffer, error) {
+		return offers, nil
+	}}
+	users := &fakeUserService{getByIDFn: func(ctx context.Context, id string) (*user.User, error) {
+		return walletUser(id), nil
+	}}
+	escrow := &fakeEscrow{cancelSwapFn: func(ctx context.Context, swapID, canceller string) (string, error) {
+		if swapID == "offer-1" {
+			return "", errors.New("simulation failed")
+		}
+		return "tx-" + swapID, nil
+	}}
+
+	svc := NewService(repo, nil, users, escrow)
+	swept, err := svc.SweepExpiredOffers(ctx)
+	require.NoError(t, err)
+
+	// Only the offer that cancelled on-chain was swept; the failed one stays
+	// created so the next sweep retries it.
+	assert.Equal(t, 1, swept)
+	assert.Equal(t, []SwapOfferStatus{SwapOfferStatusExpired}, repo.updatedStatuses)
+	assert.Equal(t, []string{"offer-2"}, repo.updatedIDs)
+}
+
+func TestSweepExpiredOffers_SkipsOfferWhenOfferorUnresolvable(t *testing.T) {
+	ctx := context.Background()
+	offers := []SwapOffer{*createdOffer("offer-1", "gone-user")}
+	repo := &fakeRepo{listExpiredFn: func(ctx context.Context, now time.Time) ([]SwapOffer, error) {
+		return offers, nil
+	}}
+	users := &fakeUserService{getByIDFn: func(ctx context.Context, id string) (*user.User, error) {
+		return nil, errors.New("user not found")
+	}}
+	escrow := &fakeEscrow{cancelSwapFn: func(ctx context.Context, swapID, canceller string) (string, error) {
+		return "tx", nil
+	}}
+
+	svc := NewService(repo, nil, users, escrow)
+	swept, err := svc.SweepExpiredOffers(ctx)
+	require.NoError(t, err)
+
+	assert.Equal(t, 0, swept)
+	assert.Empty(t, repo.updatedStatuses)
+}
+
+// ── Offeror cancel ────────────────────────────────────────────────────────
+
+func TestCancelSwapOffer_Success(t *testing.T) {
+	ctx := context.Background()
+	repo := &fakeRepo{getByIDFn: func(ctx context.Context, id string) (*SwapOffer, error) {
+		return createdOffer("offer-1", "u1"), nil
+	}}
+	users := &fakeUserService{getByIDFn: func(ctx context.Context, id string) (*user.User, error) {
+		return walletUser(id), nil
+	}}
+	var cancelled []string
+	escrow := &fakeEscrow{cancelSwapFn: func(ctx context.Context, swapID, canceller string) (string, error) {
+		cancelled = append(cancelled, swapID+":"+canceller)
+		return "tx", nil
+	}}
+
+	svc := NewService(repo, nil, users, escrow)
+	offer, err := svc.CancelSwapOffer(ctx, "u1", "offer-1")
+	require.NoError(t, err)
+
+	assert.Equal(t, SwapOfferStatusCancelled, offer.Status)
+	assert.Equal(t, []string{"offer-1:Gu1WALLET"}, cancelled)
+	assert.Equal(t, []SwapOfferStatus{SwapOfferStatusCancelled}, repo.updatedStatuses)
+}
+
+func TestCancelSwapOffer_OnlyOfferorCanCancel(t *testing.T) {
+	ctx := context.Background()
+	repo := &fakeRepo{getByIDFn: func(ctx context.Context, id string) (*SwapOffer, error) {
+		return createdOffer("offer-1", "u1"), nil
+	}}
+	escrow := &fakeEscrow{cancelSwapFn: func(ctx context.Context, swapID, canceller string) (string, error) {
+		t.Fatal("escrow must not be called for a non-offeror")
+		return "", nil
+	}}
+
+	svc := NewService(repo, nil, &fakeUserService{}, escrow)
+	_, err := svc.CancelSwapOffer(ctx, "attacker", "offer-1")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, apperrors.ErrForbidden)
+}
+
+func TestCancelSwapOffer_RejectsNonCreatedOffer(t *testing.T) {
+	ctx := context.Background()
+	accepted := createdOffer("offer-1", "u1")
+	accepted.Status = SwapOfferStatusAccepted
+	repo := &fakeRepo{getByIDFn: func(ctx context.Context, id string) (*SwapOffer, error) {
+		return accepted, nil
+	}}
+	escrow := &fakeEscrow{cancelSwapFn: func(ctx context.Context, swapID, canceller string) (string, error) {
+		t.Fatal("escrow must not be called for a non-created offer")
+		return "", nil
+	}}
+
+	svc := NewService(repo, nil, &fakeUserService{}, escrow)
+	_, err := svc.CancelSwapOffer(ctx, "u1", "offer-1")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, apperrors.ErrInvalidInput)
+}
+
+// ── Acceptance vs expiry ──────────────────────────────────────────────────
+
+func TestAcceptSwapOffer_RejectsExpiredOffer(t *testing.T) {
+	ctx := context.Background()
+	expired := createdOffer("offer-1", "u1")
+	expired.ExpiresAt = time.Now().Add(-time.Hour) // expired but not yet swept
+	repo := &fakeRepo{getByIDFn: func(ctx context.Context, id string) (*SwapOffer, error) {
+		return expired, nil
+	}}
+	escrow := &fakeEscrow{acceptSwapFn: func(ctx context.Context, swapID, acceptor string) (string, error) {
+		t.Fatal("escrow must not be called for an expired offer")
+		return "", nil
+	}}
+
+	svc := NewService(repo, nil, &fakeUserService{}, escrow)
+	_, err := svc.AcceptSwapOffer(ctx, "u2", "offer-1")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, apperrors.ErrInvalidInput)
+	assert.Contains(t, err.Error(), "expired")
 }

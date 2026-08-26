@@ -210,6 +210,7 @@ func NewRouter(
 			// Swap endpoints
 			authenticated.POST("/swap/offer", swapHandler.CreateSwapOffer)
 			authenticated.POST("/swap/accept", swapHandler.AcceptSwapOffer)
+			authenticated.POST("/swap/cancel", swapHandler.CancelSwapOffer)
 			authenticated.GET("/swap/history", swapHandler.GetSwapHistory)
 
 		authenticated.POST("/webhooks", webhookHandler.RegisterWebhook)
@@ -229,7 +230,7 @@ func NewRouter(
 				admin.GET("/metrics", adminHandler.GetMetrics)
 				admin.POST("/feature-flags", adminHandler.UpdateFeatureFlag)
 				admin.GET("/jobs/dead-letter", adminJobQueueHandler.GetDeadLetterJobs)
-				admin.POST("/jobs/dead-letter/:id/retry", adminJobQueueHandler.RetryDeadLetterJob)
+			admin.POST("/jobs/dead-letter/:id/retry", adminJobQueueHandler.RetryDeadLetterJob)
 		}
 
 		optional := api.Group("")

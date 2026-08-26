@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/moistello/backend/config"
@@ -104,7 +105,7 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to connect to redis")
 	}
-	defer redisClient.Close()
+	defer func() { _ = redisClient.Close() }()
 
 	userRepo := user.NewRepository(db)
 	circleRepo := circle.NewRepository(db)
@@ -227,6 +228,24 @@ func main() {
 	swapRepo := swap.NewPostgresRepository(db)
 	swapSvc := swap.NewService(swapRepo, circleSvc, userSvc, escrowSwapClient)
 	swapH := handler.NewSwapHandler(swapSvc)
+
+	// Swap expiry sweep (#243): periodically releases escrow on-chain for
+	// created swap offers past their expiry and marks them expired.
+	swapSweeper := swap.NewSweeper(swapSvc, cfg.Swap.SweepInterval)
+	sweepCtx, sweepCancel := context.WithCancel(context.Background())
+	defer sweepCancel()
+	swapSweeper.Start(sweepCtx)
+
+	// Admin job-queue (#162): the worker loop plus the admin routes that
+	// inspect and retry dead-letter jobs. Queues register handlers as
+	// producers appear:
+	//   jobWorker.RegisterHandler("emails", sendEmailHandler)
+	jobQueue := jobqueue.NewJobQueue(db)
+	jobWorker := jobqueue.NewWorker(jobQueue, 2*time.Second)
+	jobWorkerCtx, jobWorkerCancel := context.WithCancel(context.Background())
+	defer jobWorkerCancel()
+	jobWorker.Start(jobWorkerCtx)
+	adminJobQueueH := handler.NewAdminJobQueueHandler(jobQueue)
 
 	governanceSvc := governance.NewService()
 	governanceH := handler.NewGovernanceHandler(governanceSvc)

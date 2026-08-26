@@ -16,13 +16,105 @@ import (
 )
 
 // errRedisUnavailable is returned when Redis cannot be reached during a rate
-// limit check. The middleware falls back to an in-memory rate limiter rather
-// than failing closed with 503.
+// limit check.
 var errRedisUnavailable = errors.New("rate limiter: Redis unavailable")
 
 var inMemoryLimiter = ratelimit.NewInMemoryRateLimiter()
 
-func RateLimitMiddleware(redisClient *redis.Client, cfg config.RateLimitConfig) gin.HandlerFunc {
+// Rate-limit outage policy (#161).
+//
+// The repository historically had two rate limiters with opposite security
+// postures: the legacy JS middleware/rateLimiter.js failed CLOSED (503 when
+// Redis was unreachable), while this Go middleware failed OPEN (fell back to
+// the in-memory limiter). The single policy, documented in
+// docs/rate-limiting.md, is FAIL CLOSED by default: when Redis is down the
+// limiter cannot see the counters it is supposed to enforce, so it refuses
+// with 503 rather than silently letting every caller through. This matters
+// most on the auth/OTP routes, where a limiter that stops limiting during an
+// outage is worse than no limiter at all.
+//
+// Routes that genuinely cannot afford a 503 during a Redis outage (e.g.
+// public read-only endpoints) can opt into fail-open per route with
+// WithFailOpen(); security-critical routes can force fail-closed with
+// WithFailClosed() even if the global config is flipped.
+type rateLimitPolicy int
+
+const (
+	policyDefault    rateLimitPolicy = iota // use cfg.FailClosed
+	policyFailClosed                        // always fail closed, ignore config
+	policyFailOpen                          // always fail open, ignore config
+)
+
+type rateLimitOptions struct {
+	policy rateLimitPolicy
+}
+
+type RateLimitOption func(*rateLimitOptions)
+
+// WithFailClosed forces fail-closed behaviour for this route regardless of the
+// global config — use it for auth/OTP and other security-critical paths.
+func WithFailClosed() RateLimitOption {
+	return func(o *rateLimitOptions) { o.policy = policyFailClosed }
+}
+
+// WithFailOpen forces fail-open behaviour (in-memory fallback) for this route,
+// for paths where a 503 during a Redis outage is worse than an unenforced
+// limit.
+func WithFailOpen() RateLimitOption {
+	return func(o *rateLimitOptions) { o.policy = policyFailOpen }
+}
+
+func resolveFailClosed(cfg config.RateLimitConfig, opts ...RateLimitOption) bool {
+	o := rateLimitOptions{}
+	for _, opt := range opts {
+		opt(&o)
+	}
+	switch o.policy {
+	case policyFailClosed:
+		return true
+	case policyFailOpen:
+		return false
+	default:
+		return cfg.FailClosed
+	}
+}
+
+// enforceRateLimit runs the check and enforces the outage policy. It returns
+// false when the request has been aborted (rate limited, or fail-closed during
+// a Redis outage).
+func enforceRateLimit(c *gin.Context, redisClient *redis.Client, key string, limit int, window time.Duration, failClosed bool, errorMessage string) bool {
+	allowed, remaining, ttl, err := checkLimitWithWindow(c, redisClient, key, limit, window)
+	if err != nil {
+		if failClosed {
+			log.Error().Err(err).Str("key", key).Msg("rate limit check failed: Redis unavailable, failing closed")
+			setRateLimitHeaders(c, limit, 0, window)
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
+				"success":    false,
+				"error":      "service temporarily unavailable",
+				"message":    "rate limiter unavailable — request refused",
+				"retryAfter": int64(window.Seconds()),
+			})
+			return false
+		}
+		log.Warn().Err(err).Str("key", key).Msg("rate limit check failed: falling back to in-memory limiter")
+		allowed, remaining, ttl, _ = inMemoryLimiter.Check(c.Request.Context(), key, limit, window)
+	}
+
+	setRateLimitHeaders(c, limit, remaining, ttl)
+
+	if !allowed {
+		c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+			"success":    false,
+			"error":      errorMessage,
+			"retryAfter": int64(ttl.Seconds()),
+		})
+		return false
+	}
+	return true
+}
+
+func RateLimitMiddleware(redisClient *redis.Client, cfg config.RateLimitConfig, opts ...RateLimitOption) gin.HandlerFunc {
+	failClosed := resolveFailClosed(cfg, opts...)
 	return func(c *gin.Context) {
 		key := "ratelimit:g:" + c.ClientIP()
 		limit := cfg.Global
@@ -31,82 +123,45 @@ func RateLimitMiddleware(redisClient *redis.Client, cfg config.RateLimitConfig) 
 			limit = cfg.Authenticated
 		}
 
-		allowed, remaining, ttl, err := checkLimit(c, redisClient, key, limit)
-		if err != nil {
-			log.Warn().Err(err).Str("key", key).Msg("rate limit check failed: falling back to in-memory limiter")
-			allowed, remaining, ttl, _ = inMemoryLimiter.Check(c.Request.Context(), key, limit, 1*time.Minute)
-		}
-
-		setRateLimitHeaders(c, limit, remaining, ttl)
-
-		if !allowed {
-			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-				"success":    false,
-				"error":      "rate limit exceeded",
-				"retryAfter": ttl.Seconds(),
-			})
+		if !enforceRateLimit(c, redisClient, key, limit, 1*time.Minute, failClosed, "rate limit exceeded") {
 			return
 		}
 		c.Next()
 	}
 }
 
-func AuthRateLimitMiddleware(redisClient *redis.Client, cfg config.RateLimitConfig) gin.HandlerFunc {
+func AuthRateLimitMiddleware(redisClient *redis.Client, cfg config.RateLimitConfig, opts ...RateLimitOption) gin.HandlerFunc {
+	// Auth/OTP is the case the policy exists for: fail closed even if the
+	// global config is ever flipped, unless the caller explicitly overrides.
+	failClosed := resolveFailClosed(cfg, append(opts, WithFailClosed())...)
 	return func(c *gin.Context) {
 		key := "ratelimit:a:" + c.ClientIP()
 		limit := cfg.Auth
 
-		allowed, remaining, ttl, err := checkLimit(c, redisClient, key, limit)
-		if err != nil {
-			log.Warn().Err(err).Str("key", key).Msg("rate limit check failed: falling back to in-memory limiter")
-			allowed, remaining, ttl, _ = inMemoryLimiter.Check(c.Request.Context(), key, limit, 1*time.Minute)
-		}
-
-		setRateLimitHeaders(c, limit, remaining, ttl)
-
-		if !allowed {
-			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-				"success":    false,
-				"error":      "too many auth attempts",
-				"retryAfter": ttl.Seconds(),
-			})
+		if !enforceRateLimit(c, redisClient, key, limit, 1*time.Minute, failClosed, "too many auth attempts") {
 			return
 		}
 		c.Next()
 	}
 }
 
-func PerResourceRateLimitMiddleware(redisClient *redis.Client, resource string, limit int, window time.Duration) gin.HandlerFunc {
+func PerResourceRateLimitMiddleware(redisClient *redis.Client, resource string, limit int, window time.Duration, opts ...RateLimitOption) gin.HandlerFunc {
+	failClosed := resolveFailClosed(config.RateLimitConfig{}, opts...)
 	return func(c *gin.Context) {
 		key := fmt.Sprintf("ratelimit:r:%s:%s", resource, c.ClientIP())
-		allowed, remaining, ttl, err := checkLimitWithWindow(c, redisClient, key, limit, window)
-		if err != nil {
-			log.Warn().Err(err).Str("key", key).Msg("rate limit check failed: falling back to in-memory limiter")
-			allowed, remaining, ttl, _ = inMemoryLimiter.Check(c.Request.Context(), key, limit, window)
-		}
 
-		setRateLimitHeaders(c, limit, remaining, ttl)
-
-		if !allowed {
-			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-				"success":    false,
-				"error":      fmt.Sprintf("rate limit exceeded for %s", resource),
-				"retryAfter": ttl.Seconds(),
-			})
+		if !enforceRateLimit(c, redisClient, key, limit, window, failClosed, fmt.Sprintf("rate limit exceeded for %s", resource)) {
 			return
 		}
 		c.Next()
 	}
-}
-
-func checkLimit(c *gin.Context, redisClient *redis.Client, key string, limit int) (bool, int, time.Duration, error) {
-	return checkLimitWithWindow(c, redisClient, key, limit, 1*time.Minute)
 }
 
 // checkLimitWithWindow implements a Redis-backed sliding window rate limiter
 // using a sorted set with timestamps as scores. It returns (allowed, remaining, ttl, err).
-// err is non-nil only when Redis is unreachable — callers fall back to an
-// in-memory rate limiter rather than failing the request.
+// err is non-nil only when Redis is unreachable — the caller decides what that
+// means per the rate-limit outage policy (fail closed by default, see
+// docs/rate-limiting.md).
 func checkLimitWithWindow(c *gin.Context, redisClient *redis.Client, key string, limit int, window time.Duration) (bool, int, time.Duration, error) {
 	reqCtx := c.Request.Context()
 	redisKey := fmt.Sprintf("ratelimit:%s", key)

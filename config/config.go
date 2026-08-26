@@ -29,7 +29,7 @@ type Config struct {
 	Environment  string
 	YellowCard   YellowCardConfig `mapstructure:"yellow_card"`
 	Tracing      TracingConfig
-	JobQueue     JobQueueConfig   `mapstructure:"job_queue"`
+	Swap         SwapConfig       `mapstructure:"swap"`
 }
 
 type ServerConfig struct {
@@ -94,12 +94,8 @@ func (s StellarConfig) String() string {
 }
 
 type YellowCardConfig struct {
-	APIKey               string  `mapstructure:"api_key"`
-	APISecret            string  `mapstructure:"api_secret"`
-	MaxDepositNGN        float64 `mapstructure:"max_deposit_ngn"`
-	MaxWithdrawUSDC      float64 `mapstructure:"max_withdraw_usdc"`
-	DailyDepositCapNGN   float64 `mapstructure:"daily_deposit_cap_ngn"`
-	DailyWithdrawCapUSDC float64 `mapstructure:"daily_withdraw_cap_usdc"`
+	APIKey    string `mapstructure:"api_key"`
+	APISecret string `mapstructure:"api_secret"`
 }
 
 type AuthConfig struct {
@@ -159,10 +155,24 @@ type CORSConfig struct {
 	MaxAge           time.Duration `mapstructure:"max_age"`
 }
 
+type SwapConfig struct {
+	// SweepInterval is how often the swap sweep worker runs. The sweep
+	// releases escrow on-chain for created swap offers past their expiry and
+	// marks them expired (#243).
+	SweepInterval time.Duration `mapstructure:"sweep_interval"`
+}
+
 type RateLimitConfig struct {
 	Global        int `mapstructure:"global"`
 	Authenticated int `mapstructure:"authenticated"`
 	Auth          int `mapstructure:"auth"`
+	// FailClosed decides what happens when Redis is unreachable during a rate
+	// limit check. True (the default, and the single policy documented in
+	// docs/rate-limiting.md) refuses the request with 503 — the same posture
+	// the legacy JS middleware/rateLimiter.js always had. False falls back to
+	// the in-memory limiter (fails open). Individual routes may override this
+	// per-route via middleware.RateLimitMiddleware options.
+	FailClosed bool `mapstructure:"fail_closed"`
 }
 
 type LoggingConfig struct {
@@ -176,14 +186,6 @@ type TracingConfig struct {
 	CollectorEndpoint string       `mapstructure:"collector_endpoint"`
 	ServiceName      string       `mapstructure:"service_name"`
 	SampleRate       float64      `mapstructure:"sample_rate"`
-}
-
-type JobQueueConfig struct {
-	Enabled      bool          `mapstructure:"enabled"`
-	Concurrency  int           `mapstructure:"concurrency"`
-	PollInterval time.Duration `mapstructure:"poll_interval"`
-	MaxRetries   int           `mapstructure:"max_retries"`
-	Queues       []string      `mapstructure:"queues"`
 }
 
 func Load(path string) (*Config, error) {
@@ -240,6 +242,7 @@ func Load(path string) (*Config, error) {
 	setDefault(v, "rate_limit.global", 100)
 	setDefault(v, "rate_limit.authenticated", 300)
 	setDefault(v, "rate_limit.auth", 10)
+	setDefault(v, "rate_limit.fail_closed", true)
 	setDefault(v, "logging.level", "debug")
 	setDefault(v, "logging.format", "json")
 	setDefault(v, "logging.output", "stdout")
@@ -254,19 +257,10 @@ func Load(path string) (*Config, error) {
 	setDefault(v, "notification.push.fcm_server_key", "")
 	setDefault(v, "yellow_card.api_key", "")
 	setDefault(v, "yellow_card.api_secret", "")
+	setDefault(v, "swap.sweep_interval", "1m")
 	setDefault(v, "security.wallet_pepper", "")
 	setDefault(v, "security.passkey_pepper", "")
 	setDefault(v, "security.encryption_key", "")
-	setDefault(v, "job_queue.enabled", true)
-	setDefault(v, "job_queue.concurrency", 5)
-	setDefault(v, "job_queue.poll_interval", "500ms")
-	setDefault(v, "job_queue.max_retries", 3)
-	setDefault(v, "job_queue.queues", []string{"default", "notifications", "webhooks", "emails"})
-
-	mustBindEnv(v, "job_queue.enabled", "MOISTELLO_JOB_QUEUE_ENABLED")
-	mustBindEnv(v, "job_queue.concurrency", "MOISTELLO_JOB_QUEUE_CONCURRENCY")
-	mustBindEnv(v, "job_queue.poll_interval", "MOISTELLO_JOB_QUEUE_POLL_INTERVAL")
-	mustBindEnv(v, "job_queue.max_retries", "MOISTELLO_JOB_QUEUE_MAX_RETRIES")
 
 	mustBindEnv(v, "environment", "MOISTELLO_ENVIRONMENT", "NODE_ENV")
 	mustBindEnv(v, "database.url", "MOISTELLO_DATABASE_URL", "DATABASE_URL")
@@ -323,6 +317,7 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("rate_limit.global", 100)
 	v.SetDefault("rate_limit.authenticated", 300)
 	v.SetDefault("rate_limit.auth", 10)
+	v.SetDefault("rate_limit.fail_closed", true)
 	v.SetDefault("logging.level", "debug")
 	v.SetDefault("logging.format", "json")
 	v.SetDefault("logging.output", "stdout")
