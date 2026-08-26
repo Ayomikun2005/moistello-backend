@@ -168,21 +168,21 @@ func (s *authService) CreateSession(ctx context.Context, userID uuid.UUID, sessi
 
 	sessionData := fmt.Sprintf("%s|%s|%d", userIDStr, deviceInfo, time.Now().Unix())
 	sessionKey := fmt.Sprintf("session:%s", tokenHash)
-	if err := s.redis.Set(ctx, sessionKey, sessionData, s.refreshTTL).Err(); err != nil {
-		return nil, fmt.Errorf("storing session in redis: %w", err)
-	}
-
 	csrfKey := fmt.Sprintf("csrf:%x", sha256.Sum256([]byte(accessToken)))
-	if err := s.redis.Set(ctx, csrfKey, csrfToken, sessionTTL).Err(); nil != err {
-		return nil, fmt.Errorf("storing CSRF token in redis: %w", err)
-	}
-
-	// Index session by user for bulk operations (logout, force-invalidate)
 	userSessionsKey := fmt.Sprintf("user:sessions:%s", userIDStr)
-	if err := s.redis.SAdd(ctx, userSessionsKey, tokenHash).Err(); nil != err {
-		log.Warn().Err(err).Msg("failed to index user session — non-fatal")
+
+	pipe := s.redis.TxPipeline()
+	pipe.Set(ctx, sessionKey, sessionData, s.refreshTTL)
+	pipe.Set(ctx, csrfKey, csrfToken, sessionTTL)
+	pipe.SAdd(ctx, userSessionsKey, tokenHash)
+	pipe.Expire(ctx, userSessionsKey, sessionTTL)
+
+	if _, err := pipe.Exec(ctx); err != nil {
+		// Rollback partial writes on failure to avoid leaving orphan state
+		_ = s.redis.Del(ctx, sessionKey, csrfKey).Err()
+		_ = s.redis.SRem(ctx, userSessionsKey, tokenHash).Err()
+		return nil, fmt.Errorf("storing session and CSRF in redis: %w", err)
 	}
-	s.redis.Expire(ctx, userSessionsKey, sessionTTL)
 
 	return &TokenPair{
 		AccessToken:  accessToken,

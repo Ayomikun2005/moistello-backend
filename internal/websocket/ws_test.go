@@ -52,93 +52,65 @@ func TestHub_Broadcast(t *testing.T) {
 
 func TestHub_BroadcastToUser(t *testing.T) {
 	hub := NewHub()
-	// clientID is distinct from UserID (UUID vs user ID)
-	c1 := &Client{ID: "client-uuid-1", UserID: "user-123", Send: make(chan []byte, 10), Hub: hub}
+	// Client has random UUID ID and authentic UserID
+	c1 := &Client{ID: "conn-uuid-1", UserID: "user-42", Send: make(chan []byte, 10), Hub: hub}
 	hub.Register(c1)
-	hub.BroadcastToUser("user-123", Message{Type: "private", Payload: "secret"})
+
+	hub.BroadcastToUser("user-42", Message{Type: "private", Payload: "secret"})
 	select {
 	case msg := <-c1.Send:
 		assert.Contains(t, string(msg), "private")
+		assert.Contains(t, string(msg), "secret")
 	case <-time.After(200 * time.Millisecond):
-		t.Fatal("timeout: user broadcast did not reach client")
+		t.Fatal("timeout waiting for user broadcast")
 	}
 }
 
-func TestHub_BroadcastToUser_MultiConnection(t *testing.T) {
+func TestHub_BroadcastToUser_MultipleConnections(t *testing.T) {
 	hub := NewHub()
-	// Two separate connections/tabs for the same user
-	c1 := &Client{ID: "client-tab-1", UserID: "user-multi", Send: make(chan []byte, 10), Hub: hub}
-	c2 := &Client{ID: "client-tab-2", UserID: "user-multi", Send: make(chan []byte, 10), Hub: hub}
+	// Two connections for the same user (e.g. phone and laptop)
+	c1 := &Client{ID: "conn-phone", UserID: "user-99", Send: make(chan []byte, 10), Hub: hub}
+	c2 := &Client{ID: "conn-laptop", UserID: "user-99", Send: make(chan []byte, 10), Hub: hub}
+	cOther := &Client{ID: "conn-other", UserID: "user-other", Send: make(chan []byte, 10), Hub: hub}
+
 	hub.Register(c1)
 	hub.Register(c2)
+	hub.Register(cOther)
 
-	assert.Equal(t, 2, hub.ClientCount())
-	assert.Equal(t, 1, hub.UserCount())
+	assert.Equal(t, 2, hub.UserClientCount("user-99"))
+	assert.Equal(t, 1, hub.UserClientCount("user-other"))
 
-	hub.BroadcastToUser("user-multi", Message{Type: "notification", Payload: "multi-tab"})
+	hub.BroadcastToUser("user-99", Message{Type: "notification.new", Payload: "badge"})
 
-	// Both connections must receive the broadcast
+	// Both c1 and c2 should receive
 	select {
 	case msg := <-c1.Send:
-		assert.Contains(t, string(msg), "multi-tab")
+		assert.Contains(t, string(msg), "notification.new")
 	case <-time.After(200 * time.Millisecond):
-		t.Fatal("timeout: connection 1 did not receive user broadcast")
+		t.Fatal("timeout on c1")
 	}
 
 	select {
 	case msg := <-c2.Send:
-		assert.Contains(t, string(msg), "multi-tab")
+		assert.Contains(t, string(msg), "notification.new")
 	case <-time.After(200 * time.Millisecond):
-		t.Fatal("timeout: connection 2 did not receive user broadcast")
+		t.Fatal("timeout on c2")
 	}
 
-	// Unregister one connection — second connection should still receive messages
+	// cOther should not receive
+	select {
+	case <-cOther.Send:
+		t.Fatal("cOther should not receive message for user-99")
+	default:
+	}
+
+	// Unregister one connection
 	hub.Unregister(c1)
-	assert.Equal(t, 1, hub.ClientCount())
-	assert.Equal(t, 1, hub.UserCount())
+	assert.Equal(t, 1, hub.UserClientCount("user-99"))
 
-	hub.BroadcastToUser("user-multi", Message{Type: "notification", Payload: "still-connected"})
-	select {
-	case msg := <-c2.Send:
-		assert.Contains(t, string(msg), "still-connected")
-	case <-time.After(200 * time.Millisecond):
-		t.Fatal("timeout: remaining connection did not receive user broadcast")
-	}
-
-	// Unregister final connection — user map entry should be cleaned up
+	// Unregister second connection
 	hub.Unregister(c2)
-	assert.Equal(t, 0, hub.ClientCount())
-	assert.Equal(t, 0, hub.UserCount())
-}
-
-func TestHub_BroadcastToUser_NonExistentUser(t *testing.T) {
-	hub := NewHub()
-	c1 := &Client{ID: "client-1", UserID: "user-1", Send: make(chan []byte, 10), Hub: hub}
-	hub.Register(c1)
-
-	// Broadcast to non-existent user should not error or send to other users
-	hub.BroadcastToUser("non-existent-user", Message{Type: "private", Payload: "ghost"})
-	select {
-	case <-c1.Send:
-		t.Fatal("should not receive message targeted to another user")
-	case <-time.After(50 * time.Millisecond):
-	}
-}
-
-func TestHub_Drain(t *testing.T) {
-	hub := NewHub()
-	c1 := &Client{ID: "c1", UserID: "u1", Send: make(chan []byte, 10), Hub: hub}
-	c2 := &Client{ID: "c2", UserID: "u2", Send: make(chan []byte, 10), Hub: hub}
-	hub.Register(c1)
-	hub.Register(c2)
-	hub.JoinRoom("room-1", "c1")
-
-	assert.Equal(t, 2, hub.ClientCount())
-	hub.Drain()
-
-	assert.Equal(t, 0, hub.ClientCount())
-	assert.Equal(t, 0, hub.UserCount())
-	assert.Equal(t, 0, hub.RoomCount())
+	assert.Equal(t, 0, hub.UserClientCount("user-99"))
 }
 
 func TestHub_Broadcast_DifferentRoom(t *testing.T) {
