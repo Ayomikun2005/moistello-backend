@@ -70,7 +70,11 @@ func NewPoller(horizonURL string, contractIDs []string) *Poller {
 
 // FetchLedgers retrieves ledgers after the given cursor, up to the specified limit.
 func (p *Poller) FetchLedgers(ctx context.Context, cursor int64, limit int) ([]Ledger, error) {
-	url := fmt.Sprintf("%s/ledgers?order=asc&limit=%d&cursor=%d", p.horizonURL, limit, cursor)
+	pagingToken := cursor
+	if pagingToken > 0 {
+		pagingToken = pagingToken << 32
+	}
+	url := fmt.Sprintf("%s/ledgers?order=asc&limit=%d&cursor=%d", p.horizonURL, limit, pagingToken)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
