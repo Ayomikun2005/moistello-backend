@@ -135,6 +135,9 @@ type IndexerConfig struct {
 	PollInterval time.Duration `mapstructure:"poll_interval"`
 	BatchSize    int           `mapstructure:"batch_size"`
 	StartLedger  int64         `mapstructure:"start_ledger"`
+	// MaxCursorLag is how long the cursor's last_processed_at may trail the
+	// current time before the health server reports the indexer as unhealthy.
+	MaxCursorLag time.Duration `mapstructure:"max_cursor_lag"`
 }
 
 type NotificationConfig struct {
@@ -241,6 +244,7 @@ func Load(path string) (*Config, error) {
 	setDefault(v, "brevo.from_name", "Moistello")
 	setDefault(v, "indexer.poll_interval", "3s")
 	setDefault(v, "indexer.batch_size", 50)
+	setDefault(v, "indexer.max_cursor_lag", "2m")
 	setDefault(v, "cors.allowed_origins", []string{"http://localhost:1110"})
 	setDefault(v, "cors.allowed_methods", []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"})
 	setDefault(v, "cors.allowed_headers", []string{"Authorization", "Content-Type", "X-Request-ID"})
@@ -315,6 +319,7 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("brevo.from_name", "Moistello")
 	v.SetDefault("indexer.poll_interval", "3s")
 	v.SetDefault("indexer.batch_size", 50)
+	v.SetDefault("indexer.max_cursor_lag", "2m")
 	v.SetDefault("cors.allowed_origins", []string{"http://localhost:1110"})
 	v.SetDefault("cors.allowed_methods", []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"})
 	v.SetDefault("cors.allowed_headers", []string{"Authorization", "Content-Type", "X-Request-ID"})

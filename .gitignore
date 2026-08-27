@@ -10,4 +10,4 @@ node_modules/
 *.log
 /tmp/
 *.prod.yml
-indexer
+/indexer

@@ -61,6 +61,7 @@ indexer:
   poll_interval: "3s"
   batch_size: 50
   start_ledger: 0
+  max_cursor_lag: "2m"
 
 notification:
   email:

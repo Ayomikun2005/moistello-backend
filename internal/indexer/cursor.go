@@ -15,6 +15,12 @@ type Cursor struct {
 	LastProcessedAt time.Time `db:"last_processed_at" json:"lastProcessedAt"`
 }
 
+// Lag returns how long it has been since the cursor last advanced, relative
+// to now. A growing lag indicates the poll loop is stuck or falling behind.
+func (c *Cursor) Lag(now time.Time) time.Duration {
+	return now.Sub(c.LastProcessedAt)
+}
+
 // CursorTracker persists and retrieves the indexer cursor in PostgreSQL.
 type CursorTracker struct {
 	db *sqlx.DB

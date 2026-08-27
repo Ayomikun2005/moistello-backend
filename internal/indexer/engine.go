@@ -118,6 +118,7 @@ func (e *Engine) poll(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("reading cursor: %w", err)
 	}
+	e.metrics.CursorLagSeconds.Set(cursor.Lag(time.Now()).Seconds())
 
 	ledgers, err := e.poller.FetchLedgers(ctx, cursor.LastLedger, e.cfg.BatchSize)
 	if err != nil {
