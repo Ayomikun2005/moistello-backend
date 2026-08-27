@@ -124,12 +124,12 @@ func (t *circleTransactor) WithTransaction(ctx context.Context, fn func(repo Rep
 	}
 	defer func() {
 		if p := recover(); p != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			panic(p)
 		}
 	}()
 	if err := fn(NewRepositoryFromTx(tx)); err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		return err
 	}
 	return tx.Commit()
