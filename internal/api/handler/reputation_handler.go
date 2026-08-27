@@ -117,10 +117,10 @@ func (h *ReputationHandler) GetTierByAddress(c *gin.Context) {
 
 	tier := tierForScore(snapshot.Score)
 	response.OK(c, gin.H{
-		"address":  address,
-		"score":    snapshot.Score,
-		"level":    snapshot.Level,
-		"tier":     tier,
+		"address":   address,
+		"score":     snapshot.Score,
+		"level":     snapshot.Level,
+		"tier":      tier,
 		"breakdown": snapshot.Breakdown,
 	})
 }

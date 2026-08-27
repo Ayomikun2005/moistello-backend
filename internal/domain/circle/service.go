@@ -124,12 +124,12 @@ func (t *circleTransactor) WithTransaction(ctx context.Context, fn func(repo Rep
 	}
 	defer func() {
 		if p := recover(); p != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			panic(p)
 		}
 	}()
 	if err := fn(NewRepositoryFromTx(tx)); err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		return err
 	}
 	return tx.Commit()
@@ -663,7 +663,6 @@ func (s *circleService) RemoveMember(ctx context.Context, circleID, callerID, me
 func ceilFloat(f float64) float64 {
 	return math.Ceil(f*100) / 100
 }
-
 
 func (s *circleService) ProcessMissedContributions(ctx context.Context, circleID string, roundNumber int) error {
 	cID, err := uuid.Parse(circleID)

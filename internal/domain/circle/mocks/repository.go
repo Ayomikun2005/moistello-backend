@@ -96,7 +96,6 @@ func (m Repository) FindCirclesByUserID(ctx context.Context, userID uuid.UUID) (
 	return args.Get(0).([]circle.Circle), args.Error(1)
 }
 
-
 func (m *Repository) CreatePenalty(ctx context.Context, p *circle.Penalty) error {
 	return m.Called(ctx, p).Error(0)
 }

@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 	"github.com/moistello/backend/config"
 	"github.com/moistello/backend/internal/api/middleware"
 	"github.com/moistello/backend/internal/domain/deposit"
@@ -16,7 +14,7 @@ import (
 	"github.com/moistello/backend/internal/domain/withdrawal"
 	"github.com/moistello/backend/internal/domain/yellowcard"
 	"github.com/moistello/backend/pkg/response"
-	"github.com/rs/zerolog/log"
+	"github.com/redis/go-redis/v9"
 )
 
 type DepositHandler struct {

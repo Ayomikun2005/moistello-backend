@@ -76,9 +76,9 @@ func main() {
 	// relay indexer events to connected clients in real time.
 	processor.SetWebSocketBroadcast(func(circleID string, data any) {
 		payload, err := json.Marshal(map[string]any{
-			"type":    "indexer.event",
+			"type":     "indexer.event",
 			"circleId": circleID,
-			"payload": data,
+			"payload":  data,
 		})
 		if err != nil {
 			log.Warn().Err(err).Msg("indexer ws marshal")
@@ -91,7 +91,7 @@ func main() {
 
 	reconciler := indexer.NewReconciler(
 		cursor, poller, processor,
-		indexer.NewDeduplicator(24 * time.Hour),
+		indexer.NewDeduplicator(24*time.Hour),
 	)
 
 	engine := indexer.NewEngine(

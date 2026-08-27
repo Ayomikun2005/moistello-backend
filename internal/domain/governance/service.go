@@ -25,10 +25,10 @@ type Service interface {
 }
 
 type service struct {
-	repo       Repository
-	mu         sync.RWMutex
-	proposals  map[uuid.UUID]*Proposal
-	votesByID  map[uuid.UUID]map[uuid.UUID]bool
+	repo      Repository
+	mu        sync.RWMutex
+	proposals map[uuid.UUID]*Proposal
+	votesByID map[uuid.UUID]map[uuid.UUID]bool
 }
 
 func NewService(repo Repository) Service {

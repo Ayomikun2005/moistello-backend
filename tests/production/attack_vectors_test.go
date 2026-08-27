@@ -28,7 +28,7 @@ import (
 type VoteType string
 
 const (
-	VoteFor    VoteType = "For"
+	VoteFor     VoteType = "For"
 	VoteAgainst VoteType = "Against"
 )
 
@@ -53,19 +53,19 @@ type Proposal struct {
 }
 
 type GovernanceConfig struct {
-	QuorumPercent   float64       // e.g. 0.20 = 20%
-	MinDeposit      float64       // minimum deposit to create proposal
-	VotingPeriod    time.Duration // window for casting votes
-	TimelockPeriod  time.Duration // delay before approved proposals can execute
-	Admin           string
-	TotalSupply     uint64 // total MOI supply for quorum calculation
+	QuorumPercent  float64       // e.g. 0.20 = 20%
+	MinDeposit     float64       // minimum deposit to create proposal
+	VotingPeriod   time.Duration // window for casting votes
+	TimelockPeriod time.Duration // delay before approved proposals can execute
+	Admin          string
+	TotalSupply    uint64 // total MOI supply for quorum calculation
 }
 
 type GovernanceSim struct {
-	mu        sync.RWMutex
-	Proposals map[string]*Proposal
-	Config    GovernanceConfig
-	Paused    bool
+	mu          sync.RWMutex
+	Proposals   map[string]*Proposal
+	Config      GovernanceConfig
+	Paused      bool
 	Initialized bool
 }
 
@@ -385,8 +385,8 @@ const (
 )
 
 type tierConfig struct {
-	MaxMembers       int
-	MaxContribution  float64
+	MaxMembers         int
+	MaxContribution    float64
 	CollateralRequired float64
 }
 
@@ -917,8 +917,8 @@ func TestGovernance_ConfigUpdateAuthorization(t *testing.T) {
 
 	t.Run("admin_can_update_config", func(t *testing.T) {
 		newCfg := GovernanceConfig{
-			QuorumPercent:  0.30,    // raise quorum to 30%
-			MinDeposit:     500,     // raise minimum deposit
+			QuorumPercent:  0.30, // raise quorum to 30%
+			MinDeposit:     500,  // raise minimum deposit
 			VotingPeriod:   3 * 24 * time.Hour,
 			TimelockPeriod: 48 * time.Hour,
 			Admin:          "admin-address",
@@ -942,8 +942,8 @@ func TestGovernance_ConfigUpdateAuthorization(t *testing.T) {
 		require.NoError(t, err)
 
 		maliciousCfg := GovernanceConfig{
-			QuorumPercent:  0.01,  // weaken quorum
-			MinDeposit:     1,     // remove spam protection
+			QuorumPercent:  0.01, // weaken quorum
+			MinDeposit:     1,    // remove spam protection
 			VotingPeriod:   1 * time.Minute,
 			TimelockPeriod: 1 * time.Second, // remove timelock
 			Admin:          "admin-address",
@@ -993,10 +993,10 @@ func TestReputation_ScoreInvariants(t *testing.T) {
 
 		// ATTACK: Feed extreme values to try to overflow score past 1000.
 		snap, err := svc.CalculateScore(ctx, "d290f1ee-6c54-4b01-90e6-d701748f0851",
-			100,   // consecutive streaks
-			100,   // completed circles
-			1e12,  // huge volume
-			0,     // no inactivity decay
+			100,  // consecutive streaks
+			100,  // completed circles
+			1e12, // huge volume
+			0,    // no inactivity decay
 		)
 		require.NoError(t, err)
 		assert.LessOrEqual(t, snap.Score, 1000,
@@ -1013,10 +1013,10 @@ func TestReputation_ScoreInvariants(t *testing.T) {
 		// recency formula: max(0, 150 - daysSinceLast*5). With daysSinceLast=100,
 		// recency = max(0, 150 - 500) = 0. All other components are positive.
 		snap, err := svc.CalculateScore(ctx, "d290f1ee-6c54-4b01-90e6-d701748f0851",
-			0,    // zero streaks
-			0,    // zero completions
-			1,    // minimal volume (log(1)*30 = 0)
-			100,  // very long inactivity
+			0,   // zero streaks
+			0,   // zero completions
+			1,   // minimal volume (log(1)*30 = 0)
+			100, // very long inactivity
 		)
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, snap.Score, 0,
@@ -1166,10 +1166,10 @@ func TestCircle_TierBasedEnforcement(t *testing.T) {
 
 	t.Run("contribution_amount_enforced_by_tier", func(t *testing.T) {
 		tests := []struct {
-			name    string
-			tier    UserTier
-			amount  float64
-			wantOK  bool
+			name   string
+			tier   UserTier
+			amount float64
+			wantOK bool
 		}{
 			{"basic_within_limit", TierBasic, 100, true},
 			{"basic_exceeds_limit", TierBasic, 101, false},

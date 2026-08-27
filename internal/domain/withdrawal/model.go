@@ -5,23 +5,23 @@ import "time"
 type WithdrawalStatus string
 
 const (
-	WithdrawalStatusPending    WithdrawalStatus = "pending"       // User needs to send USDC
-	WithdrawalStatusReceived   WithdrawalStatus = "received"      // USDC received by platform
-	WithdrawalStatusConverting WithdrawalStatus = "converting"    // Converting to NGN via Yellow Card
-	WithdrawalStatusProcessing WithdrawalStatus = "processing"    // Yellow Card processing bank transfer
-	WithdrawalStatusCompleted  WithdrawalStatus = "completed"     // Bank transfer completed
-	WithdrawalStatusFailed     WithdrawalStatus = "failed"        // Failed at any stage
+	WithdrawalStatusPending    WithdrawalStatus = "pending"    // User needs to send USDC
+	WithdrawalStatusReceived   WithdrawalStatus = "received"   // USDC received by platform
+	WithdrawalStatusConverting WithdrawalStatus = "converting" // Converting to NGN via Yellow Card
+	WithdrawalStatusProcessing WithdrawalStatus = "processing" // Yellow Card processing bank transfer
+	WithdrawalStatusCompleted  WithdrawalStatus = "completed"  // Bank transfer completed
+	WithdrawalStatusFailed     WithdrawalStatus = "failed"     // Failed at any stage
 )
 
 type Withdrawal struct {
-	ID              string           `json:"id" db:"id"`
-	UserID          string           `json:"userId" db:"user_id"`
-	AmountUSDC      float64          `json:"amountUsdc" db:"amount_usdc"`
-	EstimatedNGN    float64          `json:"estimatedNgn" db:"estimated_ngn"`
-	BankCode        string           `json:"bankCode" db:"bank_code"`
-	AccountNumber   string           `json:"accountNumber" db:"account_number"`
-	AccountName     string           `json:"accountName" db:"account_name"`
-	Status          WithdrawalStatus `json:"status" db:"status"`
+	ID            string           `json:"id" db:"id"`
+	UserID        string           `json:"userId" db:"user_id"`
+	AmountUSDC    int64            `json:"amountUsdc" db:"amount_usdc"`
+	EstimatedNGN  int64            `json:"estimatedNgn" db:"estimated_ngn"`
+	BankCode      string           `json:"bankCode" db:"bank_code"`
+	AccountNumber string           `json:"accountNumber" db:"account_number"`
+	AccountName   string           `json:"accountName" db:"account_name"`
+	Status        WithdrawalStatus `json:"status" db:"status"`
 
 	// Platform receiving address (where user sends USDC)
 	PlatformAddress string `json:"platformAddress" db:"platform_address"`

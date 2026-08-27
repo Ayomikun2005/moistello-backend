@@ -29,7 +29,7 @@ type Config struct {
 	Environment  string
 	YellowCard   YellowCardConfig `mapstructure:"yellow_card"`
 	Tracing      TracingConfig
-	Swap         SwapConfig       `mapstructure:"swap"`
+	Swap         SwapConfig `mapstructure:"swap"`
 }
 
 type ServerConfig struct {
@@ -96,7 +96,6 @@ func (s StellarConfig) String() string {
 type YellowCardConfig struct {
 	APIKey               string  `mapstructure:"api_key"`
 	APISecret            string  `mapstructure:"api_secret"`
-	WebhookSecret        string  `mapstructure:"webhook_secret"`
 	MaxDepositNGN        float64 `mapstructure:"max_deposit_ngn"`
 	MaxWithdrawUSDC      float64 `mapstructure:"max_withdraw_usdc"`
 	DailyDepositCapNGN   float64 `mapstructure:"daily_deposit_cap_ngn"`
@@ -193,10 +192,10 @@ type LoggingConfig struct {
 }
 
 type TracingConfig struct {
-	Enabled          bool          `mapstructure:"enabled"`
-	CollectorEndpoint string       `mapstructure:"collector_endpoint"`
-	ServiceName      string       `mapstructure:"service_name"`
-	SampleRate       float64      `mapstructure:"sample_rate"`
+	Enabled           bool    `mapstructure:"enabled"`
+	CollectorEndpoint string  `mapstructure:"collector_endpoint"`
+	ServiceName       string  `mapstructure:"service_name"`
+	SampleRate        float64 `mapstructure:"sample_rate"`
 }
 
 func Load(path string) (*Config, error) {

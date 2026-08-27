@@ -124,7 +124,7 @@ func generateName(counter int64) string {
 	// Cycle animals fast (each user gets a unique animal)
 	animIdx := counter % animLen
 	adjIdx := (counter / animLen) % adjLen
-	numSuffix := 10 + (counter / (animLen * adjLen)) % suffixLen
+	numSuffix := 10 + (counter/(animLen*adjLen))%suffixLen
 
 	return fmt.Sprintf("%s-%s-%d", adjectives[adjIdx], animals[animIdx], numSuffix)
 }

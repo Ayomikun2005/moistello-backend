@@ -224,12 +224,6 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	walletSeed, err := h.walletSvc.DeriveWalletSeed(c.Request.Context(), req.Email)
-	if err != nil {
-		response.InternalError(c, "wallet seed derivation failed: "+err.Error())
-		return
-	}
-
 	// Store in Redis — NOT in PostgreSQL. User is only created after email verification.
 	pendingData := &verification.PendingRegistration{
 		PasswordHash: passwordHash,
@@ -248,9 +242,8 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	response.Created(c, gin.H{
-		"message":    "verification code sent",
-		"walletSeed": walletSeed,
-		"expiresIn":  300,
+		"message":   "verification code sent",
+		"expiresIn": 300,
 	})
 }
 

@@ -13,10 +13,10 @@ func TestProposalLifecycle(t *testing.T) {
 	creatorID := uuid.New()
 
 	created, err := svc.CreateProposal(context.Background(), CreateProposalInput{
-		Title:       "Increase payout frequency",
-		Description: "Allow weekly payouts for active circles",
+		Title:        "Increase payout frequency",
+		Description:  "Allow weekly payouts for active circles",
 		ProposalType: "parameter",
-		CreatorID:   creatorID.String(),
+		CreatorID:    creatorID.String(),
 	})
 	require.NoError(t, err)
 	require.Equal(t, ProposalStatusPending, created.Status)

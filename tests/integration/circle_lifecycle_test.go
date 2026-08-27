@@ -149,7 +149,7 @@ func TestCircleLifecycle_FullCircle(t *testing.T) {
 	circleRepo.On("Create", mock.Anything, mock.AnythingOfType("*circle.Circle")).Return(nil).Once()
 	circleRepo.On("CreateMember", mock.Anything, mock.AnythingOfType("*circle.CircleMember")).Return(nil).Once()
 	c, err := circleSvc.Create(nil, org.ID.String(), circle.CreateCircleInput{
-		Name:               "Full Circle", CircleType: circle.CircleTypePublic,
+		Name: "Full Circle", CircleType: circle.CircleTypePublic,
 		PayoutType: circle.PayoutTypeRandom, ContributionAmount: 50,
 		Currency: circle.CurrencyXLM, Frequency: circle.FrequencyDaily,
 		MaxMembers: 3, MaxStrikes: 3,

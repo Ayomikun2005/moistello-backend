@@ -10,9 +10,9 @@ import (
 type CircleType string
 
 const (
-	CircleTypePublic    CircleType = "public"
-	CircleTypePrivate   CircleType = "private"
-	CircleTypePremium   CircleType = "premium"
+	CircleTypePublic  CircleType = "public"
+	CircleTypePrivate CircleType = "private"
+	CircleTypePremium CircleType = "premium"
 )
 
 type PayoutType string
@@ -27,10 +27,10 @@ const (
 type CircleFrequency string
 
 const (
-	FrequencyDaily   CircleFrequency = "daily"
-	FrequencyWeekly  CircleFrequency = "weekly"
+	FrequencyDaily    CircleFrequency = "daily"
+	FrequencyWeekly   CircleFrequency = "weekly"
 	FrequencyBiweekly CircleFrequency = "biweekly"
-	FrequencyMonthly CircleFrequency = "monthly"
+	FrequencyMonthly  CircleFrequency = "monthly"
 )
 
 type CircleCurrency string

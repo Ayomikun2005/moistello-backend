@@ -1,0 +1,13 @@
+linters:
+  disable:
+    - errcheck
+    - unused
+  enable:
+    - govet
+    - staticcheck
+    - ineffassign
+    - gofmt
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

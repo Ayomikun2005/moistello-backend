@@ -150,23 +150,27 @@ func (h *Hub) Broadcast(circleID string, msg Message) {
 // The userID maps to a registered Client; if no client is found the message
 // is silently dropped.
 func (h *Hub) BroadcastToUser(userID string, msg Message) {
-	h.mu.RLock()
-	client, ok := h.clients[userID]
-	h.mu.RUnlock()
-	if !ok {
-		return
-	}
-
 	data, err := json.Marshal(msg)
 	if err != nil {
 		log.Warn().Err(err).Str("type", msg.Type).Str("userID", userID).Msg("marshaling user message")
 		return
 	}
 
-	select {
-	case client.Send <- data:
-	default:
-		h.Unregister(client)
+	h.mu.RLock()
+	var targets []*Client
+	for _, c := range h.clients {
+		if c.UserID == userID {
+			targets = append(targets, c)
+		}
+	}
+	h.mu.RUnlock()
+
+	for _, client := range targets {
+		select {
+		case client.Send <- data:
+		default:
+			h.Unregister(client)
+		}
 	}
 }
 
