@@ -184,6 +184,19 @@ func (h *Hub) ClientCount() int {
 	return len(h.clients)
 }
 
+// UserClientCount returns the number of registered clients for a given user.
+func (h *Hub) UserClientCount(userID string) int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	count := 0
+	for _, c := range h.clients {
+		if c.UserID == userID {
+			count++
+		}
+	}
+	return count
+}
+
 // RoomCount returns the total number of active rooms.
 func (h *Hub) RoomCount() int {
 	h.mu.RLock()

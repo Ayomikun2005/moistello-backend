@@ -28,6 +28,7 @@ import (
 	"github.com/moistello/backend/internal/domain/savings"
 	"github.com/moistello/backend/internal/domain/user"
 	"github.com/moistello/backend/pkg/apperrors"
+	"github.com/moistello/backend/webhook"
 )
 
 // ── Mock implementations ──────────────────────────────────────────────
@@ -119,6 +120,25 @@ func (m *mockCircleRepo) FindMemberByCircleAndUser(_ context.Context, _, _ uuid.
 }
 func (m *mockCircleRepo) FindCirclesByUserID(_ context.Context, _ uuid.UUID) ([]circle.Circle, error) {
 	return []circle.Circle{}, nil
+}
+
+type fakeTestWebhookRepo struct{}
+
+func (r *fakeTestWebhookRepo) Register(_ context.Context, _ *webhook.WebhookRegistration) error {
+	return nil
+}
+func (r *fakeTestWebhookRepo) GetByUserID(_ context.Context, _ string) ([]webhook.WebhookRegistration, error) {
+	return nil, nil
+}
+func (r *fakeTestWebhookRepo) GetActiveWebhooks(_ context.Context) ([]webhook.WebhookRegistration, error) {
+	return nil, nil
+}
+func (r *fakeTestWebhookRepo) GetByID(_ context.Context, _ string) (*webhook.WebhookRegistration, error) {
+	return nil, nil
+}
+func (r *fakeTestWebhookRepo) Delete(_ context.Context, _ string) error { return nil }
+func (r *fakeTestWebhookRepo) ListDeliveries(_ context.Context, _ string, _, _ int) ([]webhook.DeliveryLog, int, error) {
+	return nil, 0, nil
 }
 
 type mockCircleService struct{}
@@ -379,7 +399,7 @@ func setupTestRouter() *gin.Engine {
 	communityHandler := handler.NewCommunityHandler(communitySvc)
 	notificationHandler := handler.NewNotificationHandler(notifSvc, userSvc)
 	savingsHandler := handler.NewSavingsGoalHandler(savingsSvc)
-	webhookHandler := handler.NewWebhookHandler()
+	webhookHandler := handler.NewWebhookHandler(&fakeTestWebhookRepo{})
 	healthHandler := handler.NewHealthHandler(nil, nil, "", "")
 
 	r := gin.New()

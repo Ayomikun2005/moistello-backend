@@ -17,7 +17,7 @@ func TestNewClient_SandboxMode(t *testing.T) {
 }
 
 func TestNewClient_ProductionMode(t *testing.T) {
-	c := NewClient("real-key", "real-secret")
+	c := NewClient("real-key", "real-secret", "GA...")
 	assert.Equal(t, "https://api.yellowcard.io/v1", c.baseURL)
 }
 
