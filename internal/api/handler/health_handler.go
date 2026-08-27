@@ -188,7 +188,6 @@ func (h *HealthHandler) checkRedis(timeout time.Duration) DependencyStatus {
 	}
 }
 
-
 func (h *HealthHandler) checkRabbitMQ() DependencyStatus {
 	if h.rabbit == nil {
 		return DependencyStatus{Status: "unhealthy", Message: "rabbitmq client not initialized"}

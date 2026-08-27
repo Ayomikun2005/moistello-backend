@@ -66,7 +66,7 @@ type MonthlyScore struct {
 }
 
 type userService struct {
-	repo      Repository
+	repo       Repository
 	circleRepo circle.Repository
 }
 

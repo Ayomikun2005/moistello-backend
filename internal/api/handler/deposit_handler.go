@@ -7,12 +7,12 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/redis/go-redis/v9"
 	"github.com/moistello/backend/config"
 	"github.com/moistello/backend/internal/api/middleware"
 	"github.com/moistello/backend/internal/domain/wallet"
 	"github.com/moistello/backend/internal/domain/yellowcard"
 	"github.com/moistello/backend/pkg/response"
+	"github.com/redis/go-redis/v9"
 )
 
 type DepositHandler struct {

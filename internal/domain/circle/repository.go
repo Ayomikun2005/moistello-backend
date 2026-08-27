@@ -36,5 +36,4 @@ type Repository interface {
 	GetPenaltiesByCircle(ctx context.Context, circleID uuid.UUID) ([]Penalty, error)
 	GetPenaltiesByUser(ctx context.Context, userID uuid.UUID) ([]Penalty, error)
 	GetContributionsByCircleAndRound(ctx context.Context, circleID uuid.UUID, roundNumber int) ([]uuid.UUID, error)
-
 }

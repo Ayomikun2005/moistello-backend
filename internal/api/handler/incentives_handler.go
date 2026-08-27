@@ -32,13 +32,13 @@ func NewIncentivesHandler(service incentives.Service) *IncentivesHandler {
 // @Router /incentives/referral-code [post]
 func (h *IncentivesHandler) GenerateReferralCode(c *gin.Context) {
 	userID := c.GetString("user_id")
-	
+
 	code, err := h.service.GenerateReferralCode(c.Request.Context(), userID)
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, "Failed to generate referral code", err)
 		return
 	}
-	
+
 	response.Success(c, gin.H{"referralCode": code})
 }
 
@@ -57,21 +57,21 @@ func (h *IncentivesHandler) GenerateReferralCode(c *gin.Context) {
 // @Router /incentives/apply-referral [post]
 func (h *IncentivesHandler) ApplyReferralCode(c *gin.Context) {
 	userID := c.GetString("user_id")
-	
+
 	var req struct {
 		Code string `json:"code" binding:"required"`
 	}
-	
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
-	
+
 	if err := h.service.ApplyReferralCode(c.Request.Context(), userID, req.Code); err != nil {
 		response.Error(c, http.StatusBadRequest, "Failed to apply referral code", err)
 		return
 	}
-	
+
 	response.Success(c, gin.H{"message": "Referral code applied successfully"})
 }
 
@@ -88,13 +88,13 @@ func (h *IncentivesHandler) ApplyReferralCode(c *gin.Context) {
 // @Router /incentives/referrals [get]
 func (h *IncentivesHandler) GetReferrals(c *gin.Context) {
 	userID := c.GetString("user_id")
-	
+
 	referrals, err := h.service.GetReferrals(c.Request.Context(), userID)
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, "Failed to get referrals", err)
 		return
 	}
-	
+
 	response.Success(c, referrals)
 }
 
@@ -114,21 +114,21 @@ func (h *IncentivesHandler) GetReferrals(c *gin.Context) {
 // @Router /incentives/circle-completion [post]
 func (h *IncentivesHandler) GrantCircleCompletionReward(c *gin.Context) {
 	var req struct {
-		UserID   string  `json:"userId" binding:"required"`
-		CircleID string  `json:"circleId" binding:"required"`
+		UserID   string `json:"userId" binding:"required"`
+		CircleID string `json:"circleId" binding:"required"`
 	}
-	
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
-	
+
 	incentive, err := h.service.GrantCircleCompletionReward(c.Request.Context(), req.UserID, req.CircleID)
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, "Failed to grant circle completion reward", err)
 		return
 	}
-	
+
 	response.Success(c, incentive)
 }
 
@@ -151,18 +151,18 @@ func (h *IncentivesHandler) GrantContributionMatch(c *gin.Context) {
 		CircleID string  `json:"circleId" binding:"required"`
 		Amount   float64 `json:"amount" binding:"required,gt=0"`
 	}
-	
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
-	
+
 	incentive, err := h.service.GrantContributionMatch(c.Request.Context(), req.UserID, req.CircleID, req.Amount)
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, "Failed to grant contribution match", err)
 		return
 	}
-	
+
 	response.Success(c, incentive)
 }
 
@@ -179,13 +179,13 @@ func (h *IncentivesHandler) GrantContributionMatch(c *gin.Context) {
 // @Router /incentives/contribution [post]
 func (h *IncentivesHandler) RecordContribution(c *gin.Context) {
 	userID := c.GetString("user_id")
-	
+
 	streak, err := h.service.RecordContribution(c.Request.Context(), userID)
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, "Failed to record contribution", err)
 		return
 	}
-	
+
 	response.Success(c, streak)
 }
 
@@ -203,13 +203,13 @@ func (h *IncentivesHandler) RecordContribution(c *gin.Context) {
 // @Router /incentives/streak-bonus [post]
 func (h *IncentivesHandler) GrantStreakBonus(c *gin.Context) {
 	userID := c.GetString("user_id")
-	
+
 	incentive, err := h.service.GrantStreakBonus(c.Request.Context(), userID)
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, "Failed to grant streak bonus", err)
 		return
 	}
-	
+
 	response.Success(c, incentive)
 }
 
@@ -231,18 +231,18 @@ func (h *IncentivesHandler) GrantFirstDepositBonus(c *gin.Context) {
 		UserID        string  `json:"userId" binding:"required"`
 		DepositAmount float64 `json:"depositAmount" binding:"required,gt=0"`
 	}
-	
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
-	
+
 	incentive, err := h.service.GrantFirstDepositBonus(c.Request.Context(), req.UserID, req.DepositAmount)
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, "Failed to grant first deposit bonus", err)
 		return
 	}
-	
+
 	response.Success(c, incentive)
 }
 
@@ -263,17 +263,17 @@ func (h *IncentivesHandler) GrantFirstDepositBonus(c *gin.Context) {
 func (h *IncentivesHandler) ClaimIncentive(c *gin.Context) {
 	userID := c.GetString("user_id")
 	incentiveID := c.Param("id")
-	
+
 	if _, err := uuid.Parse(incentiveID); err != nil {
 		response.Error(c, http.StatusBadRequest, "Invalid incentive ID", err)
 		return
 	}
-	
+
 	if err := h.service.ClaimIncentive(c.Request.Context(), userID, incentiveID); err != nil {
 		response.Error(c, http.StatusBadRequest, "Failed to claim incentive", err)
 		return
 	}
-	
+
 	response.Success(c, gin.H{"message": "Incentive claimed successfully"})
 }
 
@@ -291,13 +291,13 @@ func (h *IncentivesHandler) ClaimIncentive(c *gin.Context) {
 // @Router /incentives [get]
 func (h *IncentivesHandler) GetUserIncentives(c *gin.Context) {
 	userID := c.GetString("user_id")
-	
+
 	userIncentives, err := h.service.GetUserIncentives(c.Request.Context(), userID)
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, "Failed to get incentives", err)
 		return
 	}
-	
+
 	// Filter by status if provided
 	statusFilter := c.Query("status")
 	if statusFilter != "" {
@@ -309,7 +309,7 @@ func (h *IncentivesHandler) GetUserIncentives(c *gin.Context) {
 		}
 		userIncentives = filtered
 	}
-	
+
 	response.Success(c, userIncentives)
 }
 
@@ -326,13 +326,13 @@ func (h *IncentivesHandler) GetUserIncentives(c *gin.Context) {
 // @Router /incentives/pending [get]
 func (h *IncentivesHandler) GetPendingIncentives(c *gin.Context) {
 	userID := c.GetString("user_id")
-	
+
 	incentives, err := h.service.GetPendingIncentives(c.Request.Context(), userID)
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, "Failed to get pending incentives", err)
 		return
 	}
-	
+
 	response.Success(c, incentives)
 }
 
@@ -349,13 +349,13 @@ func (h *IncentivesHandler) GetPendingIncentives(c *gin.Context) {
 // @Router /incentives/summary [get]
 func (h *IncentivesHandler) GetUserSummary(c *gin.Context) {
 	userID := c.GetString("user_id")
-	
+
 	summary, err := h.service.GetUserSummary(c.Request.Context(), userID)
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, "Failed to get user summary", err)
 		return
 	}
-	
+
 	response.Success(c, summary)
 }
 
@@ -377,7 +377,7 @@ func (h *IncentivesHandler) GetConfig(c *gin.Context) {
 		response.Error(c, http.StatusInternalServerError, "Failed to get config", err)
 		return
 	}
-	
+
 	response.Success(c, config)
 }
 
@@ -397,17 +397,17 @@ func (h *IncentivesHandler) GetConfig(c *gin.Context) {
 // @Router /admin/incentives/config [put]
 func (h *IncentivesHandler) UpdateConfig(c *gin.Context) {
 	var config incentives.IncentiveConfig
-	
+
 	if err := c.ShouldBindJSON(&config); err != nil {
 		response.Error(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
-	
+
 	if err := h.service.UpdateConfig(c.Request.Context(), &config); err != nil {
 		response.Error(c, http.StatusInternalServerError, "Failed to update config", err)
 		return
 	}
-	
+
 	response.Success(c, config)
 }
 
@@ -429,17 +429,17 @@ func (h *IncentivesHandler) CalculateContributionMatch(c *gin.Context) {
 		UserID string  `json:"userId" binding:"required"`
 		Amount float64 `json:"amount" binding:"required,gt=0"`
 	}
-	
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
-	
+
 	matchAmount, err := h.service.CalculateContributionMatch(c.Request.Context(), req.UserID, req.Amount)
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, "Failed to calculate match", err)
 		return
 	}
-	
+
 	response.Success(c, gin.H{"matchAmount": matchAmount})
 }

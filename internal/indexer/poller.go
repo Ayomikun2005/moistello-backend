@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"time"
-
 )
 
 // Poller fetches ledgers and transactions from the Stellar Horizon API.

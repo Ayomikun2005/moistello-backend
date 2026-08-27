@@ -11,9 +11,9 @@ import (
 type WalletType string
 
 const (
-	WalletTypeAuto     WalletType = "auto"
+	WalletTypeAuto      WalletType = "auto"
 	WalletTypeFreighter WalletType = "freighter"
-	WalletTypePasskey  WalletType = "passkey"
+	WalletTypePasskey   WalletType = "passkey"
 )
 
 type Wallet struct {

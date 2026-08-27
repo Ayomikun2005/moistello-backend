@@ -78,15 +78,15 @@ func (s *Service) CreateSwapOffer(ctx context.Context, userID string, req SwapOf
 
 	// Create swap offer in database
 	offer := &SwapOffer{
-		ID:             uuid.NewString(),
-		CircleID:       req.CircleID,
-		OfferorUserID:  userID,
-		OffereeUserID:  req.OffereeUserID,
-		OfferorAsset:   req.OfferorAsset,
-		OfferorAmount:  req.OfferorAmount,
-		RequestedAsset: req.RequestedAsset,
+		ID:              uuid.NewString(),
+		CircleID:        req.CircleID,
+		OfferorUserID:   userID,
+		OffereeUserID:   req.OffereeUserID,
+		OfferorAsset:    req.OfferorAsset,
+		OfferorAmount:   req.OfferorAmount,
+		RequestedAsset:  req.RequestedAsset,
 		RequestedAmount: req.RequestedAmount,
-		ExpiresAt:      time.Now().Add(time.Duration(req.ExpiresIn) * time.Hour),
+		ExpiresAt:       time.Now().Add(time.Duration(req.ExpiresIn) * time.Hour),
 	}
 
 	err = s.repo.CreateSwapOffer(ctx, offer)

@@ -35,10 +35,10 @@ type HorizonAccountResponse struct {
 	ID       string `json:"id"`
 	Sequence string `json:"sequence"`
 	Balances []struct {
-		Balance      string `json:"balance"`
-		AssetType    string `json:"asset_type"`
-		AssetCode    string `json:"asset_code"`
-		AssetIssuer  string `json:"asset_issuer"`
+		Balance     string `json:"balance"`
+		AssetType   string `json:"asset_type"`
+		AssetCode   string `json:"asset_code"`
+		AssetIssuer string `json:"asset_issuer"`
 	} `json:"balances"`
 }
 

@@ -42,7 +42,7 @@ type StakeRequest struct {
 
 // StakeResponse represents the response after staking/unstaking
 type StakeResponse struct {
-	TxHash string `json:"tx_hash"`
-	Amount uint64 `json:"amount"`
-	Success bool `json:"success"`
+	TxHash  string `json:"tx_hash"`
+	Amount  uint64 `json:"amount"`
+	Success bool   `json:"success"`
 }

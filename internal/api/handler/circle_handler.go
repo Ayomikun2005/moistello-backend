@@ -16,10 +16,10 @@ import (
 )
 
 type CircleHandler struct {
-	circleService   circle.Service
-	inviteService   invite.Service
-	contribService  contribution.Service
-	payoutService   payout.Service
+	circleService  circle.Service
+	inviteService  invite.Service
+	contribService contribution.Service
+	payoutService  payout.Service
 }
 
 func NewCircleHandler(circleSvc circle.Service, inviteSvc invite.Service, contribSvc contribution.Service, payoutSvc payout.Service) *CircleHandler {

@@ -102,7 +102,7 @@ func (w *Worker) process(ctx context.Context, job *Job, handler JobHandler) {
 	if err := handler(ctx, job.Payload); err != nil {
 		log.Error().Err(err).Str("job", job.ID).Str("queue", job.QueueName).Msg("job handler failed")
 		if err := w.queue.Fail(ctx, job.ID, err); err != nil {
-		log.Error().Err(err).Str("job", job.ID).Msg("failed to record job failure")
+			log.Error().Err(err).Str("job", job.ID).Msg("failed to record job failure")
 		}
 		return
 	}

@@ -29,13 +29,13 @@ type WebhookRegistration struct {
 }
 
 type DeliveryLog struct {
-	ID          string    `json:"id"`
-	WebhookID   string    `json:"webhook_id"`
-	StatusCode  int       `json:"status_code"`
-	Success     bool      `json:"success"`
-	Error       string    `json:"error,omitempty"`
-	DurationMs  int64     `json:"duration_ms"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID         string    `json:"id"`
+	WebhookID  string    `json:"webhook_id"`
+	StatusCode int       `json:"status_code"`
+	Success    bool      `json:"success"`
+	Error      string    `json:"error,omitempty"`
+	DurationMs int64     `json:"duration_ms"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type WebhookRepository interface {

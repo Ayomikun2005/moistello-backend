@@ -97,7 +97,7 @@ func MustParseUUID(s string) uuid.UUID {
 	return id
 }
 
-func StringPtr(s string) *string   { return &s }
-func FloatPtr(f float64) *float64  { return &f }
-func IntPtr(i int) *int            { return &i }
-func BoolPtr(b bool) *bool         { return &b }
+func StringPtr(s string) *string  { return &s }
+func FloatPtr(f float64) *float64 { return &f }
+func IntPtr(i int) *int           { return &i }
+func BoolPtr(b bool) *bool        { return &b }

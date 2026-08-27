@@ -396,7 +396,6 @@ func isUniqueViolationPg(err error) bool {
 	return false
 }
 
-
 func (r *pgRepo) CreatePenalty(ctx context.Context, p *Penalty) error {
 	query := `
 		INSERT INTO penalties (id, circle_id, user_id, round_number, penalty_type, amount, strikes_applied, reason, created_at)

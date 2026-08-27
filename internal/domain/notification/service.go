@@ -27,11 +27,11 @@ type Service interface {
 }
 
 type CreateInput struct {
-	UserID  string             `json:"userId" validate:"required"`
-	Type    NotificationType   `json:"type" validate:"required"`
-	Title   string             `json:"title" validate:"required"`
-	Body    string             `json:"body" validate:"required"`
-	Data    json.RawMessage    `json:"data"`
+	UserID  string              `json:"userId" validate:"required"`
+	Type    NotificationType    `json:"type" validate:"required"`
+	Title   string              `json:"title" validate:"required"`
+	Body    string              `json:"body" validate:"required"`
+	Data    json.RawMessage     `json:"data"`
 	Channel NotificationChannel `json:"channel" validate:"required,oneof=inapp email sms push"`
 }
 

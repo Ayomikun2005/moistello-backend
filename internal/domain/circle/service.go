@@ -664,7 +664,6 @@ func ceilFloat(f float64) float64 {
 	return math.Ceil(f*100) / 100
 }
 
-
 func (s *circleService) ProcessMissedContributions(ctx context.Context, circleID string, roundNumber int) error {
 	cID, err := uuid.Parse(circleID)
 	if err != nil {
