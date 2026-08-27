@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"fmt"
@@ -77,6 +78,49 @@ func (h *AuthHandler) Nonce(c *gin.Context) {
 		return
 	}
 	response.OK(c, gin.H{"nonce": nonce})
+}
+
+// @Summary Verify wallet authentication
+// @Description Verifies a signed nonce and creates a session.
+// @Tags Authentication
+// @Accept json
+// @Produce json
+// @Param body body object true "Signature payload" { "walletAddress": "G...", "signature": "..." }
+// @Success 200 {object} response.Envelope{data=object{token=string,refreshToken=string}}
+// @Failure 400 {object} response.Envelope
+// @Failure 401 {object} response.Envelope
+// @Router /auth/verify [post]
+func (h *AuthHandler) Verify(c *gin.Context) {
+	var req struct {
+		WalletAddress string `json:"walletAddress" binding:"required"`
+		Signature     string `json:"signature" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	u, err := h.userService.GetByWallet(c.Request.Context(), req.WalletAddress)
+	if err != nil {
+		response.NotFound(c, "account not found")
+		return
+	}
+
+	valid, err := h.authService.VerifySignature(c.Request.Context(), req.WalletAddress, req.Signature)
+	if err != nil || !valid {
+		response.Unauthorized(c, "signature verification failed")
+		return
+	}
+
+	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, sessionTTLFromUser(u), deviceInfoFromContext(c))
+	if err != nil {
+		response.InternalError(c, "failed to create session")
+		return
+	}
+
+	response.OK(c, gin.H{
+		"token": pair.AccessToken, "refreshToken": pair.RefreshToken, "csrfToken": pair.CSRFToken, "user": u,
+	})
 }
 
 // @Summary Refresh JWT tokens
@@ -584,7 +628,7 @@ func (h *AuthHandler) InitWallet(c *gin.Context) {
 
 	walletSeed, err := h.walletSvc.DeriveWalletSeed(c.Request.Context(), email)
 	if err != nil {
-		response.InternalError(c, "wallet seed derivation failed: "+err.Error())
+		response.InternalError(c, "wallet seed generation failed: "+err.Error())
 		return
 	}
 	w, err := h.walletSvc.CreateWallet(c.Request.Context(), userID, []byte(walletSeed))
