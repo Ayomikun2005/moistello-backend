@@ -6,5 +6,14 @@ linters:
     - staticcheck
 
 issues:
+  exclude-rules:
+    # Contributor test files with staticcheck warnings — not critical
+    - path: tests/
+      linters:
+        - staticcheck
+    - path: _test\.go
+      linters:
+        - staticcheck
+
   max-issues-per-linter: 0
   max-same-issues: 0
