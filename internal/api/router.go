@@ -79,6 +79,8 @@ func NewRouter(
 			auth.POST("/register/verify", authHandler.RegisterVerify)
 			auth.POST("/login", authHandler.Login)
 			auth.POST("/refresh", middleware.RefreshTokenBlocklistMiddleware(redisClient), authHandler.Refresh)
+			auth.POST("/nonce", authHandler.Nonce)
+			auth.POST("/verify", authHandler.Verify)
 			auth.POST("/passkey/nonce", authHandler.PasskeyNonce)
 			auth.POST("/passkey/verify", authHandler.PasskeyVerify)
 			auth.POST("/recovery", authHandler.Recovery)
@@ -104,6 +106,8 @@ func NewRouter(
 			authenticated.DELETE("/users/me", userHandler.DeleteUser)
 			authenticated.GET("/users/me/reputation", userHandler.GetReputation)
 			authenticated.GET("/users/me/circles", userHandler.GetMyCircles)
+			authenticated.POST("/users/me/kyc", userHandler.SubmitKYC)
+			authenticated.GET("/users/me/kyc/status", userHandler.GetKYCStatus)
 
 		// Public — claim a unique anonymous name (before auth)
 		api.POST("/claim-name", userHandler.ClaimName)

@@ -171,3 +171,28 @@ func (h *UserHandler) GetMyCircles(c *gin.Context) {
 	}
 	response.OK(c, gin.H{"circles": circles})
 }
+
+// @Summary Submit KYC information
+// @Description Submits KYC information for the authenticated user.
+// @Tags Users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} response.Envelope
+// @Router /users/me/kyc [post]
+func (h *UserHandler) SubmitKYC(c *gin.Context) {
+	// TODO: Integrate with actual KYC provider
+	response.OK(c, gin.H{"status": "pending"})
+}
+
+// @Summary Get KYC status
+// @Description Returns the current KYC status of the authenticated user.
+// @Tags Users
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} response.Envelope
+// @Router /users/me/kyc/status [get]
+func (h *UserHandler) GetKYCStatus(c *gin.Context) {
+	// TODO: Fetch from actual KYC provider
+	response.OK(c, gin.H{"status": "approved"})
+}

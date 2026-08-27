@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -9,8 +10,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"golang.org/x/crypto/argon2"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -88,6 +87,49 @@ func (h *AuthHandler) Nonce(c *gin.Context) {
 		return
 	}
 	response.OK(c, gin.H{"nonce": nonce})
+}
+
+// @Summary Verify wallet authentication
+// @Description Verifies a signed nonce and creates a session.
+// @Tags Authentication
+// @Accept json
+// @Produce json
+// @Param body body object true "Signature payload" { "walletAddress": "G...", "signature": "..." }
+// @Success 200 {object} response.Envelope{data=object{token=string,refreshToken=string}}
+// @Failure 400 {object} response.Envelope
+// @Failure 401 {object} response.Envelope
+// @Router /auth/verify [post]
+func (h *AuthHandler) Verify(c *gin.Context) {
+	var req struct {
+		WalletAddress string `json:"walletAddress" binding:"required"`
+		Signature     string `json:"signature" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	u, err := h.userService.GetByWallet(c.Request.Context(), req.WalletAddress)
+	if err != nil {
+		response.NotFound(c, "account not found")
+		return
+	}
+
+	valid, err := h.authService.VerifySignature(c.Request.Context(), req.WalletAddress, req.Signature)
+	if err != nil || !valid {
+		response.Unauthorized(c, "signature verification failed")
+		return
+	}
+
+	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, sessionTTLFromUser(u), deviceInfoFromContext(c))
+	if err != nil {
+		response.InternalError(c, "failed to create session")
+		return
+	}
+
+	response.OK(c, gin.H{
+		"token": pair.AccessToken, "refreshToken": pair.RefreshToken, "csrfToken": pair.CSRFToken, "user": u,
+	})
 }
 
 // @Summary Refresh JWT tokens
@@ -235,9 +277,9 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	walletSeed, err := h.deriveWalletSeed(req.Email)
+	walletSeed, err := h.generateWalletSeed()
 	if err != nil {
-		response.InternalError(c, "wallet seed derivation failed: "+err.Error())
+		response.InternalError(c, "wallet seed generation failed: "+err.Error())
 		return
 	}
 
@@ -323,7 +365,7 @@ func (h *AuthHandler) RegisterVerify(c *gin.Context) {
 	// and store AES-256-GCM-encrypted secret key in the wallets table.
 	// Wallet creation is non-blocking — a failure is logged but does NOT
 	// abort registration. The user can retry via POST /auth/wallet/init.
-	walletSeed, seedErr := h.deriveWalletSeed(req.Email)
+	walletSeed, seedErr := h.generateWalletSeed()
 	if seedErr == nil {
 		if _, wErr := h.walletSvc.CreateWallet(c.Request.Context(), u.ID.String(), []byte(walletSeed)); wErr != nil {
 			// Log but don't fail registration
@@ -600,9 +642,9 @@ func (h *AuthHandler) InitWallet(c *gin.Context) {
 		return
 	}
 
-	walletSeed, err := h.deriveWalletSeed(email)
+	walletSeed, err := h.generateWalletSeed()
 	if err != nil {
-		response.InternalError(c, "wallet seed derivation failed: "+err.Error())
+		response.InternalError(c, "wallet seed generation failed: "+err.Error())
 		return
 	}
 	w, err := h.walletSvc.CreateWallet(c.Request.Context(), userID, []byte(walletSeed))
@@ -724,35 +766,12 @@ func emailToWalletAddr(email string) string {
 	return fmt.Sprintf("EMAIL:%x", emailHash[:16])
 }
 
-// deriveWalletSeed derives a deterministic Stellar wallet seed from an email.
-// Uses Argon2id(email, salt=pepper+email) so the output is both deterministic
-// (recoverable given the same email and pepper) and unique per user — if the
-// pepper is ever compromised, an attacker still cannot precompute seeds for
-// all users because the email acts as a per-user salt component.
-//
-// Cost parameters are loaded from config with conservative defaults.
-func (h *AuthHandler) deriveWalletSeed(email string) (string, error) {
-	pepper := h.security.WalletPepper
-	if pepper == "" {
-		return "", errors.New("wallet pepper is not configured")
+// generateWalletSeed generates a secure random Stellar wallet seed.
+func (h *AuthHandler) generateWalletSeed() (string, error) {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return "", err
 	}
-
-	argonTime := h.security.Argon2Time
-	if argonTime <= 0 {
-		argonTime = 1
-	}
-	argonMemory := h.security.Argon2Memory
-	if argonMemory <= 0 {
-		argonMemory = 64 * 1024 // 64 MiB
-	}
-	argonThreads := h.security.Argon2Threads
-	if argonThreads <= 0 {
-		argonThreads = 4
-	}
-
-	// Use pepper+email as the salt so each user has a unique salt.
-	salt := []byte(pepper + email)
-	key := argon2.IDKey([]byte(email), salt, uint32(argonTime), uint32(argonMemory), uint8(argonThreads), 32)
 	return hex.EncodeToString(key), nil
 }
 
