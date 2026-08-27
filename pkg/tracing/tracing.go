@@ -3,13 +3,23 @@ package tracing
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/moistello/backend/config"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.4.0"
+	"go.opentelemetry.io/otel/trace"
+)
+
+const (
+	// instrumentationName is the tracer name used for all spans produced by
+	// this application.
+	instrumentationName = "moistello"
 )
 
 var (
@@ -72,4 +82,81 @@ func Shutdown(ctx context.Context) error {
 // GetTracerProvider returns the configured tracer provider.
 func GetTracerProvider() *sdktrace.TracerProvider {
 	return tracerProvider
+}
+
+// StartSpan starts a child span (or a root span when the context carries no
+// parent) with the given name and attributes. Callers must pair it with
+// EndSpan to record the outcome and close the span.
+//
+// When tracing is disabled the returned span is a no-op, so callers can safely
+// instrument code unconditionally (#223).
+func StartSpan(ctx context.Context, name string, attrs ...attribute.KeyValue) (context.Context, trace.Span) {
+	return otel.Tracer(instrumentationName).Start(ctx, name, trace.WithAttributes(attrs...))
+}
+
+// EndSpan finalizes a span started by StartSpan. It records the operation's
+// duration, its outcome (error + status), and any extra attributes.
+func EndSpan(span trace.Span, err error, start time.Time, attrs ...attribute.KeyValue) {
+	if !span.IsRecording() {
+		span.End()
+		return
+	}
+
+	attrs = append(attrs, attribute.Int64("duration.ms", time.Since(start).Milliseconds()))
+	span.SetAttributes(attrs...)
+
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	} else {
+		span.SetStatus(codes.Ok, "")
+	}
+
+	span.End()
+}
+
+// StartDBSpan begins a child span for a database operation, tagging the DBMS,
+// the operation (SELECT/INSERT/UPDATE/DELETE/...), and the target table.
+func StartDBSpan(ctx context.Context, operation, table string) (context.Context, trace.Span) {
+	return StartSpan(ctx, "db."+operation,
+		attribute.String("db.system", "postgresql"),
+		attribute.String("db.operation", operation),
+		attribute.String("db.table", table),
+	)
+}
+
+// StartRedisSpan begins a child span for a Redis operation.
+func StartRedisSpan(ctx context.Context, operation string) (context.Context, trace.Span) {
+	return StartSpan(ctx, "redis."+operation,
+		attribute.String("db.system", "redis"),
+		attribute.String("db.operation", operation),
+	)
+}
+
+// StartStellarSpan begins a child span for a Stellar Horizon/RPC operation.
+func StartStellarSpan(ctx context.Context, operation string) (context.Context, trace.Span) {
+	return StartSpan(ctx, "stellar."+operation,
+		attribute.String("rpc.system", "stellar"),
+		attribute.String("rpc.operation", operation),
+	)
+}
+
+// StartHTTPSpan begins a child span for an external HTTP call.
+func StartHTTPSpan(ctx context.Context, operation, method, url string) (context.Context, trace.Span) {
+	return StartSpan(ctx, "http."+operation,
+		attribute.String("http.method", method),
+		attribute.String("http.url", url),
+	)
+}
+
+// WithDBSpan runs fn inside a database child span tagged with the operation and
+// table, automatically recording the span's duration and outcome. It keeps
+// repository methods terse while still producing the child spans required for
+// DB latency visibility (#223).
+func WithDBSpan[T any](ctx context.Context, operation, table string, fn func(context.Context) (T, error)) (T, error) {
+	ctx, span := StartDBSpan(ctx, operation, table)
+	start := time.Now()
+	result, err := fn(ctx)
+	EndSpan(span, err, start)
+	return result, err
 }

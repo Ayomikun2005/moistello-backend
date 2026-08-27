@@ -4,10 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
-	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -16,7 +13,6 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/moistello/backend/internal/api/middleware"
-	"github.com/moistello/backend/config"
 	"github.com/moistello/backend/internal/domain/auth"
 	"github.com/moistello/backend/internal/domain/email"
 	"github.com/moistello/backend/internal/domain/totp"
@@ -28,33 +24,28 @@ import (
 )
 
 type AuthHandler struct {
-	authService      auth.Service
-	userService      user.Service
-	walletSvc        wallet.Service
-	totpService      *totp.Service
-	verificationSvc  *verification.Service
-	emailSvc         *email.Service
-	redisClient      *redis.Client
-	userRepo         user.Repository
-	security         config.SecurityConfig
+	authService     auth.Service
+	userService     user.Service
+	walletSvc       wallet.Service
+	totpService     *totp.Service
+	verificationSvc *verification.Service
+	emailSvc        *email.Service
+	redisClient     *redis.Client
+	userRepo        user.Repository
 }
 
 func NewAuthHandler(authSvc auth.Service, userSvc user.Service, walletSvc wallet.Service,
 	totpSvc *totp.Service, verificationSvc *verification.Service, emailSvc *email.Service,
-	redisClient *redis.Client, userRepo user.Repository, security ...config.SecurityConfig) *AuthHandler {
-	securityCfg := config.SecurityConfig{}
-	if len(security) > 0 {
-		securityCfg = security[0]
-	}
+	redisClient *redis.Client, userRepo user.Repository) *AuthHandler {
 	return &AuthHandler{
 		authService:     authSvc,
 		userService:     userSvc,
 		walletSvc:       walletSvc,
 		totpService:     totpSvc,
 		verificationSvc: verificationSvc,
+		emailSvc:        emailSvc,
 		redisClient:     redisClient,
 		userRepo:        userRepo,
-		security:        securityCfg,
 	}
 }
 
@@ -277,12 +268,6 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	walletSeed, err := h.generateWalletSeed()
-	if err != nil {
-		response.InternalError(c, "wallet seed generation failed: "+err.Error())
-		return
-	}
-
 	// Store in Redis — NOT in PostgreSQL. User is only created after email verification.
 	pendingData := &verification.PendingRegistration{
 		PasswordHash: passwordHash,
@@ -301,9 +286,8 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	response.Created(c, gin.H{
-		"message":    "verification code sent",
-		"walletSeed": walletSeed,
-		"expiresIn":  300,
+		"message":   "verification code sent",
+		"expiresIn": 300,
 	})
 }
 
@@ -365,7 +349,7 @@ func (h *AuthHandler) RegisterVerify(c *gin.Context) {
 	// and store AES-256-GCM-encrypted secret key in the wallets table.
 	// Wallet creation is non-blocking — a failure is logged but does NOT
 	// abort registration. The user can retry via POST /auth/wallet/init.
-	walletSeed, seedErr := h.generateWalletSeed()
+	walletSeed, seedErr := h.walletSvc.DeriveWalletSeed(c.Request.Context(), req.Email)
 	if seedErr == nil {
 		if _, wErr := h.walletSvc.CreateWallet(c.Request.Context(), u.ID.String(), []byte(walletSeed)); wErr != nil {
 			// Log but don't fail registration
@@ -375,7 +359,7 @@ func (h *AuthHandler) RegisterVerify(c *gin.Context) {
 
 	h.verificationSvc.DeletePendingRegistration(c.Request.Context(), req.Email)
 
-	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, sessionTTLFromUser(u), deviceInfoFromContext(c))
+	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, string(u.Role), sessionTTLFromUser(u), deviceInfoFromContext(c))
 	if err != nil {
 		response.InternalError(c, "failed to create session")
 		return
@@ -424,7 +408,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, sessionTTLFromUser(u), deviceInfoFromContext(c))
+	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, string(u.Role), sessionTTLFromUser(u), deviceInfoFromContext(c))
 	if err != nil {
 		response.InternalError(c, "failed to create session")
 		return
@@ -489,7 +473,7 @@ func (h *AuthHandler) PasskeyVerify(c *gin.Context) {
 		return
 	}
 
-	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, sessionTTLFromUser(u), deviceInfoFromContext(c))
+	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, string(u.Role), sessionTTLFromUser(u), deviceInfoFromContext(c))
 	if err != nil {
 		response.InternalError(c, "failed to create session")
 		return
@@ -605,7 +589,7 @@ func (h *AuthHandler) Recovery(c *gin.Context) {
 	u.BackupCodes = remaining
 	h.userRepo.Update(c.Request.Context(), u)
 
-	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, sessionTTLFromUser(u), deviceInfoFromContext(c))
+	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, string(u.Role), sessionTTLFromUser(u), deviceInfoFromContext(c))
 	if err != nil {
 		response.InternalError(c, "failed to create session")
 		return
@@ -642,7 +626,7 @@ func (h *AuthHandler) InitWallet(c *gin.Context) {
 		return
 	}
 
-	walletSeed, err := h.generateWalletSeed()
+	walletSeed, err := h.walletSvc.DeriveWalletSeed(c.Request.Context(), email)
 	if err != nil {
 		response.InternalError(c, "wallet seed generation failed: "+err.Error())
 		return
@@ -766,25 +750,6 @@ func emailToWalletAddr(email string) string {
 	return fmt.Sprintf("EMAIL:%x", emailHash[:16])
 }
 
-// generateWalletSeed generates a secure random Stellar wallet seed.
-func (h *AuthHandler) generateWalletSeed() (string, error) {
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(key), nil
-}
-
-// getPasskeyPepper returns the passkey pepper for wallet seed derivation.
-func getPasskeyPepper() (string, error) {
-	p := os.Getenv("MOISTELLO_PASSKEY_PEPPER")
-	if p == "" {
-		return "", errors.New("MOISTELLO_PASSKEY_PEPPER environment variable is not set")
-	}
-	return p, nil
-}
-
-// sha256HashForLogout computes SHA-256 for refresh token session lookup.
 func sessionTTLFromUser(u *user.User) time.Duration {
 	ttl := u.SessionTTLMinutes
 	if ttl < 60 {

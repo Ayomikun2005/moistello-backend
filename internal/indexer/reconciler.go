@@ -11,11 +11,13 @@ import (
 // Reconciler detects gaps in processed events by comparing the cursor position
 // with the current chain height, and replays any missed ledgers.
 type Reconciler struct {
-	cursor    *CursorTracker
-	poller    *Poller
-	processor *EventProcessor
-	dedup     *Deduplicator
-	interval  time.Duration
+	cursor             *CursorTracker
+	poller             *Poller
+	processor          *EventProcessor
+	dedup              *Deduplicator
+	interval           time.Duration
+	batchSize          int
+	maxLedgersPerCycle int
 }
 
 // NewReconciler creates a Reconciler with the given dependencies.
@@ -26,12 +28,30 @@ func NewReconciler(
 	dedup *Deduplicator,
 ) *Reconciler {
 	return &Reconciler{
-		cursor:    cursor,
-		poller:    poller,
-		processor: processor,
-		dedup:     dedup,
-		interval:  5 * time.Minute,
+		cursor:             cursor,
+		poller:             poller,
+		processor:          processor,
+		dedup:              dedup,
+		interval:           5 * time.Minute,
+		batchSize:          50,
+		maxLedgersPerCycle: 500,
 	}
+}
+
+// WithBatchSize sets the number of ledgers fetched in each individual Horizon call.
+func (r *Reconciler) WithBatchSize(size int) *Reconciler {
+	if size > 0 {
+		r.batchSize = size
+	}
+	return r
+}
+
+// WithMaxLedgersPerCycle sets the maximum number of missed ledgers processed per reconciliation cycle.
+func (r *Reconciler) WithMaxLedgersPerCycle(max int) *Reconciler {
+	if max > 0 {
+		r.maxLedgersPerCycle = max
+	}
+	return r
 }
 
 // StartReconciliation runs reconciliation on a periodic ticker until the
@@ -59,7 +79,7 @@ func (r *Reconciler) StartReconciliation(ctx context.Context, interval time.Dura
 }
 
 // Reconcile checks for gaps between the stored cursor and the latest chain
-// ledger, and replays any missed ledgers in batches.
+// ledger, and replays any missed ledgers in batches up to maxLedgersPerCycle.
 func (r *Reconciler) Reconcile(ctx context.Context) error {
 	cursor, err := r.cursor.GetCurrent(ctx)
 	if err != nil {
@@ -91,41 +111,79 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		return nil
 	}
 
-	// Fetch missed ledgers in batches
-	missedLedgers, err := r.poller.FetchLedgers(ctx, cursor.LastLedger, 50)
-	if err != nil {
-		return fmt.Errorf("fetching missed ledgers: %w", err)
+	batchSize := r.batchSize
+	if batchSize <= 0 {
+		batchSize = 50
+	}
+	maxPerCycle := r.maxLedgersPerCycle
+	if maxPerCycle <= 0 {
+		maxPerCycle = 500
 	}
 
+	totalLedgersFetched := 0
 	processed := 0
 	skipped := 0
-	for _, ledger := range missedLedgers {
-		txns, err := r.poller.FetchTransactions(ctx, ledger.Sequence)
+	currentCursor := cursor.LastLedger
+
+	for totalLedgersFetched < maxPerCycle {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		limit := batchSize
+		if remaining := maxPerCycle - totalLedgersFetched; remaining < limit {
+			limit = remaining
+		}
+
+		missedLedgers, err := r.poller.FetchLedgers(ctx, currentCursor, limit)
 		if err != nil {
-			log.Warn().Err(err).Int64("ledger", ledger.Sequence).Msg("skipping ledger during reconciliation")
-			continue
+			return fmt.Errorf("fetching missed ledgers: %w", err)
+		}
+		if len(missedLedgers) == 0 {
+			break
 		}
 
-		filtered := r.poller.FilterByContract(txns)
-		for _, txn := range filtered {
-			if r.dedup.Has(txn.Hash) {
-				skipped++
-				continue
-			}
-			r.dedup.Add(txn.Hash)
+		totalLedgersFetched += len(missedLedgers)
 
-			if err := r.processor.ProcessTransaction(ctx, &txn); err != nil {
-				log.Warn().Err(err).
-					Str("hash", txn.Hash).
-					Msg("reconciler process error")
+		for _, ledger := range missedLedgers {
+			currentCursor = ledger.Sequence
+
+			txns, err := r.poller.FetchTransactions(ctx, ledger.Sequence)
+			if err != nil {
+				log.Warn().Err(err).Int64("ledger", ledger.Sequence).Msg("skipping ledger during reconciliation")
+				if err := r.cursor.Update(ctx, ledger.Sequence); err != nil {
+					return fmt.Errorf("updating cursor during reconciliation: %w", err)
+				}
 				continue
 			}
-			processed++
+
+			filtered := r.poller.FilterByContract(txns)
+			for _, txn := range filtered {
+				if r.dedup.Has(txn.Hash) {
+					skipped++
+					continue
+				}
+				r.dedup.Add(txn.Hash)
+
+				if err := r.processor.ProcessTransaction(ctx, &txn); err != nil {
+					log.Warn().Err(err).
+						Str("hash", txn.Hash).
+						Msg("reconciler process error")
+					continue
+				}
+				processed++
+			}
+
+			// Update the cursor after each successfully processed ledger (parallel-safe)
+			if err := r.cursor.Update(ctx, ledger.Sequence); err != nil {
+				return fmt.Errorf("updating cursor during reconciliation: %w", err)
+			}
 		}
 
-		// Update the cursor after each successfully processed ledger
-		if err := r.cursor.Update(ctx, ledger.Sequence); err != nil {
-			return fmt.Errorf("updating cursor during reconciliation: %w", err)
+		if len(missedLedgers) < limit {
+			break
 		}
 	}
 
@@ -134,6 +192,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 			Int64("gap", gap).
 			Int("replayed", processed).
 			Int("skipped", skipped).
+			Int("ledgersReconciled", totalLedgersFetched).
 			Msg("reconciliation complete")
 	} else if gap < 100 {
 		log.Debug().Int64("gap", gap).Msg("reconciliation — no new events")

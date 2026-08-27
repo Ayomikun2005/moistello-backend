@@ -82,8 +82,8 @@ func (s *Signer) Sign(message []byte) ([]byte, error) {
 	return sig, nil
 }
 
-func (s *Signer) PublicKeyBytes() []byte         { return s.publicKey }
-func (s *Signer) SecretKey() ed25519.PrivateKey   { return s.secretKey }
+func (s *Signer) PublicKeyBytes() []byte        { return s.publicKey }
+func (s *Signer) SecretKey() ed25519.PrivateKey { return s.secretKey }
 func (s *Signer) Verify(message, signature []byte) bool {
 	return ed25519.Verify(s.publicKey, message, signature)
 }

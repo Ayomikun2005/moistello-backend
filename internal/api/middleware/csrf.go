@@ -40,7 +40,7 @@ func CSRFTokenValidator(redisClient *redis.Client) gin.HandlerFunc {
 		if authHeader == "" {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"success": false,
-				"error": "missing authorization",
+				"error":   "missing authorization",
 			})
 			return
 		}
@@ -49,7 +49,7 @@ func CSRFTokenValidator(redisClient *redis.Client) gin.HandlerFunc {
 		if len(parts) != 2 || parts[0] != "Bearer" || len(parts[1]) < 32 {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"success": false,
-				"error": "invalid authorization format",
+				"error":   "invalid authorization format",
 			})
 			return
 		}

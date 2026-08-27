@@ -83,10 +83,10 @@ func (h *PasskeyCredentialHandler) GetCredential(c *gin.Context) {
 		"success": true,
 		"data": gin.H{
 			"credentialId": row.CredentialID,
-			"publicKey": row.PublicKey,
-			"counter":    row.Counter,
-			"transports": row.Transports,
-			"emailHash":  emailHash,
+			"publicKey":    row.PublicKey,
+			"counter":      row.Counter,
+			"transports":   row.Transports,
+			"emailHash":    emailHash,
 		},
 	})
 }

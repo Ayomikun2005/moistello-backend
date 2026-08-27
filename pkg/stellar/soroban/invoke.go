@@ -12,10 +12,10 @@ import (
 
 // ContractInvoker builds and executes Soroban contract calls.
 type ContractInvoker struct {
-	client      *Client
-	signer      *stellar.Signer
-	accountMgr  *stellar.AccountManager
-	contractID  string
+	client     *Client
+	signer     *stellar.Signer
+	accountMgr *stellar.AccountManager
+	contractID string
 }
 
 func NewContractInvoker(client *Client, signer *stellar.Signer, accountMgr *stellar.AccountManager, contractID string) *ContractInvoker {

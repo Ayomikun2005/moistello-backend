@@ -61,6 +61,7 @@ indexer:
   poll_interval: "3s"
   batch_size: 50
   start_ledger: 0
+  max_cursor_lag: "2m"
 
 notification:
   email:
@@ -97,6 +98,10 @@ rate_limit:
   global: 100
   authenticated: 300
   auth: 10
+  # Single policy when Redis is unreachable: fail closed (503) by default —
+  # the same posture the legacy JS middleware/rateLimiter.js always had.
+  # Individual routes may opt into fail-open via the middleware options.
+  fail_closed: true
 
 logging:
   level: "debug"
@@ -106,6 +111,11 @@ logging:
 yellow_card:
   api_key: ""
   api_secret: ""
+  webhook_secret: ""
+
+swap:
+  # How often the sweep worker releases escrow for expired swap offers (#243).
+  sweep_interval: "1m"
 
 # Deployed Contract IDs (Testnet)
 contracts:

@@ -7,12 +7,13 @@ import (
 
 // IndexerMetrics exposes Prometheus counters and gauges for the indexer engine.
 type IndexerMetrics struct {
-	EventsProcessed prometheus.Counter
-	PollErrors      prometheus.Counter
-	ProcessErrors   prometheus.Counter
-	LastLedger      prometheus.Gauge
-	ReconcilerRuns  prometheus.Counter
-	DedupSize       prometheus.Gauge
+	EventsProcessed  prometheus.Counter
+	PollErrors       prometheus.Counter
+	ProcessErrors    prometheus.Counter
+	LastLedger       prometheus.Gauge
+	ReconcilerRuns   prometheus.Counter
+	DedupSize        prometheus.Gauge
+	CursorLagSeconds prometheus.Gauge
 }
 
 // NewIndexerMetrics creates and registers all indexer Prometheus metrics.
@@ -41,6 +42,10 @@ func NewIndexerMetrics() *IndexerMetrics {
 		DedupSize: promauto.NewGauge(prometheus.GaugeOpts{
 			Name: "moistello_indexer_dedup_size",
 			Help: "Number of tracked dedup hashes",
+		}),
+		CursorLagSeconds: promauto.NewGauge(prometheus.GaugeOpts{
+			Name: "moistello_indexer_cursor_lag_seconds",
+			Help: "Seconds since the indexer cursor was last advanced",
 		}),
 	}
 }

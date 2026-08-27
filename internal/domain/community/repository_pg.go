@@ -61,12 +61,12 @@ func scanCommunity(row interface{ Scan(...interface{}) error }) (*Community, err
 }
 
 func (r *pgRepo) FindByID(ctx context.Context, id uuid.UUID) (*Community, error) {
-	query := `SELECT id, name, slug, description, category, tags, avatar_url, banner_url, owner_id, member_count, total_saved, is_featured, created_at, updated_at FROM communities WHERE id = $1`
+	query := `SELECT id, name, slug, description, category, tags, avatar_url, banner_url, owner_id, member_count, total_saved, is_featured, created_at, updated_at FROM communities WHERE id = $1 AND deleted_at IS NULL`
 	return scanCommunity(r.db.QueryRowxContext(ctx, query, id))
 }
 
 func (r *pgRepo) FindBySlug(ctx context.Context, slug string) (*Community, error) {
-	query := `SELECT id, name, slug, description, category, tags, avatar_url, banner_url, owner_id, member_count, total_saved, is_featured, created_at, updated_at FROM communities WHERE slug = $1`
+	query := `SELECT id, name, slug, description, category, tags, avatar_url, banner_url, owner_id, member_count, total_saved, is_featured, created_at, updated_at FROM communities WHERE slug = $1 AND deleted_at IS NULL`
 	return scanCommunity(r.db.QueryRowxContext(ctx, query, slug))
 }
 
@@ -95,6 +95,8 @@ func (r *pgRepo) List(ctx context.Context, filter CommunityFilter) ([]Community,
 		args = append(args, filter.Category)
 		argIdx++
 	}
+
+	conditions = append(conditions, "communities.deleted_at IS NULL")
 
 	where := ""
 	if len(conditions) > 0 {
@@ -142,7 +144,7 @@ func (r *pgRepo) Update(ctx context.Context, c *Community) error {
 }
 
 func (r *pgRepo) Delete(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM communities WHERE id = $1`, id)
+	_, err := r.db.ExecContext(ctx, `UPDATE communities SET deleted_at = NOW() WHERE id = $1`, id)
 	return err
 }
 
@@ -270,12 +272,12 @@ func (r *pgRepo) GetActivity(ctx context.Context, communityID uuid.UUID, limit i
 }
 
 func (r *pgRepo) UpdateTotalSaved(ctx context.Context, communityID uuid.UUID) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE communities SET total_saved = COALESCE((SELECT SUM(c.total_contributions) FROM circles c WHERE c.community_id = $1), 0) WHERE id = $1`, communityID)
+	_, err := r.db.ExecContext(ctx, `UPDATE communities SET total_saved = COALESCE((SELECT SUM(c.total_contributions) FROM circles c WHERE c.deleted_at IS NULL AND c.community_id = $1), 0) WHERE id = $1`, communityID)
 	return err
 }
 
 func (r *pgRepo) FindByUserID(ctx context.Context, userID uuid.UUID) ([]Community, error) {
-	rows, err := r.db.QueryxContext(ctx, `SELECT c.id, c.name, c.slug, c.description, c.category, c.tags, c.avatar_url, c.banner_url, c.owner_id, c.member_count, c.total_saved, c.is_featured, c.created_at, c.updated_at FROM communities c INNER JOIN community_members cm ON cm.community_id = c.id WHERE cm.user_id = $1 ORDER BY c.name`, userID)
+	rows, err := r.db.QueryxContext(ctx, `SELECT c.id, c.name, c.slug, c.description, c.category, c.tags, c.avatar_url, c.banner_url, c.owner_id, c.member_count, c.total_saved, c.is_featured, c.created_at, c.updated_at FROM communities c INNER JOIN community_members cm ON cm.community_id = c.id WHERE c.deleted_at IS NULL AND cm.user_id = $1 ORDER BY c.name`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("finding communities by user: %w", err)
 	}

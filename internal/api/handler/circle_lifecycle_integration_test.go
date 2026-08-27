@@ -142,6 +142,10 @@ func (s *lifecycleCircleService) RemoveMember(_ context.Context, _, _, _ string,
 	return nil
 }
 
+func (s *lifecycleCircleService) ProcessMissedContributions(_ context.Context, _ string, _ int) error {
+	return nil
+}
+
 type lifecycleContributionService struct{ store *lifecycleStore }
 
 func (s *lifecycleContributionService) Record(

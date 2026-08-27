@@ -7,9 +7,17 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/moistello/backend/pkg/rabbitmq"
+	"github.com/rs/zerolog/log"
 )
+
+// EventsExchange is the topic exchange notification events are published to.
+const EventsExchange = "moistello.events"
+
+// Publisher abstracts the RabbitMQ producer so the service can be tested
+// with a mock. *rabbitmq.Client satisfies it.
+type Publisher interface {
+	Publish(exchange, routingKey string, body []byte) error
+}
 
 type Service interface {
 	Create(ctx context.Context, input CreateInput) (*Notification, error)
@@ -19,11 +27,11 @@ type Service interface {
 }
 
 type CreateInput struct {
-	UserID  string             `json:"userId" validate:"required"`
-	Type    NotificationType   `json:"type" validate:"required"`
-	Title   string             `json:"title" validate:"required"`
-	Body    string             `json:"body" validate:"required"`
-	Data    json.RawMessage    `json:"data"`
+	UserID  string              `json:"userId" validate:"required"`
+	Type    NotificationType    `json:"type" validate:"required"`
+	Title   string              `json:"title" validate:"required"`
+	Body    string              `json:"body" validate:"required"`
+	Data    json.RawMessage     `json:"data"`
 	Channel NotificationChannel `json:"channel" validate:"required,oneof=inapp email sms push"`
 }
 
@@ -34,11 +42,11 @@ type Broadcaster interface {
 
 type notificationService struct {
 	repo         Repository
-	rabbitClient *rabbitmq.Client
+	rabbitClient Publisher
 	broadcaster  Broadcaster
 }
 
-func NewService(repo Repository, rabbitClient *rabbitmq.Client, broadcaster Broadcaster) Service {
+func NewService(repo Repository, rabbitClient Publisher, broadcaster Broadcaster) Service {
 	return &notificationService{repo: repo, rabbitClient: rabbitClient, broadcaster: broadcaster}
 }
 
@@ -73,13 +81,25 @@ func (s *notificationService) Create(ctx context.Context, input CreateInput) (*N
 		return nil, fmt.Errorf("creating notification: %w", err)
 	}
 
+	// When a publisher is wired, the durable notification queue drives
+	// real-time delivery (the consumer fans out over WebSockets) — the direct
+	// broadcast is skipped to avoid duplicate deliveries. Without a publisher
+	// the broadcaster is used in-process as a graceful fallback.
 	if s.rabbitClient != nil {
 		payload, err := json.Marshal(n)
-		if err != nil {
+		if err == nil {
+			routingKey := fmt.Sprintf("notification.%s", input.Channel)
+			if pubErr := s.rabbitClient.Publish(EventsExchange, routingKey, payload); pubErr != nil {
+				// Persistence already succeeded; fall back to an immediate
+				// broadcast so the user does not miss the event.
+				log.Warn().Err(pubErr).Msg("publishing notification event")
+				if s.broadcaster != nil {
+					s.broadcaster.NotificationCreated(ctx, input.UserID, n.ID.String())
+				}
+				return n, nil
+			}
 			return n, nil
 		}
-		routingKey := fmt.Sprintf("notification.%s", input.Channel)
-		_ = s.rabbitClient.Publish("moistello.events", routingKey, payload)
 	}
 
 	if s.broadcaster != nil {

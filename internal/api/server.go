@@ -18,7 +18,7 @@ import (
 // This prevents memory exhaustion from oversized request bodies (#49).
 const maxBodyBytes = 4 * 1024 * 1024 // 4 MB
 
-func RunServer(router http.Handler, cfg config.ServerConfig) error {
+func RunServer(router http.Handler, cfg config.ServerConfig, onShutdown ...func(ctx context.Context)) error {
 	// Wrap the router so every request body is capped at maxBodyBytes.
 	limitedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
@@ -92,6 +92,11 @@ func RunServer(router http.Handler, cfg config.ServerConfig) error {
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Error().Err(err).Msg("server forced to shutdown due to timeout or error")
 		return err
+	}
+
+	// Execute custom shutdown/drain callbacks (e.g. WebSocket draining, RedisBridge closing)
+	for _, hook := range onShutdown {
+		hook(ctx)
 	}
 
 	// Shutdown OpenTelemetry tracer provider

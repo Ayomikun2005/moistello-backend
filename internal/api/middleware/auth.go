@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/moistello/backend/pkg/logger"
 	"github.com/moistello/backend/pkg/response"
 	"github.com/rs/zerolog/log"
 )
@@ -60,6 +62,7 @@ func AuthMiddleware(publicKeyPEM []byte) gin.HandlerFunc {
 		c.Set("userID", claims.UserID)
 		c.Set("wallet", claims.Wallet)
 		c.Set("role", claims.Role)
+		c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), logger.UserIDKey, claims.UserID))
 		log.Debug().Str("userID", claims.UserID).Str("path", c.Request.URL.Path).Msg("authenticated request")
 		c.Next()
 	}
@@ -100,6 +103,7 @@ func OptionalAuthMiddleware(publicKeyPEM []byte) gin.HandlerFunc {
 		c.Set("userID", claims.UserID)
 		c.Set("wallet", claims.Wallet)
 		c.Set("role", claims.Role)
+		c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), logger.UserIDKey, claims.UserID))
 		c.Next()
 	}
 }

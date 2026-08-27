@@ -18,6 +18,7 @@ type dbExecutor interface {
 	QueryxContext(ctx context.Context, query string, args ...interface{}) (*sqlx.Rows, error)
 	NamedExecContext(ctx context.Context, query string, arg interface{}) (sql.Result, error)
 	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	SelectContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error
 }
 
 type pgRepo struct {
@@ -98,7 +99,7 @@ func (r *pgRepo) FindByID(ctx context.Context, id uuid.UUID) (*Circle, error) {
 		(SELECT COUNT(*) FROM circle_members WHERE circle_id = circles.id AND status = 'active') as member_count,
 		requires_invite,
 		start_date, end_date, status, current_round, total_contributions,
-		organizer_id, created_at, updated_at FROM circles WHERE id = $1`
+		organizer_id, created_at, updated_at FROM circles WHERE id = $1 AND deleted_at IS NULL`
 	return scanCircle(r.db.QueryRowxContext(ctx, query, id))
 }
 
@@ -109,7 +110,7 @@ func (r *pgRepo) FindByContractID(ctx context.Context, contractID string) (*Circ
 		(SELECT COUNT(*) FROM circle_members WHERE circle_id = circles.id AND status = 'active') as member_count,
 		requires_invite,
 		start_date, end_date, status, current_round, total_contributions,
-		organizer_id, created_at, updated_at FROM circles WHERE contract_id = $1`
+		organizer_id, created_at, updated_at FROM circles WHERE contract_id = $1 AND deleted_at IS NULL`
 	return scanCircle(r.db.QueryRowxContext(ctx, query, contractID))
 }
 
@@ -129,7 +130,7 @@ func (r *pgRepo) List(ctx context.Context, filter CircleFilter) ([]Circle, error
 		(SELECT COUNT(*) FROM circle_members WHERE circle_id = circles.id AND status = 'active') as member_count,
 		requires_invite,
 		start_date, end_date, status, current_round, total_contributions,
-		organizer_id, created_at, updated_at FROM circles`
+		organizer_id, created_at, updated_at FROM circles WHERE deleted_at IS NULL`
 
 	var args []interface{}
 	var whereClauses []string
@@ -165,7 +166,7 @@ func (r *pgRepo) List(ctx context.Context, filter CircleFilter) ([]Circle, error
 	}
 
 	if len(whereClauses) > 0 {
-		query += " WHERE " + strings.Join(whereClauses, " AND ")
+		query += " AND " + strings.Join(whereClauses, " AND ")
 	}
 
 	query += " ORDER BY created_at DESC LIMIT $" + fmt.Sprint(len(args)+1) + " OFFSET $" + fmt.Sprint(len(args)+2)
@@ -192,7 +193,7 @@ func (r *pgRepo) List(ctx context.Context, filter CircleFilter) ([]Circle, error
 }
 
 func (r *pgRepo) Count(ctx context.Context, filter CircleFilter) (int, error) {
-	query := "SELECT COUNT(*) FROM circles"
+	query := "SELECT COUNT(*) FROM circles WHERE deleted_at IS NULL"
 	var args []interface{}
 	var whereClauses []string
 
@@ -219,7 +220,7 @@ func (r *pgRepo) Count(ctx context.Context, filter CircleFilter) (int, error) {
 	}
 
 	if len(whereClauses) > 0 {
-		query += " WHERE " + strings.Join(whereClauses, " AND ")
+		query += " AND " + strings.Join(whereClauses, " AND ")
 	}
 
 	var count int
@@ -276,7 +277,7 @@ func (r *pgRepo) Update(ctx context.Context, c *Circle) error {
 }
 
 func (r *pgRepo) Delete(ctx context.Context, id uuid.UUID) error {
-	query := `DELETE FROM circles WHERE id = $1`
+	query := `UPDATE circles SET deleted_at = NOW() WHERE id = $1`
 	result, err := r.db.ExecContext(ctx, query, id)
 	if err != nil {
 		return fmt.Errorf("deleting circle: %w", err)
@@ -393,4 +394,34 @@ func isUniqueViolationPg(err error) bool {
 		return pqErr.Code == pq.ErrorCode("23505")
 	}
 	return false
+}
+
+func (r *pgRepo) CreatePenalty(ctx context.Context, p *Penalty) error {
+	query := `
+		INSERT INTO penalties (id, circle_id, user_id, round_number, penalty_type, amount, strikes_applied, reason, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`
+	_, err := r.db.ExecContext(ctx, query, p.ID, p.CircleID, p.UserID, p.RoundNumber, p.PenaltyType, p.Amount, p.StrikesApplied, p.Reason, p.CreatedAt)
+	return err
+}
+
+func (r *pgRepo) GetPenaltiesByCircle(ctx context.Context, circleID uuid.UUID) ([]Penalty, error) {
+	query := `SELECT id, circle_id, user_id, round_number, penalty_type, amount, strikes_applied, reason, created_at FROM penalties WHERE circle_id = $1 ORDER BY created_at DESC`
+	var penalties []Penalty
+	err := r.db.SelectContext(ctx, &penalties, query, circleID)
+	return penalties, err
+}
+
+func (r *pgRepo) GetPenaltiesByUser(ctx context.Context, userID uuid.UUID) ([]Penalty, error) {
+	query := `SELECT id, circle_id, user_id, round_number, penalty_type, amount, strikes_applied, reason, created_at FROM penalties WHERE user_id = $1 ORDER BY created_at DESC`
+	var penalties []Penalty
+	err := r.db.SelectContext(ctx, &penalties, query, userID)
+	return penalties, err
+}
+
+func (r *pgRepo) GetContributionsByCircleAndRound(ctx context.Context, circleID uuid.UUID, roundNumber int) ([]uuid.UUID, error) {
+	query := `SELECT user_id FROM contributions WHERE circle_id = $1 AND round_number = $2`
+	var userIDs []uuid.UUID
+	err := r.db.SelectContext(ctx, &userIDs, query, circleID, roundNumber)
+	return userIDs, err
 }

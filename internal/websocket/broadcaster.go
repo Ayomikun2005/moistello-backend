@@ -14,8 +14,8 @@ const redisChannel = "moistello:ws:events"
 // Broadcaster relays real-time events to WebSocket clients and to other
 // API server instances via Redis Pub/Sub.
 type Broadcaster struct {
-	hub  *Hub
-	rdb  *redis.Client
+	hub *Hub
+	rdb *redis.Client
 }
 
 // NewBroadcaster creates a Broadcaster backed by the given Hub and Redis client.

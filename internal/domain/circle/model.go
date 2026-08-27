@@ -10,9 +10,9 @@ import (
 type CircleType string
 
 const (
-	CircleTypePublic    CircleType = "public"
-	CircleTypePrivate   CircleType = "private"
-	CircleTypePremium   CircleType = "premium"
+	CircleTypePublic  CircleType = "public"
+	CircleTypePrivate CircleType = "private"
+	CircleTypePremium CircleType = "premium"
 )
 
 type PayoutType string
@@ -27,10 +27,10 @@ const (
 type CircleFrequency string
 
 const (
-	FrequencyDaily   CircleFrequency = "daily"
-	FrequencyWeekly  CircleFrequency = "weekly"
+	FrequencyDaily    CircleFrequency = "daily"
+	FrequencyWeekly   CircleFrequency = "weekly"
 	FrequencyBiweekly CircleFrequency = "biweekly"
-	FrequencyMonthly CircleFrequency = "monthly"
+	FrequencyMonthly  CircleFrequency = "monthly"
 )
 
 type CircleCurrency string
@@ -84,6 +84,7 @@ type Circle struct {
 	OrganizerID        uuid.UUID       `json:"organizerId" db:"organizer_id"`
 	CreatedAt          time.Time       `json:"createdAt" db:"created_at"`
 	UpdatedAt          time.Time       `json:"updatedAt" db:"updated_at"`
+	DeletedAt          *time.Time      `json:"deletedAt,omitempty" db:"deleted_at"`
 }
 
 type CircleMember struct {
@@ -92,4 +93,24 @@ type CircleMember struct {
 	Position int          `json:"position" db:"position"`
 	Status   MemberStatus `json:"status" db:"status"`
 	JoinedAt time.Time    `json:"joinedAt" db:"joined_at"`
+}
+
+type PenaltyType string
+
+const (
+	PenaltyTypeLate      PenaltyType = "late"
+	PenaltyTypeDefault   PenaltyType = "default"
+	PenaltyTypeEarlyExit PenaltyType = "early_exit"
+)
+
+type Penalty struct {
+	ID             uuid.UUID      `json:"id" db:"id"`
+	CircleID       uuid.UUID      `json:"circleId" db:"circle_id"`
+	UserID         uuid.UUID      `json:"userId" db:"user_id"`
+	RoundNumber    int            `json:"roundNumber" db:"round_number"`
+	PenaltyType    PenaltyType    `json:"penaltyType" db:"penalty_type"`
+	Amount         float64        `json:"amount" db:"amount"`
+	StrikesApplied int            `json:"strikesApplied" db:"strikes_applied"`
+	Reason         sql.NullString `json:"reason,omitempty" db:"reason"`
+	CreatedAt      time.Time      `json:"createdAt" db:"created_at"`
 }

@@ -294,10 +294,10 @@ func (s *txSubmitter) getTransactionStatus(ctx context.Context, txHash string) (
 
 	var rpcResp struct {
 		Result struct {
-			Status        string `json:"status"`
-			ResultXdr     string `json:"resultXdr"`
-			Ledger        int64  `json:"ledger"`
-			ApplicationOrder int64 `json:"applicationOrder"`
+			Status           string `json:"status"`
+			ResultXdr        string `json:"resultXdr"`
+			Ledger           int64  `json:"ledger"`
+			ApplicationOrder int64  `json:"applicationOrder"`
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(respBody, &rpcResp); err != nil {

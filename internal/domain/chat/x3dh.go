@@ -16,11 +16,11 @@ import (
 // PreKeyBundle contains public keys published by a user for X3DH handshake.
 type PreKeyBundle struct {
 	UserID          string `json:"user_id"`
-	IdentityKey     string `json:"identity_key"`       // Public Identity Key (X25519 hex)
-	SignedPreKey    string `json:"signed_prekey"`      // Public Signed Prekey (X25519 hex)
+	IdentityKey     string `json:"identity_key"`  // Public Identity Key (X25519 hex)
+	SignedPreKey    string `json:"signed_prekey"` // Public Signed Prekey (X25519 hex)
 	SignedPreKeyID  int    `json:"signed_prekey_id"`
-	Signature       string `json:"signature"`          // Ed25519 signature of signed prekey
-	OneTimePreKey   string `json:"one_time_prekey"`    // Optional Public One-Time Prekey (X25519 hex)
+	Signature       string `json:"signature"`       // Ed25519 signature of signed prekey
+	OneTimePreKey   string `json:"one_time_prekey"` // Optional Public One-Time Prekey (X25519 hex)
 	OneTimePreKeyID int    `json:"one_time_prekey_id"`
 }
 

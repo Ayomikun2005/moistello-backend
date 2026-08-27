@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	rpcURL    = "https://soroban-testnet.stellar.org"
-	horizon   = "https://horizon-testnet.stellar.org"
-	pubKey    = "GAX23V3WWDPPR5WRER3KTEUTDLSCGZYMSJY5FDRRKKCIQ4JADF5T27RC"
+	rpcURL  = "https://soroban-testnet.stellar.org"
+	horizon = "https://horizon-testnet.stellar.org"
+	pubKey  = "GAX23V3WWDPPR5WRER3KTEUTDLSCGZYMSJY5FDRRKKCIQ4JADF5T27RC"
 )
 
 // ── Test 1: Horizon Client — Get Account ──

@@ -42,7 +42,7 @@ func (s *Service) GenerateSecret(email string) (secret string, uri string, err e
 // It allows a 30-second skew (one period before and after) to account for
 // clock drift between the server and the authenticator app.
 func (s *Service) ValidateCode(secret, code string) bool {
-	valid, err := 	totp.ValidateCustom(
+	valid, err := totp.ValidateCustom(
 		code,
 		secret,
 		time.Now().UTC(),

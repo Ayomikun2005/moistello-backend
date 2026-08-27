@@ -29,7 +29,7 @@ type Config struct {
 	Environment  string
 	YellowCard   YellowCardConfig `mapstructure:"yellow_card"`
 	Tracing      TracingConfig
-	JobQueue     JobQueueConfig   `mapstructure:"job_queue"`
+	Swap         SwapConfig `mapstructure:"swap"`
 }
 
 type ServerConfig struct {
@@ -94,8 +94,12 @@ func (s StellarConfig) String() string {
 }
 
 type YellowCardConfig struct {
-	APIKey    string `mapstructure:"api_key"`
-	APISecret string `mapstructure:"api_secret"`
+	APIKey               string  `mapstructure:"api_key"`
+	APISecret            string  `mapstructure:"api_secret"`
+	MaxDepositNGN        float64 `mapstructure:"max_deposit_ngn"`
+	MaxWithdrawUSDC      float64 `mapstructure:"max_withdraw_usdc"`
+	DailyDepositCapNGN   float64 `mapstructure:"daily_deposit_cap_ngn"`
+	DailyWithdrawCapUSDC float64 `mapstructure:"daily_withdraw_cap_usdc"`
 }
 
 type AuthConfig struct {
@@ -110,8 +114,11 @@ type AuthConfig struct {
 }
 
 type SecurityConfig struct {
+	// WalletPepper is the single server-side secret used for deterministic
+	// wallet seed derivation. The former, unused PasskeyPepper field and its
+	// MOISTELLO_PASSKEY_PEPPER env binding were removed in #163 so there is
+	// exactly one pepper source of truth.
 	WalletPepper  string `mapstructure:"wallet_pepper"`
-	PasskeyPepper string `mapstructure:"passkey_pepper"`
 	EncryptionKey string `mapstructure:"encryption_key"`
 	Argon2Time    int    `mapstructure:"argon2_time"`
 	Argon2Memory  int    `mapstructure:"argon2_memory"`
@@ -128,6 +135,9 @@ type IndexerConfig struct {
 	PollInterval time.Duration `mapstructure:"poll_interval"`
 	BatchSize    int           `mapstructure:"batch_size"`
 	StartLedger  int64         `mapstructure:"start_ledger"`
+	// MaxCursorLag is how long the cursor's last_processed_at may trail the
+	// current time before the health server reports the indexer as unhealthy.
+	MaxCursorLag time.Duration `mapstructure:"max_cursor_lag"`
 }
 
 type NotificationConfig struct {
@@ -155,10 +165,24 @@ type CORSConfig struct {
 	MaxAge           time.Duration `mapstructure:"max_age"`
 }
 
+type SwapConfig struct {
+	// SweepInterval is how often the swap sweep worker runs. The sweep
+	// releases escrow on-chain for created swap offers past their expiry and
+	// marks them expired (#243).
+	SweepInterval time.Duration `mapstructure:"sweep_interval"`
+}
+
 type RateLimitConfig struct {
 	Global        int `mapstructure:"global"`
 	Authenticated int `mapstructure:"authenticated"`
 	Auth          int `mapstructure:"auth"`
+	// FailClosed decides what happens when Redis is unreachable during a rate
+	// limit check. True (the default, and the single policy documented in
+	// docs/rate-limiting.md) refuses the request with 503 — the same posture
+	// the legacy JS middleware/rateLimiter.js always had. False falls back to
+	// the in-memory limiter (fails open). Individual routes may override this
+	// per-route via middleware.RateLimitMiddleware options.
+	FailClosed bool `mapstructure:"fail_closed"`
 }
 
 type LoggingConfig struct {
@@ -168,18 +192,10 @@ type LoggingConfig struct {
 }
 
 type TracingConfig struct {
-	Enabled          bool          `mapstructure:"enabled"`
-	CollectorEndpoint string       `mapstructure:"collector_endpoint"`
-	ServiceName      string       `mapstructure:"service_name"`
-	SampleRate       float64      `mapstructure:"sample_rate"`
-}
-
-type JobQueueConfig struct {
-	Enabled      bool          `mapstructure:"enabled"`
-	Concurrency  int           `mapstructure:"concurrency"`
-	PollInterval time.Duration `mapstructure:"poll_interval"`
-	MaxRetries   int           `mapstructure:"max_retries"`
-	Queues       []string      `mapstructure:"queues"`
+	Enabled           bool    `mapstructure:"enabled"`
+	CollectorEndpoint string  `mapstructure:"collector_endpoint"`
+	ServiceName       string  `mapstructure:"service_name"`
+	SampleRate        float64 `mapstructure:"sample_rate"`
 }
 
 func Load(path string) (*Config, error) {
@@ -228,6 +244,7 @@ func Load(path string) (*Config, error) {
 	setDefault(v, "brevo.from_name", "Moistello")
 	setDefault(v, "indexer.poll_interval", "3s")
 	setDefault(v, "indexer.batch_size", 50)
+	setDefault(v, "indexer.max_cursor_lag", "2m")
 	setDefault(v, "cors.allowed_origins", []string{"http://localhost:1110"})
 	setDefault(v, "cors.allowed_methods", []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"})
 	setDefault(v, "cors.allowed_headers", []string{"Authorization", "Content-Type", "X-Request-ID"})
@@ -236,6 +253,7 @@ func Load(path string) (*Config, error) {
 	setDefault(v, "rate_limit.global", 100)
 	setDefault(v, "rate_limit.authenticated", 300)
 	setDefault(v, "rate_limit.auth", 10)
+	setDefault(v, "rate_limit.fail_closed", true)
 	setDefault(v, "logging.level", "debug")
 	setDefault(v, "logging.format", "json")
 	setDefault(v, "logging.output", "stdout")
@@ -250,26 +268,17 @@ func Load(path string) (*Config, error) {
 	setDefault(v, "notification.push.fcm_server_key", "")
 	setDefault(v, "yellow_card.api_key", "")
 	setDefault(v, "yellow_card.api_secret", "")
+	setDefault(v, "yellow_card.webhook_secret", "")
+	setDefault(v, "swap.sweep_interval", "1m")
 	setDefault(v, "security.wallet_pepper", "")
 	setDefault(v, "security.passkey_pepper", "")
 	setDefault(v, "security.encryption_key", "")
-	setDefault(v, "job_queue.enabled", true)
-	setDefault(v, "job_queue.concurrency", 5)
-	setDefault(v, "job_queue.poll_interval", "500ms")
-	setDefault(v, "job_queue.max_retries", 3)
-	setDefault(v, "job_queue.queues", []string{"default", "notifications", "webhooks", "emails"})
-
-	mustBindEnv(v, "job_queue.enabled", "MOISTELLO_JOB_QUEUE_ENABLED")
-	mustBindEnv(v, "job_queue.concurrency", "MOISTELLO_JOB_QUEUE_CONCURRENCY")
-	mustBindEnv(v, "job_queue.poll_interval", "MOISTELLO_JOB_QUEUE_POLL_INTERVAL")
-	mustBindEnv(v, "job_queue.max_retries", "MOISTELLO_JOB_QUEUE_MAX_RETRIES")
 
 	mustBindEnv(v, "environment", "MOISTELLO_ENVIRONMENT", "NODE_ENV")
 	mustBindEnv(v, "database.url", "MOISTELLO_DATABASE_URL", "DATABASE_URL")
 	mustBindEnv(v, "stellar.master_secret_key", "MOISTELLO_STELLAR_MASTER_SECRET_KEY", "STELLAR_MASTER_SECRET_KEY")
 	mustBindEnv(v, "stellar.master_public_key", "MOISTELLO_STELLAR_MASTER_PUBLIC_KEY", "STELLAR_MASTER_PUBLIC_KEY")
 	mustBindEnv(v, "security.wallet_pepper", "MOISTELLO_WALLET_PEPPER")
-	mustBindEnv(v, "security.passkey_pepper", "MOISTELLO_PASSKEY_PEPPER")
 	mustBindEnv(v, "security.encryption_key", "ENCRYPTION_KEY")
 	mustBindEnv(v, "auth.jwt_private_key_pem", "JWT_PRIVATE_KEY")
 	mustBindEnv(v, "auth.jwt_public_key_pem", "JWT_PUBLIC_KEY")
@@ -278,7 +287,58 @@ func Load(path string) (*Config, error) {
 	mustBindEnv(v, "brevo.from_name", "MOISTELLO_BREVO_FROM_NAME", "MOISTELLO_NOTIFICATION_EMAIL_FROM_NAME")
 	mustBindEnv(v, "yellow_card.api_key", "YELLOW_CARD_API_KEY")
 	mustBindEnv(v, "yellow_card.api_secret", "YELLOW_CARD_API_SECRET")
-
+	mustBindEnv(v, "yellow_card.webhook_secret", "YELLOW_CARD_WEBHOOK_SECRET")
+	v.SetDefault("server.port", 1100)
+	v.SetDefault("server.host", "0.0.0.0")
+	v.SetDefault("server.read_timeout", "10s")
+	v.SetDefault("server.write_timeout", "30s")
+	v.SetDefault("server.max_header_bytes", 1048576)
+	v.SetDefault("server.tls_enabled", false)
+	v.SetDefault("server.http_redirect_port", 80)
+	// No default DATABASE_URL: the env var DATABASE_URL (mapped to MOISTELLO_DATABASE_URL)
+	// must be set explicitly. An empty URL will cause a clear startup failure rather than
+	// silently connecting with plaintext credentials and SSL disabled.
+	v.SetDefault("database.max_open_conns", 50)
+	v.SetDefault("database.max_idle_conns", 10)
+	v.SetDefault("database.conn_max_lifetime", "30m")
+	v.SetDefault("redis.url", "redis://localhost:6379")
+	v.SetDefault("redis.pool_size", 20)
+	v.SetDefault("rabbitmq.url", "amqp://guest:guest@localhost:5672/")
+	v.SetDefault("rabbitmq.exchange", "moistello.events")
+	v.SetDefault("rabbitmq.queues.notifications", "moistello.notifications")
+	v.SetDefault("rabbitmq.queues.webhooks", "moistello.webhooks")
+	v.SetDefault("stellar.network", "testnet")
+	v.SetDefault("stellar.horizon_url", "https://horizon-testnet.stellar.org")
+	v.SetDefault("stellar.soroban_rpc_url", "https://soroban-testnet.stellar.org")
+	v.SetDefault("stellar.network_passphrase", "Test SDF Network ; September 2015")
+	v.SetDefault("stellar.governance_token_contract_id", "")
+	v.SetDefault("stellar.escrow_swap_contract_id", "")
+	v.SetDefault("auth.access_token_ttl", "15m")
+	v.SetDefault("auth.refresh_token_ttl", "168h")
+	v.SetDefault("auth.nonce_ttl", "5m")
+	v.SetDefault("brevo.api_key", "")
+	v.SetDefault("brevo.from_email", "noreply@moistello.com")
+	v.SetDefault("brevo.from_name", "Moistello")
+	v.SetDefault("indexer.poll_interval", "3s")
+	v.SetDefault("indexer.batch_size", 50)
+	v.SetDefault("indexer.max_cursor_lag", "2m")
+	v.SetDefault("cors.allowed_origins", []string{"http://localhost:1110"})
+	v.SetDefault("cors.allowed_methods", []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"})
+	v.SetDefault("cors.allowed_headers", []string{"Authorization", "Content-Type", "X-Request-ID"})
+	v.SetDefault("cors.allow_credentials", true)
+	v.SetDefault("cors.max_age", "24h")
+	v.SetDefault("rate_limit.global", 100)
+	v.SetDefault("rate_limit.authenticated", 300)
+	v.SetDefault("rate_limit.auth", 10)
+	v.SetDefault("rate_limit.fail_closed", true)
+	v.SetDefault("logging.level", "debug")
+	v.SetDefault("logging.format", "json")
+	v.SetDefault("logging.output", "stdout")
+	v.SetDefault("tracing.enabled", false)
+	v.SetDefault("tracing.collector_endpoint", "localhost:4317")
+	v.SetDefault("tracing.service_name", "moistello-api")
+	v.SetDefault("tracing.sample_rate", 0.1)
+	v.SetDefault("environment", "development")
 
 	if err := v.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
@@ -296,7 +356,6 @@ func Load(path string) (*Config, error) {
 	cfg.Stellar.MasterSecretKey = requireString("stellar.master_secret_key", cfg.Stellar.MasterSecretKey, "set MOISTELLO_STELLAR_MASTER_SECRET_KEY or STELLAR_MASTER_SECRET_KEY")
 	cfg.Stellar.MasterPublicKey = requireString("stellar.master_public_key", cfg.Stellar.MasterPublicKey, "set MOISTELLO_STELLAR_MASTER_PUBLIC_KEY or STELLAR_MASTER_PUBLIC_KEY")
 	cfg.Security.WalletPepper = requireString("security.wallet_pepper", cfg.Security.WalletPepper, "set MOISTELLO_WALLET_PEPPER")
-	cfg.Security.PasskeyPepper = requireString("security.passkey_pepper", cfg.Security.PasskeyPepper, "set MOISTELLO_PASSKEY_PEPPER")
 	cfg.Security.EncryptionKey = requireString("security.encryption_key", cfg.Security.EncryptionKey, "set ENCRYPTION_KEY")
 
 	cfg.Auth.JWTPrivateKeyPEM = loadRequiredText(cfg.Auth.JWTPrivateKeyPEM, cfg.Auth.JWTPrivateKeyPath, "auth.jwt_private_key_pem", "auth.jwt_private_key_path")

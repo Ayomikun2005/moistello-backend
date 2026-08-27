@@ -92,6 +92,40 @@ func (h *SwapHandler) AcceptSwapOffer(c *gin.Context) {
 	response.OK(c, offer)
 }
 
+// CancelSwapOffer godoc
+// @Summary      Cancel a swap offer
+// @Description  Cancels an open swap offer owned by the authenticated user
+// @Tags         swaps
+// @Produce      json
+// @Param        request body object{swap_offer_id=string} true "Swap offer to cancel"
+// @Success      200  {object}  swap.SwapOffer
+// @Failure      400  {object}  response.ErrorResponse
+// @Failure      401  {object}  response.ErrorResponse
+// @Router       /v1/swap/cancel [post]
+func (h *SwapHandler) CancelSwapOffer(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		response.Unauthorized(c, "unauthorized")
+		return
+	}
+
+	var req struct {
+		SwapOfferID string `json:"swap_offer_id" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "invalid request body: "+err.Error())
+		return
+	}
+
+	offer, err := h.swapService.CancelSwapOffer(c.Request.Context(), userID.(string), req.SwapOfferID)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	response.OK(c, offer)
+}
+
 // GetSwapHistory godoc
 // @Summary      Get swap history
 // @Description  Retrieves the swap history for the authenticated user

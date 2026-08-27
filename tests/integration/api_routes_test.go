@@ -28,6 +28,7 @@ import (
 	"github.com/moistello/backend/internal/domain/savings"
 	"github.com/moistello/backend/internal/domain/user"
 	"github.com/moistello/backend/pkg/apperrors"
+	"github.com/moistello/backend/webhook"
 )
 
 // ── Mock implementations ──────────────────────────────────────────────
@@ -102,10 +103,10 @@ func (m *mockCircleRepo) FindByContractID(_ context.Context, _ string) (*circle.
 func (m *mockCircleRepo) List(_ context.Context, _ circle.CircleFilter) ([]circle.Circle, error) {
 	return []circle.Circle{}, nil
 }
-func (m *mockCircleRepo) Count(_ context.Context, _ circle.CircleFilter) (int, error) { return 0, nil }
-func (m *mockCircleRepo) Create(_ context.Context, _ *circle.Circle) error            { return nil }
-func (m *mockCircleRepo) Update(_ context.Context, _ *circle.Circle) error            { return nil }
-func (m *mockCircleRepo) Delete(_ context.Context, _ uuid.UUID) error                { return nil }
+func (m *mockCircleRepo) Count(_ context.Context, _ circle.CircleFilter) (int, error)  { return 0, nil }
+func (m *mockCircleRepo) Create(_ context.Context, _ *circle.Circle) error             { return nil }
+func (m *mockCircleRepo) Update(_ context.Context, _ *circle.Circle) error             { return nil }
+func (m *mockCircleRepo) Delete(_ context.Context, _ uuid.UUID) error                  { return nil }
 func (m *mockCircleRepo) CreateMember(_ context.Context, _ *circle.CircleMember) error { return nil }
 func (m *mockCircleRepo) GetMembers(_ context.Context, _ uuid.UUID) ([]circle.CircleMember, error) {
 	return []circle.CircleMember{}, nil
@@ -119,6 +120,25 @@ func (m *mockCircleRepo) FindMemberByCircleAndUser(_ context.Context, _, _ uuid.
 }
 func (m *mockCircleRepo) FindCirclesByUserID(_ context.Context, _ uuid.UUID) ([]circle.Circle, error) {
 	return []circle.Circle{}, nil
+}
+
+type fakeTestWebhookRepo struct{}
+
+func (r *fakeTestWebhookRepo) Register(_ context.Context, _ *webhook.WebhookRegistration) error {
+	return nil
+}
+func (r *fakeTestWebhookRepo) GetByUserID(_ context.Context, _ string) ([]webhook.WebhookRegistration, error) {
+	return nil, nil
+}
+func (r *fakeTestWebhookRepo) GetActiveWebhooks(_ context.Context) ([]webhook.WebhookRegistration, error) {
+	return nil, nil
+}
+func (r *fakeTestWebhookRepo) GetByID(_ context.Context, _ string) (*webhook.WebhookRegistration, error) {
+	return nil, nil
+}
+func (r *fakeTestWebhookRepo) Delete(_ context.Context, _ string) error { return nil }
+func (r *fakeTestWebhookRepo) ListDeliveries(_ context.Context, _ string, _, _ int) ([]webhook.DeliveryLog, int, error) {
+	return nil, 0, nil
 }
 
 type mockCircleService struct{}
@@ -135,11 +155,11 @@ func (m *mockCircleService) Create(_ context.Context, organizerID string, input 
 func (m *mockCircleService) Update(_ context.Context, id, userID string, _ circle.UpdateCircleInput) (*circle.Circle, error) {
 	return &circle.Circle{ID: uuid.MustParse(id), Name: "Updated"}, nil
 }
-func (m *mockCircleService) Start(_ context.Context, _, _ string) error          { return nil }
-func (m *mockCircleService) Close(_ context.Context, _, _ string) error          { return nil }
-func (m *mockCircleService) Cancel(_ context.Context, _, _ string) error         { return nil }
-func (m *mockCircleService) Join(_ context.Context, _, _, _ string) error        { return nil }
-func (m *mockCircleService) Exit(_ context.Context, _, _ string) error           { return nil }
+func (m *mockCircleService) Start(_ context.Context, _, _ string) error   { return nil }
+func (m *mockCircleService) Close(_ context.Context, _, _ string) error   { return nil }
+func (m *mockCircleService) Cancel(_ context.Context, _, _ string) error  { return nil }
+func (m *mockCircleService) Join(_ context.Context, _, _, _ string) error { return nil }
+func (m *mockCircleService) Exit(_ context.Context, _, _ string) error    { return nil }
 func (m *mockCircleService) GetMembers(_ context.Context, _ string) ([]circle.CircleMember, error) {
 	return []circle.CircleMember{}, nil
 }
@@ -147,6 +167,9 @@ func (m *mockCircleService) IsMember(_ context.Context, _, _ string) (bool, erro
 	return false, nil
 }
 func (m *mockCircleService) RemoveMember(_ context.Context, _, _, _ string, _ string) error {
+	return nil
+}
+func (m *mockCircleService) ProcessMissedContributions(_ context.Context, _ string, _ int) error {
 	return nil
 }
 
@@ -186,7 +209,7 @@ func (m *mockContribRepo) FindByID(_ context.Context, _ uuid.UUID) (*contributio
 func (m *mockContribRepo) FindByCircleAndUser(_ context.Context, _, _ uuid.UUID) (*contribution.Contribution, error) {
 	return nil, nil
 }
-func (m *mockContribRepo) Create(_ context.Context, _ *contribution.Contribution) error  { return nil }
+func (m *mockContribRepo) Create(_ context.Context, _ *contribution.Contribution) error { return nil }
 func (m *mockContribRepo) UpdateStatus(_ context.Context, _ uuid.UUID, _ contribution.ContributionStatus, _ string) error {
 	return nil
 }
@@ -239,8 +262,8 @@ func (m *mockNotificationService) Create(_ context.Context, _ notification.Creat
 func (m *mockNotificationService) List(_ context.Context, _ string, _, _ int, _ bool) ([]notification.Notification, int, error) {
 	return []notification.Notification{}, 0, nil
 }
-func (m *mockNotificationService) MarkRead(_ context.Context, _, _ string) error    { return nil }
-func (m *mockNotificationService) MarkAllRead(_ context.Context, _ string) error    { return nil }
+func (m *mockNotificationService) MarkRead(_ context.Context, _, _ string) error { return nil }
+func (m *mockNotificationService) MarkAllRead(_ context.Context, _ string) error { return nil }
 
 type mockCommunityService struct{}
 
@@ -259,21 +282,23 @@ func (m *mockCommunityService) List(_ context.Context, _ community.CommunityFilt
 func (m *mockCommunityService) Update(_ context.Context, _, _ string, _ community.UpdateCommunityInput) (*community.Community, error) {
 	return &community.Community{ID: uuid.New(), Name: "Updated"}, nil
 }
-func (m *mockCommunityService) Delete(_ context.Context, _, _ string) error                { return nil }
-func (m *mockCommunityService) Join(_ context.Context, _, _ string) error                  { return nil }
-func (m *mockCommunityService) Leave(_ context.Context, _, _ string) error                 { return nil }
+func (m *mockCommunityService) Delete(_ context.Context, _, _ string) error { return nil }
+func (m *mockCommunityService) Join(_ context.Context, _, _ string) error   { return nil }
+func (m *mockCommunityService) Leave(_ context.Context, _, _ string) error  { return nil }
 func (m *mockCommunityService) GetMembers(_ context.Context, _ string) ([]community.CommunityMember, error) {
 	return []community.CommunityMember{}, nil
 }
-func (m *mockCommunityService) IsMember(_ context.Context, _, _ string) (bool, error) { return true, nil }
+func (m *mockCommunityService) IsMember(_ context.Context, _, _ string) (bool, error) {
+	return true, nil
+}
 func (m *mockCommunityService) CreateAnnouncement(_ context.Context, _, _, _ string) (*community.Announcement, error) {
 	return &community.Announcement{ID: uuid.New()}, nil
 }
 func (m *mockCommunityService) GetAnnouncements(_ context.Context, _ string) ([]community.Announcement, error) {
 	return []community.Announcement{}, nil
 }
-func (m *mockCommunityService) DeleteAnnouncement(_ context.Context, _, _ string) error   { return nil }
-func (m *mockCommunityService) LikeAnnouncement(_ context.Context, _ string) error        { return nil }
+func (m *mockCommunityService) DeleteAnnouncement(_ context.Context, _, _ string) error { return nil }
+func (m *mockCommunityService) LikeAnnouncement(_ context.Context, _ string) error      { return nil }
 func (m *mockCommunityService) PinAnnouncement(_ context.Context, _, _ string, _ bool) error {
 	return nil
 }
@@ -376,7 +401,7 @@ func setupTestRouter() *gin.Engine {
 	communityHandler := handler.NewCommunityHandler(communitySvc)
 	notificationHandler := handler.NewNotificationHandler(notifSvc, userSvc)
 	savingsHandler := handler.NewSavingsGoalHandler(savingsSvc)
-	webhookHandler := handler.NewWebhookHandler()
+	webhookHandler := handler.NewWebhookHandler(&fakeTestWebhookRepo{})
 	healthHandler := handler.NewHealthHandler(nil, nil, "", "")
 
 	r := gin.New()

@@ -103,7 +103,7 @@ func (jq *JobQueue) Dequeue(ctx context.Context, queueName string) (*Job, error)
 		if err != nil {
 			return nil, err
 		}
-		defer tx.Rollback()
+		defer func() { _ = tx.Rollback() }()
 
 		query := `
 			SELECT id, queue_name, payload, status, max_retries, retries_count, scheduled_at, created_at, updated_at
@@ -233,6 +233,26 @@ func (jq *JobQueue) GetDeadLetterJobs(ctx context.Context) ([]*Job, error) {
 		}
 	}
 	return result, nil
+}
+
+// GetJobStatus returns the status of a job by ID. Only works with in-memory mode.
+func (jq *JobQueue) GetJobStatus(jobID string) JobStatus {
+	jq.mu.Lock()
+	defer jq.mu.Unlock()
+	if job, ok := jq.memory[jobID]; ok {
+		return job.Status
+	}
+	return ""
+}
+
+// GetJobRetries returns the retry count of a job by ID. Only works with in-memory mode.
+func (jq *JobQueue) GetJobRetries(jobID string) int {
+	jq.mu.Lock()
+	defer jq.mu.Unlock()
+	if job, ok := jq.memory[jobID]; ok {
+		return job.RetriesCount
+	}
+	return 0
 }
 
 // RetryDeadLetterJob resets a dead-letter job back to pending.

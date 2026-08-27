@@ -58,10 +58,10 @@ func (h *ReferralHandler) GetStats(c *gin.Context) {
 	}
 
 	response.OK(c, gin.H{
-		"totalReferrals":   summary.ReferralCount,
-		"totalEarned":      summary.TotalEarned,
-		"totalClaimed":     summary.TotalClaimed,
-		"pendingAmount":    summary.PendingAmount,
+		"totalReferrals": summary.ReferralCount,
+		"totalEarned":    summary.TotalEarned,
+		"totalClaimed":   summary.TotalClaimed,
+		"pendingAmount":  summary.PendingAmount,
 	})
 }
 

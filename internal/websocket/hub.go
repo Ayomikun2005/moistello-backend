@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"context"
 	"encoding/json"
 	"sync"
 
@@ -15,12 +16,19 @@ type Message struct {
 	Payload any    `json:"payload"`
 }
 
+// SubscriptionAuthorizer decides whether a client may subscribe to a given
+// circle room. Implementations should query the membership table.
+type SubscriptionAuthorizer interface {
+	CanSubscribe(ctx context.Context, circleID, userID string) (bool, error)
+}
+
 // Hub maintains the set of active WebSocket clients and manages circle-based
 // rooms for targeted broadcasts.
 type Hub struct {
 	mu      sync.RWMutex
 	clients map[string]*Client            // clientID -> Client
 	rooms   map[string]map[string]*Client // circleID -> clientID -> Client
+	auth    SubscriptionAuthorizer
 }
 
 // NewHub creates a new Hub with empty client and room registries.
@@ -57,10 +65,29 @@ func (h *Hub) Unregister(client *Client) {
 	log.Debug().Str("clientID", client.ID).Msg("client unregistered")
 }
 
-// JoinRoom subscribes a client to a circle's broadcast room.
-func (h *Hub) JoinRoom(circleID, clientID string) {
+// SetSubscriptionAuthorizer sets the authorizer used to check circle membership
+// before allowing a client to join a room.
+func (h *Hub) SetSubscriptionAuthorizer(auth SubscriptionAuthorizer) {
+	h.auth = auth
+}
+
+// JoinRoom subscribes a client to a circle's broadcast room. It returns true
+// if the client is allowed to join (membership verified) and false otherwise.
+func (h *Hub) JoinRoom(circleID, clientID string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+
+	if h.auth != nil {
+		client, ok := h.clients[clientID]
+		if !ok {
+			return false
+		}
+		allowed, err := h.auth.CanSubscribe(context.Background(), circleID, client.UserID)
+		if err != nil || !allowed {
+			return false
+		}
+	}
+
 	if _, ok := h.rooms[circleID]; !ok {
 		h.rooms[circleID] = make(map[string]*Client)
 	}
@@ -68,6 +95,7 @@ func (h *Hub) JoinRoom(circleID, clientID string) {
 		h.rooms[circleID][clientID] = client
 	}
 	log.Debug().Str("circleID", circleID).Str("clientID", clientID).Msg("client joined room")
+	return true
 }
 
 // LeaveRoom unsubscribes a client from a circle's broadcast room.
@@ -85,24 +113,36 @@ func (h *Hub) LeaveRoom(circleID, clientID string) {
 func (h *Hub) Broadcast(circleID string, msg Message) {
 	h.mu.RLock()
 	room, ok := h.rooms[circleID]
-	h.mu.RUnlock()
 	if !ok {
+		h.mu.RUnlock()
 		return
 	}
 
 	data, err := json.Marshal(msg)
 	if err != nil {
+		h.mu.RUnlock()
 		log.Warn().Err(err).Str("type", msg.Type).Msg("marshaling broadcast message")
 		return
 	}
 
+	clients := make([]*Client, 0, len(room))
 	for _, client := range room {
+		clients = append(clients, client)
+	}
+	h.mu.RUnlock()
+
+	var dropped []*Client
+	for _, client := range clients {
 		select {
 		case client.Send <- data:
 		default:
-			// Client's send buffer is full — assume disconnected
-			go h.Unregister(client)
+			// Client's send buffer is full — mark for deterministic unregister
+			dropped = append(dropped, client)
 		}
+	}
+
+	for _, client := range dropped {
+		h.Unregister(client)
 	}
 }
 
@@ -110,23 +150,27 @@ func (h *Hub) Broadcast(circleID string, msg Message) {
 // The userID maps to a registered Client; if no client is found the message
 // is silently dropped.
 func (h *Hub) BroadcastToUser(userID string, msg Message) {
-	h.mu.RLock()
-	client, ok := h.clients[userID]
-	h.mu.RUnlock()
-	if !ok {
-		return
-	}
-
 	data, err := json.Marshal(msg)
 	if err != nil {
 		log.Warn().Err(err).Str("type", msg.Type).Str("userID", userID).Msg("marshaling user message")
 		return
 	}
 
-	select {
-	case client.Send <- data:
-	default:
-		go h.Unregister(client)
+	h.mu.RLock()
+	var targets []*Client
+	for _, c := range h.clients {
+		if c.UserID == userID {
+			targets = append(targets, c)
+		}
+	}
+	h.mu.RUnlock()
+
+	for _, client := range targets {
+		select {
+		case client.Send <- data:
+		default:
+			h.Unregister(client)
+		}
 	}
 }
 
@@ -142,6 +186,19 @@ func (h *Hub) ClientCount() int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return len(h.clients)
+}
+
+// UserClientCount returns the number of registered clients for a given user.
+func (h *Hub) UserClientCount(userID string) int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	count := 0
+	for _, c := range h.clients {
+		if c.UserID == userID {
+			count++
+		}
+	}
+	return count
 }
 
 // RoomCount returns the total number of active rooms.

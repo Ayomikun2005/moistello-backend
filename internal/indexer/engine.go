@@ -64,10 +64,16 @@ func (e *Engine) Start(ctx context.Context) error {
 	log.Info().Msg("starting indexer engine")
 
 	e.wg.Add(1)
-	go e.reconciler.StartReconciliation(ctx, e.cfg.PollInterval*10)
+	go func() {
+		defer e.wg.Done()
+		e.reconciler.StartReconciliation(ctx, e.cfg.PollInterval*10)
+	}()
 
 	e.wg.Add(1)
-	go e.dedup.StartPruning(ctx, 1*time.Hour)
+	go func() {
+		defer e.wg.Done()
+		e.dedup.StartPruning(ctx, 1*time.Hour)
+	}()
 
 	e.wg.Add(1)
 	go e.runPollLoop(ctx)
@@ -80,7 +86,7 @@ func (e *Engine) Stop() {
 	log.Info().Msg("stopping indexer engine")
 	close(e.stopCh)
 	e.wg.Wait()
-	log.Info().Msg("indexer stopped")
+	log.Info().Msg("indexer stopped and all engine goroutines drained")
 }
 
 // Metrics returns the engine's Prometheus metrics.
@@ -112,6 +118,7 @@ func (e *Engine) poll(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("reading cursor: %w", err)
 	}
+	e.metrics.CursorLagSeconds.Set(cursor.Lag(time.Now()).Seconds())
 
 	ledgers, err := e.poller.FetchLedgers(ctx, cursor.LastLedger, e.cfg.BatchSize)
 	if err != nil {

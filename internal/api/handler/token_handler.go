@@ -40,14 +40,14 @@ func (h *TokenHandler) Stake(c *gin.Context) {
 
 	var req struct {
 		Amount      uint64 `json:"amount" binding:"required,gt=0"`
-		PasskeySeed string `json:"passkeySeed" binding:"required"`
+		PasskeySeed string `json:"passkeySeed"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
 
-	txHash, err := h.tokenSvc.Stake(c.Request.Context(), userID, []byte(req.PasskeySeed), req.Amount)
+	txHash, err := h.tokenSvc.Stake(c.Request.Context(), userID, req.Amount)
 	if err != nil {
 		response.InternalError(c, "stake failed: "+err.Error())
 		return
@@ -63,14 +63,14 @@ func (h *TokenHandler) Unstake(c *gin.Context) {
 
 	var req struct {
 		Amount      uint64 `json:"amount" binding:"required,gt=0"`
-		PasskeySeed string `json:"passkeySeed" binding:"required"`
+		PasskeySeed string `json:"passkeySeed"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
 
-	txHash, err := h.tokenSvc.Unstake(c.Request.Context(), userID, []byte(req.PasskeySeed), req.Amount)
+	txHash, err := h.tokenSvc.Unstake(c.Request.Context(), userID, req.Amount)
 	if err != nil {
 		response.InternalError(c, "unstake failed: "+err.Error())
 		return

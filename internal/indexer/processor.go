@@ -121,9 +121,9 @@ func (p *EventProcessor) handlePayment(ctx context.Context, txn *Transaction, op
 		Msg("payment detected")
 
 	p.Broadcast(ctx, op.SourceAccount, "payment_detected", map[string]any{
-		"hash":    txn.Hash,
-		"source":  op.SourceAccount,
-		"ledger":  txn.Ledger,
+		"hash":   txn.Hash,
+		"source": op.SourceAccount,
+		"ledger": txn.Ledger,
 	})
 	return nil
 }
@@ -137,9 +137,9 @@ func (p *EventProcessor) handleSorobanInvoke(ctx context.Context, txn *Transacti
 		Msg("soroban invoke detected")
 
 	p.Broadcast(ctx, op.SourceAccount, "soroban_invoke", map[string]any{
-		"hash":    txn.Hash,
-		"source":  op.SourceAccount,
-		"ledger":  txn.Ledger,
+		"hash":   txn.Hash,
+		"source": op.SourceAccount,
+		"ledger": txn.Ledger,
 	})
 	return nil
 }

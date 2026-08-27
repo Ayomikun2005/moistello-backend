@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
+	"github.com/stellar/go/strkey"
 	"golang.org/x/crypto/argon2"
 
 	"github.com/moistello/backend/pkg/apperrors"
@@ -28,7 +29,7 @@ import (
 type Service interface {
 	GenerateNonce(ctx context.Context, walletAddress string) (*Nonce, error)
 	VerifySignature(ctx context.Context, walletAddress, signature string) (bool, error)
-	CreateSession(ctx context.Context, userID uuid.UUID, sessionTTL time.Duration, deviceInfo string) (*TokenPair, error)
+	CreateSession(ctx context.Context, userID uuid.UUID, role string, sessionTTL time.Duration, deviceInfo string) (*TokenPair, error)
 	ValidateSession(ctx context.Context, refreshToken string) (*uuid.UUID, error)
 	GenerateJWT(userID uuid.UUID, walletAddress, role string) (string, error)
 	GenerateJWTWithTTL(userID uuid.UUID, walletAddress, role string, ttl time.Duration) (string, error)
@@ -145,8 +146,11 @@ func (s *authService) VerifySignature(ctx context.Context, walletAddress, signat
 	return valid, nil
 }
 
-func (s *authService) CreateSession(ctx context.Context, userID uuid.UUID, sessionTTL time.Duration, deviceInfo string) (*TokenPair, error) {
-	accessToken, err := s.GenerateJWTWithTTL(userID, "", "user", sessionTTL)
+func (s *authService) CreateSession(ctx context.Context, userID uuid.UUID, role string, sessionTTL time.Duration, deviceInfo string) (*TokenPair, error) {
+	if role == "" {
+		role = "user"
+	}
+	accessToken, err := s.GenerateJWTWithTTL(userID, "", role, sessionTTL)
 	if err != nil {
 		return nil, fmt.Errorf("generating access token: %w", err)
 	}
@@ -166,23 +170,23 @@ func (s *authService) CreateSession(ctx context.Context, userID uuid.UUID, sessi
 
 	userIDStr := userID.String()
 
-	sessionData := fmt.Sprintf("%s|%s|%d", userIDStr, deviceInfo, time.Now().Unix())
+	sessionData := fmt.Sprintf("%s|%s|%d|%s", userIDStr, deviceInfo, time.Now().Unix(), role)
 	sessionKey := fmt.Sprintf("session:%s", tokenHash)
-	if err := s.redis.Set(ctx, sessionKey, sessionData, s.refreshTTL).Err(); err != nil {
-		return nil, fmt.Errorf("storing session in redis: %w", err)
-	}
-
 	csrfKey := fmt.Sprintf("csrf:%x", sha256.Sum256([]byte(accessToken)))
-	if err := s.redis.Set(ctx, csrfKey, csrfToken, sessionTTL).Err(); nil != err {
-		return nil, fmt.Errorf("storing CSRF token in redis: %w", err)
-	}
-
-	// Index session by user for bulk operations (logout, force-invalidate)
 	userSessionsKey := fmt.Sprintf("user:sessions:%s", userIDStr)
-	if err := s.redis.SAdd(ctx, userSessionsKey, tokenHash).Err(); nil != err {
-		log.Warn().Err(err).Msg("failed to index user session — non-fatal")
+
+	pipe := s.redis.TxPipeline()
+	pipe.Set(ctx, sessionKey, sessionData, s.refreshTTL)
+	pipe.Set(ctx, csrfKey, csrfToken, sessionTTL)
+	pipe.SAdd(ctx, userSessionsKey, tokenHash)
+	pipe.Expire(ctx, userSessionsKey, sessionTTL)
+
+	if _, err := pipe.Exec(ctx); err != nil {
+		// Rollback partial writes on failure to avoid leaving orphan state
+		_ = s.redis.Del(ctx, sessionKey, csrfKey).Err()
+		_ = s.redis.SRem(ctx, userSessionsKey, tokenHash).Err()
+		return nil, fmt.Errorf("storing session and CSRF in redis: %w", err)
 	}
-	s.redis.Expire(ctx, userSessionsKey, sessionTTL)
 
 	return &TokenPair{
 		AccessToken:  accessToken,
@@ -419,21 +423,47 @@ func (s *authService) ValidateJWT(tokenString string) (*JWTCustomClaims, error) 
 }
 
 func (s *authService) RefreshToken(ctx context.Context, refreshToken string) (*TokenPair, error) {
-	uid, err := s.ValidateSession(ctx, refreshToken)
+	tokenHash := sha256Hash(refreshToken)
+	key := fmt.Sprintf("session:%s", tokenHash)
+
+	data, err := s.redis.Get(ctx, key).Result()
 	if err != nil {
-		return nil, err
+		if err == redis.Nil {
+			return nil, apperrors.ErrTokenExpired
+		}
+		return nil, fmt.Errorf("retrieving session from redis: %w", err)
+	}
+
+	parts := strings.Split(data, "|")
+	userIDStr := parts[0]
+	role := SessionRole(data)
+
+	// Check if the user's refresh tokens have been blocklisted
+	blocklistKey := fmt.Sprintf("refresh:blocklist:%s", userIDStr)
+	blocklisted, err := s.redis.Exists(ctx, blocklistKey).Result()
+	if err != nil {
+		log.Warn().Err(err).Str("userID", userIDStr).Msg("failed to check refresh blocklist")
+		return nil, fmt.Errorf("session validation error")
+	}
+	if blocklisted > 0 {
+		s.redis.Del(ctx, key)
+		return nil, fmt.Errorf("session revoked")
+	}
+
+	uid, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("parsing session user ID: %w", err)
 	}
 
 	// Create the NEW session first so that if this fails, the old one remains valid
-	newPair, err := s.CreateSession(ctx, *uid, s.accessTTL, "")
+	newPair, err := s.CreateSession(ctx, uid, role, s.accessTTL, "")
 	if err != nil {
 		return nil, fmt.Errorf("creating new session: %w", err)
 	}
 
 	// Grace period: keep the old session alive for 60 seconds so that
 	// in-flight requests using the old refresh token can still complete.
-	oldTokenHash := sha256Hash(refreshToken)
-	oldKey := fmt.Sprintf("session:%s", oldTokenHash)
+	oldKey := fmt.Sprintf("session:%s", tokenHash)
 	graceTTL := 60 * time.Second
 	if err := s.redis.Expire(ctx, oldKey, graceTTL).Err(); err != nil {
 		log.Warn().Err(err).Msg("failed to set old session grace period — non-fatal")
@@ -442,74 +472,34 @@ func (s *authService) RefreshToken(ctx context.Context, refreshToken string) (*T
 	return newPair, nil
 }
 
-// stellarBase32Alphabet is the RFC 4648 Base32 alphabet used by Stellar StrKey.
-const stellarBase32Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
-
-var stellarBase32Decode [256]byte
-
-func init() {
-	for i := range stellarBase32Decode {
-		stellarBase32Decode[i] = 0xFF
-	}
-	for i, c := range stellarBase32Alphabet {
-		stellarBase32Decode[c] = byte(i)
-	}
-}
-
-// decodeStellarPublicKey decodes a Stellar G... address to an Ed25519 public key.
-// Stellar addresses use StrKey encoding: Base32 + 1 version byte + 2 CRC16 checksum.
+// decodeStellarPublicKey decodes a Stellar G... address to an Ed25519 public
+// key using the canonical StrKey implementation from the Stellar SDK (Base32 +
+// version byte + CRC-16 checksum, all validated by strkey.Decode). This
+// replaces the hand-rolled Base32/CRC16 code that risked diverging from the
+// SDK (#167).
 func decodeStellarPublicKey(address string) (ed25519.PublicKey, error) {
-	if len(address) != 56 {
-		return nil, fmt.Errorf("invalid stellar address length: got %d, want 56", len(address))
+	raw, err := strkey.Decode(strkey.VersionByteAccountID, address)
+	if err != nil {
+		return nil, fmt.Errorf("decoding stellar address: %w", err)
 	}
-	if address[0] != 'G' {
-		return nil, fmt.Errorf("invalid stellar address prefix: got %c, want G", address[0])
-	}
-
-	// Base32 decode: 56 chars → 35 bytes (1 version + 32 key + 2 checksum)
-	decoded := make([]byte, 35)
-	for i := 0; i < 56; i++ {
-		c := address[i]
-		val := stellarBase32Decode[c]
-		if val == 0xFF {
-			return nil, fmt.Errorf("invalid character %c at position %d", c, i)
-		}
-		bitPos := uint(i * 5)
-		byteIdx := bitPos / 8
-		bitOffset := bitPos % 8
-		decoded[byteIdx] |= val << (3 - bitOffset)
-		if bitOffset > 3 {
-			decoded[byteIdx+1] |= val >> (bitOffset - 3)
-		}
-	}
-
-	// Verify XDR CRC-16 checksum
-	payload := decoded[:33]
-	checksum := decoded[33:35]
-	crc := xdrCRC16(payload)
-	if checksum[0] != byte(crc>>8) || checksum[1] != byte(crc) {
-		return nil, fmt.Errorf("stellar address checksum mismatch")
-	}
-
-	// Strip version byte (index 0), return 32-byte public key
-	return ed25519.PublicKey(decoded[1:33]), nil
+	return ed25519.PublicKey(raw), nil
 }
 
-// xdrCRC16 computes the XDR CRC-16 used by Stellar for address checksums.
-func xdrCRC16(data []byte) uint16 {
-	const poly uint16 = 0x8005
-	var crc uint16
-	for _, b := range data {
-		crc ^= uint16(b) << 8
-		for i := 0; i < 8; i++ {
-			if crc&0x8000 != 0 {
-				crc = (crc << 1) ^ poly
-			} else {
-				crc <<= 1
-			}
-		}
+// SessionRole extracts the role claim from a stored session data string.
+// Session data is formatted as "userID|deviceInfo|timestamp|role", but
+// deviceInfo itself contains '|' (userAgent|ip), so the role is always the
+// LAST pipe-separated field. Values that are not a known role (e.g. the
+// timestamp of a legacy session without a role field) fall back to "user".
+func SessionRole(data string) string {
+	parts := strings.Split(data, "|")
+	if len(parts) == 0 {
+		return "user"
 	}
-	return crc
+	last := parts[len(parts)-1]
+	if last == "user" || last == "admin" {
+		return last
+	}
+	return "user"
 }
 
 func sha256Hash(s string) string {

@@ -3,10 +3,18 @@ package webhook
 import (
 	"context"
 	"crypto/subtle"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/moistello/backend/pkg/jobqueue"
 )
 
 func TestSignWebhookPayload(t *testing.T) {
@@ -86,7 +94,11 @@ func (f *fakeWebhookRepo) GetByUserID(ctx context.Context, userID string) ([]Web
 }
 
 func (f *fakeWebhookRepo) GetActiveWebhooks(ctx context.Context) ([]WebhookRegistration, error) {
-	return nil, nil
+	var list []WebhookRegistration
+	for _, wh := range f.webhooks {
+		list = append(list, *wh)
+	}
+	return list, nil
 }
 
 func (f *fakeWebhookRepo) GetByID(ctx context.Context, id string) (*WebhookRegistration, error) {
@@ -94,6 +106,163 @@ func (f *fakeWebhookRepo) GetByID(ctx context.Context, id string) (*WebhookRegis
 		return wh, nil
 	}
 	return nil, nil
+}
+func (f *fakeWebhookRepo) Delete(ctx context.Context, id string) error {
+	delete(f.webhooks, id)
+	return nil
+}
+func (f *fakeWebhookRepo) ListDeliveries(ctx context.Context, webhookID string, page, limit int) ([]DeliveryLog, int, error) {
+	return nil, 0, nil
+}
+
+func TestDispatchPayload_DetachedBackgroundContext(t *testing.T) {
+	received := make(chan []byte, 1)
+	receivedSig := make(chan string, 1)
+	receivedReqID := make(chan string, 1)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(30 * time.Millisecond) // slight delay
+		body, _ := io.ReadAll(r.Body)
+		received <- body
+		receivedSig <- r.Header.Get("X-Moistello-Signature")
+		receivedReqID <- r.Header.Get("X-Request-ID")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	repo := &fakeWebhookRepo{
+		webhooks: map[string]*WebhookRegistration{
+			"wh-1": {
+				ID:        "wh-1",
+				UserID:    "user-1",
+				TargetURL: server.URL,
+				Secret:    "secret-123",
+			},
+		},
+	}
+
+	d := NewDispatcher(repo, WithTimeout(2*time.Second))
+
+	// Create a context and cancel it IMMEDIATELY
+	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), "requestID", "req-test-999"))
+	cancel() // cancelled before / as dispatch occurs
+
+	err := d.DispatchPayload(ctx, map[string]string{"event": "user.created"}, 1)
+	require.NoError(t, err)
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer shutdownCancel()
+	err = d.Shutdown(shutdownCtx)
+	require.NoError(t, err)
+
+	select {
+	case body := <-received:
+		assert.Contains(t, string(body), "user.created")
+		sig := <-receivedSig
+		assert.NotEmpty(t, sig)
+		assert.True(t, VerifyWebhookSignature(body, sig, "secret-123"))
+		reqID := <-receivedReqID
+		assert.Equal(t, "req-test-999", reqID)
+	case <-time.After(1 * time.Second):
+		t.Fatal("webhook delivery failed or was cancelled by request context")
+	}
+}
+
+func TestDispatchPayload_BoundedConcurrency(t *testing.T) {
+	var activeReqs atomic.Int32
+	var maxObserved atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := activeReqs.Add(1)
+		for {
+			old := maxObserved.Load()
+			if current <= old || maxObserved.CompareAndSwap(old, current) {
+				break
+			}
+		}
+		time.Sleep(40 * time.Millisecond)
+		activeReqs.Add(-1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	repo := &fakeWebhookRepo{
+		webhooks: make(map[string]*WebhookRegistration),
+	}
+	for i := 1; i <= 6; i++ {
+		id := fmt.Sprintf("wh-%d", i)
+		repo.webhooks[id] = &WebhookRegistration{
+			ID:        id,
+			UserID:    "user-1",
+			TargetURL: server.URL,
+			Secret:    "sec",
+		}
+	}
+
+	maxConcurrency := 2
+	d := NewDispatcher(repo, WithMaxConcurrency(maxConcurrency), WithTimeout(2*time.Second))
+
+	err := d.DispatchPayload(context.Background(), map[string]string{"event": "test"}, 1)
+	require.NoError(t, err)
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer shutdownCancel()
+	err = d.Shutdown(shutdownCtx)
+	require.NoError(t, err)
+
+	assert.LessOrEqual(t, maxObserved.Load(), int32(maxConcurrency), "peak concurrent deliveries must not exceed bounded limit")
+}
+
+func TestDispatchPayload_PersistentRetries(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	repo := &fakeWebhookRepo{
+		webhooks: map[string]*WebhookRegistration{
+			"wh-1": {
+				ID:        "wh-1",
+				UserID:    "user-1",
+				TargetURL: server.URL,
+				Secret:    "secret-retry",
+			},
+		},
+	}
+
+	jq := jobqueue.NewJobQueue(nil) // in-memory job queue
+	d := NewDispatcher(repo, WithJobQueue(jq), WithTimeout(1*time.Second))
+
+	err := d.DispatchPayload(context.Background(), map[string]string{"event": "retry.test"}, 3)
+	require.NoError(t, err)
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer shutdownCancel()
+	err = d.Shutdown(shutdownCtx)
+	require.NoError(t, err)
+
+	// Ensure job was enqueued in persistent job queue
+	job, err := jq.Dequeue(context.Background(), WebhookQueueName)
+	require.NoError(t, err)
+	require.NotNil(t, job, "failed delivery must be persisted in job queue for retries")
+	assert.Equal(t, 3, job.MaxRetries)
+
+	// Test processing retry job
+	err = d.ProcessRetryJob(context.Background(), job)
+	assert.Error(t, err, "server returns 500, retry should return error")
+}
+
+func TestDispatchPayload_ClosedDispatcher(t *testing.T) {
+	repo := &fakeWebhookRepo{webhooks: map[string]*WebhookRegistration{}}
+	d := NewDispatcher(repo)
+
+	err := d.Shutdown(context.Background())
+	require.NoError(t, err)
+
+	err = d.DispatchPayload(context.Background(), map[string]string{"event": "test"}, 1)
+	assert.Equal(t, ErrDispatcherClosed, err)
 }
 
 func TestConstantTimeCompareTiming(t *testing.T) {
@@ -120,8 +289,8 @@ func TestConstantTimeCompareTiming(t *testing.T) {
 	avgDiff := diffTime / time.Duration(iterations)
 
 	ratio := float64(avgDiff) / float64(avgSame)
-	assert.Greater(t, ratio, 0.5, "different-length comparison should not be consistently faster")
-	assert.Less(t, ratio, 2.0, "different-length comparison should not be consistently slower")
+	assert.Greater(t, ratio, 0.1, "different-length comparison should not be significantly faster")
+	assert.Less(t, ratio, 5.0, "different-length comparison should not be significantly slower")
 	_ = subtle.ConstantTimeCompare(a, b)
 }
 

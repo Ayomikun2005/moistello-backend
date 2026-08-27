@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/moistello/backend/pkg/tracing"
 )
 
 type RedisRateLimiter struct {
@@ -48,8 +50,12 @@ func (l *RedisRateLimiter) slidingWindowRedis(ctx context.Context, key string, m
 	return true, remaining, window, nil
 }
 
-func (l *RedisRateLimiter) Check(ctx context.Context, key string, maxRequests int, window time.Duration) (bool, time.Duration, error) {
-	allowed, _, ttl, err := l.slidingWindowRedis(ctx, key, maxRequests, window)
+func (l *RedisRateLimiter) Check(ctx context.Context, key string, maxRequests int, window time.Duration) (allowed bool, ttl time.Duration, err error) {
+	ctx, span := tracing.StartRedisSpan(ctx, "rate_limit.check")
+	start := time.Now()
+	defer func() { tracing.EndSpan(span, err, start) }()
+
+	allowed, _, ttl, err = l.slidingWindowRedis(ctx, key, maxRequests, window)
 	return allowed, ttl, err
 }
 

@@ -2,7 +2,6 @@ package user
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"math"
 	"time"
@@ -67,12 +66,8 @@ type MonthlyScore struct {
 }
 
 type userService struct {
-	repo      Repository
+	repo       Repository
 	circleRepo circle.Repository
-	db        interface {
-		QueryRowxContext(ctx context.Context, query string, args ...interface{}) *sql.Row
-		SelectContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error
-	}
 }
 
 func NewService(repo Repository, circleRepo circle.Repository) Service {

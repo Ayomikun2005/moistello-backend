@@ -15,6 +15,12 @@ type Cursor struct {
 	LastProcessedAt time.Time `db:"last_processed_at" json:"lastProcessedAt"`
 }
 
+// Lag returns how long it has been since the cursor last advanced, relative
+// to now. A growing lag indicates the poll loop is stuck or falling behind.
+func (c *Cursor) Lag(now time.Time) time.Duration {
+	return now.Sub(c.LastProcessedAt)
+}
+
 // CursorTracker persists and retrieves the indexer cursor in PostgreSQL.
 type CursorTracker struct {
 	db *sqlx.DB
@@ -36,9 +42,10 @@ func (c *CursorTracker) GetCurrent(ctx context.Context) (*Cursor, error) {
 }
 
 // Update writes the new cursor position after successful processing.
+// It is parallel-safe: it only advances the cursor if lastLedger > current last_ledger.
 func (c *CursorTracker) Update(ctx context.Context, lastLedger int64) error {
 	_, err := c.db.ExecContext(ctx,
-		"UPDATE indexer_cursor SET last_ledger = $1, last_processed_at = $2 WHERE chain = 'stellar'",
+		"UPDATE indexer_cursor SET last_ledger = $1, last_processed_at = $2 WHERE chain = 'stellar' AND last_ledger < $1",
 		lastLedger, time.Now())
 	if err != nil {
 		return fmt.Errorf("updating cursor: %w", err)

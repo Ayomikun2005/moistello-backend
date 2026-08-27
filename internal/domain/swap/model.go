@@ -15,29 +15,29 @@ const (
 )
 
 type SwapOffer struct {
-	ID                string           `json:"id" db:"id"`
-	CircleID          string           `json:"circleId" db:"circle_id"`
-	OfferorUserID     string           `json:"offerorUserId" db:"offeror_user_id"`
-	OffereeUserID     *string          `json:"offereeUserId,omitempty" db:"offeree_user_id"`
-	OfferorAsset      string           `json:"offerorAsset" db:"offeror_asset"`
-	OfferorAmount     int64            `json:"offerorAmount" db:"offeror_amount"`
-	RequestedAsset    string           `json:"requestedAsset" db:"requested_asset"`
-	RequestedAmount   int64            `json:"requestedAmount" db:"requested_amount"`
-	Status            SwapOfferStatus  `json:"status" db:"status"`
-	TransactionHash   *string          `json:"transactionHash,omitempty" db:"transaction_hash"`
-	ExpiresAt         time.Time        `json:"expiresAt" db:"expires_at"`
-	CreatedAt         time.Time        `json:"createdAt" db:"created_at"`
-	UpdatedAt         time.Time        `json:"updatedAt" db:"updated_at"`
+	ID              string          `json:"id" db:"id"`
+	CircleID        string          `json:"circleId" db:"circle_id"`
+	OfferorUserID   string          `json:"offerorUserId" db:"offeror_user_id"`
+	OffereeUserID   *string         `json:"offereeUserId,omitempty" db:"offeree_user_id"`
+	OfferorAsset    string          `json:"offerorAsset" db:"offeror_asset"`
+	OfferorAmount   int64           `json:"offerorAmount" db:"offeror_amount"`
+	RequestedAsset  string          `json:"requestedAsset" db:"requested_asset"`
+	RequestedAmount int64           `json:"requestedAmount" db:"requested_amount"`
+	Status          SwapOfferStatus `json:"status" db:"status"`
+	TransactionHash *string         `json:"transactionHash,omitempty" db:"transaction_hash"`
+	ExpiresAt       time.Time       `json:"expiresAt" db:"expires_at"`
+	CreatedAt       time.Time       `json:"createdAt" db:"created_at"`
+	UpdatedAt       time.Time       `json:"updatedAt" db:"updated_at"`
 }
 
 type SwapOfferRequest struct {
-	CircleID        string `json:"circleId" binding:"required"`
+	CircleID        string  `json:"circleId" binding:"required"`
 	OffereeUserID   *string `json:"offereeUserId,omitempty"`
-	OfferorAsset    string `json:"offerorAsset" binding:"required"`
-	OfferorAmount   int64  `json:"offerorAmount" binding:"required,min=1"`
-	RequestedAsset  string `json:"requestedAsset" binding:"required"`
-	RequestedAmount int64  `json:"requestedAmount" binding:"required,min=1"`
-	ExpiresIn       int    `json:"expiresIn" binding:"min=1,max=168"` // hours, max 7 days
+	OfferorAsset    string  `json:"offerorAsset" binding:"required"`
+	OfferorAmount   int64   `json:"offerorAmount" binding:"required,min=1"`
+	RequestedAsset  string  `json:"requestedAsset" binding:"required"`
+	RequestedAmount int64   `json:"requestedAmount" binding:"required,min=1"`
+	ExpiresIn       int     `json:"expiresIn" binding:"min=1,max=168"` // hours, max 7 days
 }
 
 type SwapAcceptRequest struct {
@@ -52,8 +52,8 @@ type SwapHistoryFilter struct {
 }
 
 type SwapHistoryResponse struct {
-	Swaps      []SwapOffer `json:"swaps"`
-	Total      int         `json:"total"`
-	Limit      int         `json:"limit"`
-	Offset     int         `json:"offset"`
+	Swaps  []SwapOffer `json:"swaps"`
+	Total  int         `json:"total"`
+	Limit  int         `json:"limit"`
+	Offset int         `json:"offset"`
 }
