@@ -90,7 +90,7 @@ func TestTokenService_Stake_WalletNotFound(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = svc.Stake(context.Background(), uuid.NewString(), []byte("seed"), 100)
+	_, err = svc.Stake(context.Background(), uuid.NewString(), 100)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "user wallet not found")
 }
@@ -103,7 +103,7 @@ func TestTokenService_Unstake_WalletNotFound(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = svc.Unstake(context.Background(), uuid.NewString(), []byte("seed"), 100)
+	_, err = svc.Unstake(context.Background(), uuid.NewString(), 100)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "user wallet not found")
 }
@@ -124,7 +124,7 @@ func TestTokenService_Stake_DecryptSecretFailure(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = svc.Stake(context.Background(), userID, []byte("seed"), 100)
+	_, err = svc.Stake(context.Background(), userID, 100)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "decrypting wallet secret")
 }

@@ -57,7 +57,7 @@ func setupTestDepositRouter(h *handler.DepositHandler) *gin.Engine {
 }
 
 func TestDepositHandler_AmountCaps(t *testing.T) {
-	ycClient := yellowcard.NewClient("", "")
+	ycClient := yellowcard.NewClient("", "", "")
 	mockWallet := &mockDepositWalletService{
 		wallets: []wallet.Wallet{{PublicKey: "GABC12345"}},
 	}
@@ -108,7 +108,7 @@ func TestDepositHandler_DailyCapsAndIdempotency(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	ycClient := yellowcard.NewClient("", "")
+	ycClient := yellowcard.NewClient("", "", "")
 	mockWallet := &mockDepositWalletService{
 		wallets: []wallet.Wallet{{PublicKey: "GABC12345"}},
 	}

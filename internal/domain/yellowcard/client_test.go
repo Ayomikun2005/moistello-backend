@@ -12,7 +12,7 @@ import (
 )
 
 func TestNewClient_SandboxMode(t *testing.T) {
-	c := NewClient("", "")
+	c := NewClient("", "", "")
 	assert.Contains(t, c.baseURL, "sandbox.yellowcard.io")
 }
 
