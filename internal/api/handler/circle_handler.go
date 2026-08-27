@@ -309,20 +309,27 @@ func (h *CircleHandler) GetMembers(c *gin.Context) {
 
 func (h *CircleHandler) GetRounds(c *gin.Context) {
 	circleID := c.Param("id")
+	page, limit, _ := pagination.Parse(c)
+
 	cir, err := h.circleService.Get(c.Request.Context(), circleID)
 	if err != nil {
 		response.NotFound(c, "circle not found")
 		return
 	}
 
-	contribs, _, err := h.contribService.GetCircleHistory(c.Request.Context(), circleID, 1, 100)
+	contribs, contribTotal, err := h.contribService.GetCircleHistory(c.Request.Context(), circleID, page, limit)
 	if err != nil {
 		contribs = nil
 	}
 
-	payouts, _, err := h.payoutService.GetCircleHistory(c.Request.Context(), circleID, 1, 100)
+	payouts, payoutTotal, err := h.payoutService.GetCircleHistory(c.Request.Context(), circleID, page, limit)
 	if err != nil {
 		payouts = nil
+	}
+
+	total := contribTotal
+	if payoutTotal > total {
+		total = payoutTotal
 	}
 
 	roundMap := make(map[int]map[string]any)
@@ -330,7 +337,7 @@ func (h *CircleHandler) GetRounds(c *gin.Context) {
 		entry, ok := roundMap[c.RoundNumber]
 		if !ok {
 			entry = map[string]any{
-				"roundNumber":  c.RoundNumber,
+				"roundNumber":   c.RoundNumber,
 				"contributions": []any{},
 			}
 			roundMap[c.RoundNumber] = entry
@@ -341,7 +348,7 @@ func (h *CircleHandler) GetRounds(c *gin.Context) {
 		entry, ok := roundMap[p.RoundNumber]
 		if !ok {
 			entry = map[string]any{
-				"roundNumber":  p.RoundNumber,
+				"roundNumber":   p.RoundNumber,
 				"contributions": []any{},
 			}
 			roundMap[p.RoundNumber] = entry
@@ -354,16 +361,17 @@ func (h *CircleHandler) GetRounds(c *gin.Context) {
 		rounds = append(rounds, v)
 	}
 
-	response.OK(c, gin.H{
+	response.OKWithMeta(c, gin.H{
 		"rounds":       rounds,
 		"currentRound": cir.CurrentRound,
 		"totalMembers": cir.MaxMembers,
-	})
+	}, response.NewPaginationMeta(page, limit, total))
 }
 
 func (h *CircleHandler) GetPayouts(c *gin.Context) {
 	circleID := c.Param("id")
-	payouts, total, err := h.payoutService.GetCircleHistory(c.Request.Context(), circleID, 1, 50)
+	page, limit, _ := pagination.Parse(c)
+	payouts, total, err := h.payoutService.GetCircleHistory(c.Request.Context(), circleID, page, limit)
 	if err != nil {
 		response.InternalError(c, "failed to get payouts")
 		return
@@ -371,7 +379,7 @@ func (h *CircleHandler) GetPayouts(c *gin.Context) {
 	if payouts == nil {
 		payouts = []payout.Payout{}
 	}
-	response.OKWithMeta(c, gin.H{"payouts": payouts}, response.NewPaginationMeta(1, 50, total))
+	response.OKWithMeta(c, gin.H{"payouts": payouts}, response.NewPaginationMeta(page, limit, total))
 }
 
 func (h *CircleHandler) Dispute(c *gin.Context) {
