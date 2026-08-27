@@ -29,6 +29,7 @@ import (
 	"github.com/moistello/backend/internal/domain/circle"
 	"github.com/moistello/backend/internal/domain/community"
 	"github.com/moistello/backend/internal/domain/contribution"
+	"github.com/moistello/backend/internal/domain/deposit"
 	"github.com/moistello/backend/internal/domain/email"
 	"github.com/moistello/backend/internal/domain/governance"
 	"github.com/moistello/backend/internal/domain/incentives"
@@ -43,6 +44,7 @@ import (
 	"github.com/moistello/backend/internal/domain/user"
 	"github.com/moistello/backend/internal/domain/verification"
 	"github.com/moistello/backend/internal/domain/wallet"
+	"github.com/moistello/backend/internal/domain/withdrawal"
 	"github.com/moistello/backend/internal/domain/yellowcard"
 	"github.com/moistello/backend/pkg/stellar"
 	"github.com/moistello/backend/pkg/stellar/soroban"
@@ -198,7 +200,13 @@ func main() {
 
 	// Yellow Card integration
 	ycClient := yellowcard.NewClient(cfg.YellowCard.APIKey, cfg.YellowCard.APISecret, cfg.Stellar.MasterPublicKey)
-	depositH := handler.NewDepositHandler(ycClient, walletSvc)
+	depositRepo := deposit.NewRepository(db)
+	withdrawalRepo := withdrawal.NewRepository(db)
+	depositH := handler.NewDepositHandler(ycClient, walletSvc).
+		WithRedis(redisClient).
+		WithConfig(cfg.YellowCard).
+		WithRepositories(depositRepo, withdrawalRepo)
+	ycWebhookH := handler.NewYellowCardWebhookHandler(depositRepo, withdrawalRepo, cfg.YellowCard.WebhookSecret)
 
 	// Savings goals
 	savingsRepo := savings.NewRepository(db)
@@ -252,7 +260,7 @@ func main() {
 	jobQueue := jobqueue.NewJobQueue(db)
 	adminJobQueueH := handler.NewAdminJobQueueHandler(jobQueue)
 
-	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, communityH, wsH, savingsH, tokenH, swapH, governanceH, reputationH, referralH, consentH, adminJobQueueH, webhookRepo, jwtPublicKey)
+	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, communityH, wsH, savingsH, tokenH, swapH, governanceH, reputationH, referralH, consentH, adminJobQueueH, webhookRepo, ycWebhookH, jwtPublicKey)
 
 	if err := api.RunServer(router, cfg.Server); err != nil {
 		log.Fatal().Err(err).Msg("server error")

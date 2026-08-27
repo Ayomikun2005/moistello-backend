@@ -37,6 +37,7 @@ func NewRouter(
 	consentHandler *handler.ConsentHandler,
 	adminJobQueueHandler *handler.AdminJobQueueHandler,
 	webhookRepo webhook.WebhookRepository,
+	yellowCardWebhookHandler *handler.YellowCardWebhookHandler,
 	jwtPublicKey []byte,
 ) *gin.Engine {
 	r := gin.New()
@@ -220,6 +221,10 @@ func NewRouter(
 
 	incomingWebhookH := handler.NewIncomingWebhookHandler(webhookRepo)
 	r.POST("/webhooks/incoming/:id", incomingWebhookH.ReceiveWebhook)
+
+	// Yellow Card sends transaction status webhooks unauthenticated (no user
+	// session) — the request is instead verified via HMAC signature.
+	r.POST("/webhooks/yellowcard", yellowCardWebhookHandler.HandleWebhook)
 
 	admin := authenticated.Group("/admin")
 			admin.Use(middleware.AdminMiddleware())

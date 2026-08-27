@@ -118,6 +118,9 @@ func NewClient(apiKey, apiSecret, stellarAddress string) *Client {
 // SetHTTPClient overrides the underlying HTTP client. Intended for tests.
 func (c *Client) SetHTTPClient(client *http.Client) { c.httpClient = client }
 
+// SetBaseURL overrides the API base URL. Intended for tests.
+func (c *Client) SetBaseURL(baseURL string) { c.baseURL = baseURL }
+
 // StellarAddress returns the configured Stellar public key that USDC is sent
 // to for Yellow Card withdrawals. It is empty when unconfigured.
 func (c *Client) StellarAddress() string { return c.stellarAddress }

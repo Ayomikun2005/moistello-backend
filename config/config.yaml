@@ -111,6 +111,7 @@ logging:
 yellow_card:
   api_key: ""
   api_secret: ""
+  webhook_secret: ""
 
 swap:
   # How often the sweep worker releases escrow for expired swap offers (#243).

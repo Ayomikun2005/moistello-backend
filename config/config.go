@@ -94,11 +94,12 @@ func (s StellarConfig) String() string {
 }
 
 type YellowCardConfig struct {
-	APIKey             string  `mapstructure:"api_key"`
-	APISecret          string  `mapstructure:"api_secret"`
-	MaxDepositNGN      float64 `mapstructure:"max_deposit_ngn"`
-	MaxWithdrawUSDC    float64 `mapstructure:"max_withdraw_usdc"`
-	DailyDepositCapNGN float64 `mapstructure:"daily_deposit_cap_ngn"`
+	APIKey               string  `mapstructure:"api_key"`
+	APISecret            string  `mapstructure:"api_secret"`
+	WebhookSecret        string  `mapstructure:"webhook_secret"`
+	MaxDepositNGN        float64 `mapstructure:"max_deposit_ngn"`
+	MaxWithdrawUSDC      float64 `mapstructure:"max_withdraw_usdc"`
+	DailyDepositCapNGN   float64 `mapstructure:"daily_deposit_cap_ngn"`
 	DailyWithdrawCapUSDC float64 `mapstructure:"daily_withdraw_cap_usdc"`
 }
 
@@ -268,6 +269,7 @@ func Load(path string) (*Config, error) {
 	setDefault(v, "notification.push.fcm_server_key", "")
 	setDefault(v, "yellow_card.api_key", "")
 	setDefault(v, "yellow_card.api_secret", "")
+	setDefault(v, "yellow_card.webhook_secret", "")
 	setDefault(v, "swap.sweep_interval", "1m")
 	setDefault(v, "security.wallet_pepper", "")
 	setDefault(v, "security.passkey_pepper", "")
@@ -286,6 +288,7 @@ func Load(path string) (*Config, error) {
 	mustBindEnv(v, "brevo.from_name", "MOISTELLO_BREVO_FROM_NAME", "MOISTELLO_NOTIFICATION_EMAIL_FROM_NAME")
 	mustBindEnv(v, "yellow_card.api_key", "YELLOW_CARD_API_KEY")
 	mustBindEnv(v, "yellow_card.api_secret", "YELLOW_CARD_API_SECRET")
+	mustBindEnv(v, "yellow_card.webhook_secret", "YELLOW_CARD_WEBHOOK_SECRET")
 	v.SetDefault("server.port", 1100)
 	v.SetDefault("server.host", "0.0.0.0")
 	v.SetDefault("server.read_timeout", "10s")
