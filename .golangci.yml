@@ -1,12 +1,9 @@
 linters:
-  disable:
-    - errcheck
-    - unused
+  disable-all: true
   enable:
-    - govet
-    - staticcheck
-    - ineffassign
     - gofmt
+    - ineffassign
+    - staticcheck
 
 issues:
   max-issues-per-linter: 0
