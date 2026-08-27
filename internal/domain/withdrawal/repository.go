@@ -11,6 +11,8 @@ import (
 type Repository interface {
 	Create(ctx context.Context, w *Withdrawal) error
 	GetByID(ctx context.Context, id string) (*Withdrawal, error)
+	GetByPaymentRef(ctx context.Context, paymentRef string) (*Withdrawal, error)
+	GetByYellowCardTxID(ctx context.Context, txID string) (*Withdrawal, error)
 	GetByUserID(ctx context.Context, userID string, limit int, offset int) ([]Withdrawal, error)
 	UpdateStatus(ctx context.Context, id string, status WithdrawalStatus) error
 	UpdateUSDCTxHash(ctx context.Context, id string, txHash string, receivedAt time.Time) error
@@ -26,6 +28,12 @@ type pgRepo struct {
 func NewRepository(db *sqlx.DB) Repository {
 	return &pgRepo{db: db}
 }
+
+const selectColumns = `
+	id, user_id, amount_usdc, estimated_ngn, bank_code, account_number,
+	account_name, status, platform_address, usdc_tx_hash, yellow_card_tx_id,
+	created_at, received_at, completed_at, failure_reason, payment_ref
+`
 
 func (r *pgRepo) Create(ctx context.Context, w *Withdrawal) error {
 	query := `
@@ -46,13 +54,7 @@ func (r *pgRepo) Create(ctx context.Context, w *Withdrawal) error {
 
 func (r *pgRepo) GetByID(ctx context.Context, id string) (*Withdrawal, error) {
 	var w Withdrawal
-	query := `
-		SELECT id, user_id, amount_usdc, estimated_ngn, bank_code, account_number,
-			   account_name, status, platform_address, usdc_tx_hash, yellow_card_tx_id,
-			   created_at, received_at, completed_at, failure_reason, payment_ref
-		FROM withdrawals
-		WHERE id = $1
-	`
+	query := `SELECT ` + selectColumns + ` FROM withdrawals WHERE id = $1`
 	err := r.db.GetContext(ctx, &w, query, id)
 	if err != nil {
 		return nil, fmt.Errorf("getting withdrawal by id: %w", err)
@@ -60,17 +62,29 @@ func (r *pgRepo) GetByID(ctx context.Context, id string) (*Withdrawal, error) {
 	return &w, nil
 }
 
+func (r *pgRepo) GetByPaymentRef(ctx context.Context, paymentRef string) (*Withdrawal, error) {
+	var w Withdrawal
+	query := `SELECT ` + selectColumns + ` FROM withdrawals WHERE payment_ref = $1`
+	err := r.db.GetContext(ctx, &w, query, paymentRef)
+	if err != nil {
+		return nil, fmt.Errorf("getting withdrawal by payment ref: %w", err)
+	}
+	return &w, nil
+}
+
+func (r *pgRepo) GetByYellowCardTxID(ctx context.Context, txID string) (*Withdrawal, error) {
+	var w Withdrawal
+	query := `SELECT ` + selectColumns + ` FROM withdrawals WHERE yellow_card_tx_id = $1`
+	err := r.db.GetContext(ctx, &w, query, txID)
+	if err != nil {
+		return nil, fmt.Errorf("getting withdrawal by yellow card tx id: %w", err)
+	}
+	return &w, nil
+}
+
 func (r *pgRepo) GetByUserID(ctx context.Context, userID string, limit int, offset int) ([]Withdrawal, error) {
 	var withdrawals []Withdrawal
-	query := `
-		SELECT id, user_id, amount_usdc, estimated_ngn, bank_code, account_number,
-			   account_name, status, platform_address, usdc_tx_hash, yellow_card_tx_id,
-			   created_at, received_at, completed_at, failure_reason, payment_ref
-		FROM withdrawals
-		WHERE user_id = $1
-		ORDER BY created_at DESC
-		LIMIT $2 OFFSET $3
-	`
+	query := `SELECT ` + selectColumns + ` FROM withdrawals WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`
 	err := r.db.SelectContext(ctx, &withdrawals, query, userID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("getting withdrawals by user: %w", err)

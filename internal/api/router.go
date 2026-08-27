@@ -37,6 +37,7 @@ func NewRouter(
 	consentHandler *handler.ConsentHandler,
 	adminJobQueueHandler *handler.AdminJobQueueHandler,
 	webhookRepo webhook.WebhookRepository,
+	yellowCardWebhookHandler *handler.YellowCardWebhookHandler,
 	jwtPublicKey []byte,
 ) *gin.Engine {
 	r := gin.New()

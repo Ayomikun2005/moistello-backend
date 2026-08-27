@@ -3,13 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog/log"
 
 	"github.com/moistello/backend/config"
@@ -125,31 +125,23 @@ func main() {
 		Msg("indexer engine running")
 
 	// --- Health HTTP server ---
-	// Exposes /health and /health/ready on a separate port (default 1101) so
-	// Kubernetes liveness and readiness probes can reach the indexer without
-	// adding a dependency on the API server.
+	// Exposes /health, /health/ready, and /metrics on a separate port (default
+	// 1101) so Kubernetes liveness/readiness probes and Prometheus can reach
+	// the indexer without adding a dependency on the API server. Both health
+	// endpoints check PostgreSQL, Redis, RabbitMQ, and cursor freshness so a
+	// stuck poll loop or dropped dependency shows up as unhealthy instead of
+	// the indexer always reporting ok.
 	healthPort := os.Getenv("INDEXER_HEALTH_PORT")
 	if healthPort == "" {
 		healthPort = "1101"
 	}
 
+	healthHandler := indexer.NewHealthHandler(db, redisClient, rmqClient, cursor, cfg.Indexer.MaxCursorLag)
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprintf(w, `{"status":"ok","service":"indexer"}`)
-	})
-	mux.HandleFunc("/health/ready", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		alive := rmqClient.IsAlive()
-		if !alive {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = fmt.Fprintf(w, `{"status":"not ready","error":"rabbitmq unreachable"}`)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprintf(w, `{"status":"ready","service":"indexer"}`)
-	})
+	mux.HandleFunc("/health", healthHandler.Health)
+	mux.HandleFunc("/health/ready", healthHandler.Ready)
+	mux.Handle("/metrics", promhttp.Handler())
 
 	healthSrv := &http.Server{
 		Addr:         ":" + healthPort,

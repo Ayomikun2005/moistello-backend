@@ -9,17 +9,21 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/moistello/backend/config"
 	"github.com/moistello/backend/internal/api/middleware"
+	"github.com/moistello/backend/internal/domain/deposit"
 	"github.com/moistello/backend/internal/domain/wallet"
+	"github.com/moistello/backend/internal/domain/withdrawal"
 	"github.com/moistello/backend/internal/domain/yellowcard"
 	"github.com/moistello/backend/pkg/response"
 	"github.com/redis/go-redis/v9"
 )
 
 type DepositHandler struct {
-	yc     *yellowcard.Client
-	wallet wallet.Service
-	rdb    *redis.Client
-	cfg    config.YellowCardConfig
+	yc          *yellowcard.Client
+	wallet      wallet.Service
+	rdb         *redis.Client
+	cfg         config.YellowCardConfig
+	deposits    deposit.Repository
+	withdrawals withdrawal.Repository
 }
 
 func NewDepositHandler(yc *yellowcard.Client, walletSvc wallet.Service) *DepositHandler {
@@ -33,6 +37,15 @@ func (h *DepositHandler) WithRedis(rdb *redis.Client) *DepositHandler {
 
 func (h *DepositHandler) WithConfig(cfg config.YellowCardConfig) *DepositHandler {
 	h.cfg = cfg
+	return h
+}
+
+// WithRepositories wires persistence for deposits and withdrawals so their
+// state survives process restarts and can be reconciled against Yellow Card
+// webhook notifications instead of only living in the initial API response.
+func (h *DepositHandler) WithRepositories(deposits deposit.Repository, withdrawals withdrawal.Repository) *DepositHandler {
+	h.deposits = deposits
+	h.withdrawals = withdrawals
 	return h
 }
 
@@ -177,6 +190,41 @@ func (h *DepositHandler) InitiateDeposit(c *gin.Context) {
 		return
 	}
 
+	// Persist the deposit so its state survives process restarts and can be
+	// reconciled against Yellow Card webhook notifications. Yellow Card has
+	// already accepted the receive request at this point, so a persistence
+	// failure here is logged loudly for manual reconciliation rather than
+	// silently discarded — the deposit still exists on Yellow Card's side.
+	if h.deposits != nil {
+		var expiresAt *time.Time
+		if receive.ExpiresAt != "" {
+			if t, err := time.Parse(time.RFC3339, receive.ExpiresAt); err == nil {
+				expiresAt = &t
+			}
+		}
+		d := &deposit.Deposit{
+			ID:                 uuid.New().String(),
+			UserID:             userID,
+			AmountNGN:          req.AmountNGN,
+			EstimatedUSDC:      quote.ToAmount,
+			DestinationAddress: userWallet.PublicKey,
+			Status:             deposit.DepositStatusPending,
+			ReceiveID:          receive.ReceiveID,
+			PaymentRef:         paymentRef,
+			CreatedAt:          time.Now(),
+			ExpiresAt:          expiresAt,
+		}
+		if err := h.deposits.Create(ctx, d); err != nil {
+			log.Error().Err(err).
+				Str("receiveId", receive.ReceiveID).
+				Str("paymentRef", paymentRef).
+				Str("userId", userID).
+				Msg("failed to persist deposit after Yellow Card accepted it — requires manual reconciliation")
+			response.InternalError(c, "failed to record deposit")
+			return
+		}
+	}
+
 	respData := gin.H{
 		"deposit": gin.H{
 			"receiveId":     receive.ReceiveID,
@@ -291,6 +339,39 @@ func (h *DepositHandler) InitiateWithdraw(c *gin.Context) {
 	// Return Yellow Card's configured Stellar address for the user to send USDC
 	// to. The address is provided at startup from config rather than hard-coded.
 	ycAddress := h.yc.StellarAddress()
+
+	// Persist the withdrawal so its state survives process restarts and can
+	// be reconciled against Yellow Card webhook notifications. Yellow Card
+	// has already accepted the send request at this point, so a persistence
+	// failure here is logged loudly for manual reconciliation rather than
+	// silently discarded.
+	if h.withdrawals != nil {
+		wd := &withdrawal.Withdrawal{
+			ID:              uuid.New().String(),
+			UserID:          userID,
+			AmountUSDC:      req.AmountUSDC,
+			EstimatedNGN:    quote.ToAmount,
+			BankCode:        req.BankCode,
+			AccountNumber:   req.AccountNumber,
+			AccountName:     req.AccountName,
+			Status:          withdrawal.WithdrawalStatusPending,
+			PlatformAddress: ycAddress,
+			PaymentRef:      paymentRef,
+			CreatedAt:       time.Now(),
+		}
+		if err := h.withdrawals.Create(ctx, wd); err != nil {
+			log.Error().Err(err).
+				Str("sendId", sendResp.SendID).
+				Str("paymentRef", paymentRef).
+				Str("userId", userID).
+				Msg("failed to persist withdrawal after Yellow Card accepted it — requires manual reconciliation")
+			response.InternalError(c, "failed to record withdrawal")
+			return
+		}
+		if err := h.withdrawals.UpdateYellowCardTxID(ctx, wd.ID, sendResp.SendID); err != nil {
+			log.Error().Err(err).Str("withdrawalId", wd.ID).Msg("failed to record yellow card send id")
+		}
+	}
 
 	respData := gin.H{
 		"withdraw": gin.H{

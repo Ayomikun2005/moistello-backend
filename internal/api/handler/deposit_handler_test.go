@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
@@ -48,7 +49,7 @@ func setupTestDepositRouter(h *handler.DepositHandler) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
-		c.Set("user_id", "test-user-123")
+		c.Set("userID", "test-user-123")
 		c.Next()
 	})
 	r.POST("/v1/wallet/deposit", h.InitiateDeposit)
@@ -123,7 +124,7 @@ func TestDepositHandler_DailyCapsAndIdempotency(t *testing.T) {
 	r := setupTestDepositRouter(h)
 
 	// Pre-fill daily usage to 90,000 NGN
-	todayKey := "yc:daily:deposit:test-user-123:" + "2006-01-02"
+	todayKey := "yc:daily:deposit:test-user-123:" + time.Now().UTC().Format("2006-01-02")
 	rdb.Set(ctx, todayKey, 90_000, 0)
 	defer rdb.Del(ctx, todayKey)
 

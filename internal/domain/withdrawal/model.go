@@ -43,8 +43,8 @@ type Withdrawal struct {
 }
 
 type WithdrawalRequest struct {
-	AmountUSDC    int64  `json:"amountUsdc" binding:"required,gt=0"`
-	BankCode      string `json:"bankCode" binding:"required"`
-	AccountNumber string `json:"accountNumber" binding:"required"`
-	AccountName   string `json:"accountName" binding:"required"`
+	AmountUSDC    float64 `json:"amountUsdc" binding:"required,gt=0"`
+	BankCode      string  `json:"bankCode" binding:"required"`
+	AccountNumber string  `json:"accountNumber" binding:"required"`
+	AccountName   string  `json:"accountName" binding:"required"`
 }
