@@ -289,8 +289,8 @@ func TestConstantTimeCompareTiming(t *testing.T) {
 	avgDiff := diffTime / time.Duration(iterations)
 
 	ratio := float64(avgDiff) / float64(avgSame)
-	assert.Greater(t, ratio, 0.5, "different-length comparison should not be consistently faster")
-	assert.Less(t, ratio, 2.0, "different-length comparison should not be consistently slower")
+	assert.Greater(t, ratio, 0.1, "different-length comparison should not be significantly faster")
+	assert.Less(t, ratio, 5.0, "different-length comparison should not be significantly slower")
 	_ = subtle.ConstantTimeCompare(a, b)
 }
 

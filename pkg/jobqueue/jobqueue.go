@@ -103,7 +103,7 @@ func (jq *JobQueue) Dequeue(ctx context.Context, queueName string) (*Job, error)
 		if err != nil {
 			return nil, err
 		}
-		defer tx.Rollback()
+		defer func() { _ = tx.Rollback() }()
 
 		query := `
 			SELECT id, queue_name, payload, status, max_retries, retries_count, scheduled_at, created_at, updated_at
