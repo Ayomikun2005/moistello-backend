@@ -31,6 +31,7 @@ import (
 	"github.com/moistello/backend/internal/domain/contribution"
 	"github.com/moistello/backend/internal/domain/deposit"
 	"github.com/moistello/backend/internal/domain/email"
+	"github.com/moistello/backend/internal/domain/featureflag"
 	"github.com/moistello/backend/internal/domain/governance"
 	"github.com/moistello/backend/internal/domain/incentives"
 	"github.com/moistello/backend/internal/domain/invite"
@@ -240,7 +241,13 @@ func main() {
 	inviteH := handler.NewInviteHandler(inviteSvc)
 	notifH := handler.NewNotificationHandler(notificationSvc, userSvc)
 	adminSvc := admin.NewService(nil, 0)
-	adminH := handler.NewAdminHandler(userSvc, userRepo, circleSvc, auditRepo, adminSvc)
+	featureFlagRepo := featureflag.NewRepository(db)
+	featureFlagSvc := featureflag.NewService(featureFlagRepo)
+	featureFlagCache := featureflag.NewCache(featureFlagSvc, featureflag.DefaultReloadInterval)
+	if err := featureFlagCache.Start(context.Background()); err != nil {
+		log.Warn().Err(err).Msg("failed to load feature flags on startup — cache starts empty until the next reload")
+	}
+	adminH := handler.NewAdminHandler(userSvc, userRepo, circleSvc, auditRepo, adminSvc, featureFlagSvc, featureFlagCache)
 	webhookRepo := webhook.NewPostgresRepository(db.DB)
 	webhookH := handler.NewWebhookHandler(webhookRepo)
 	healthH := handler.NewHealthHandler(db.DB, redisClient, cfg.Stellar.SorobanRPCURL, cfg.Stellar.HorizonURL)
@@ -258,7 +265,8 @@ func main() {
 	depositH := handler.NewDepositHandler(ycClient, walletSvc).
 		WithRedis(redisClient).
 		WithConfig(cfg.YellowCard).
-		WithRepositories(depositRepo, withdrawalRepo)
+		WithRepositories(depositRepo, withdrawalRepo).
+		WithFeatureFlags(featureFlagCache)
 	ycWebhookH := handler.NewYellowCardWebhookHandler(depositRepo, withdrawalRepo, cfg.YellowCard.WebhookSecret)
 
 	// Savings goals
@@ -314,7 +322,7 @@ func main() {
 
 	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, communityH, wsH, savingsH, tokenH, swapH, governanceH, reputationH, referralH, consentH, adminJobQueueH, webhookRepo, ycWebhookH, jwtPublicKey)
 
-	if err := api.RunServer(router, cfg.Server); err != nil {
+	if err := api.RunServer(router, cfg.Server, func(context.Context) { featureFlagCache.Stop() }); err != nil {
 		log.Fatal().Err(err).Msg("server error")
 	}
 }

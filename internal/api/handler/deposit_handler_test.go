@@ -12,9 +12,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 
 	"github.com/moistello/backend/config"
 	"github.com/moistello/backend/internal/api/handler"
+	"github.com/moistello/backend/internal/domain/featureflag"
+	ffmocks "github.com/moistello/backend/internal/domain/featureflag/mocks"
 	"github.com/moistello/backend/internal/domain/wallet"
 	"github.com/moistello/backend/internal/domain/yellowcard"
 )
@@ -140,4 +144,35 @@ func TestDepositHandler_DailyCapsAndIdempotency(t *testing.T) {
 	// Verify daily limit error
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "exceeds daily limit")
+}
+
+func TestDepositHandler_InitiateWithdraw_BlockedWhenKYCRequired(t *testing.T) {
+	ycClient := yellowcard.NewClient("", "", "")
+	mockWallet := &mockDepositWalletService{
+		wallets: []wallet.Wallet{{PublicKey: "GABC12345"}},
+	}
+
+	repo := new(ffmocks.Repository)
+	repo.On("List", mock.Anything).Return([]featureflag.FeatureFlag{
+		{Flag: "kyc_required", Enabled: true},
+	}, nil)
+	flagCache := featureflag.NewCache(featureflag.NewService(repo), time.Hour)
+	require.NoError(t, flagCache.Refresh(context.Background()))
+
+	h := handler.NewDepositHandler(ycClient, mockWallet).WithFeatureFlags(flagCache)
+	r := setupTestDepositRouter(h)
+
+	reqBody, _ := json.Marshal(map[string]any{
+		"amountUsdc":    100,
+		"bankCode":      "044",
+		"accountNumber": "0123456789",
+		"accountName":   "Jane Doe",
+	})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/v1/wallet/withdraw", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusPreconditionRequired, w.Code)
+	assert.Contains(t, w.Body.String(), "kyc_required")
 }

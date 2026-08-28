@@ -1,33 +1,39 @@
 package handler
 
 import (
-	"net/http"
+	"errors"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/moistello/backend/internal/domain/admin"
 	"github.com/moistello/backend/internal/domain/audit"
 	"github.com/moistello/backend/internal/domain/circle"
+	"github.com/moistello/backend/internal/domain/featureflag"
 	"github.com/moistello/backend/internal/domain/user"
+	"github.com/moistello/backend/pkg/apperrors"
 	"github.com/moistello/backend/pkg/pagination"
 	"github.com/moistello/backend/pkg/response"
 )
 
 type AdminHandler struct {
-	userService   user.Service
-	userRepo      user.Repository
-	circleService circle.Service
-	auditRepo     audit.Repository
-	metricsSvc    *admin.Service
+	userService    user.Service
+	userRepo       user.Repository
+	circleService  circle.Service
+	auditRepo      audit.Repository
+	metricsSvc     *admin.Service
+	featureFlagSvc featureflag.Service
+	flagCache      *featureflag.Cache
 }
 
-func NewAdminHandler(userSvc user.Service, userRepo user.Repository, circleSvc circle.Service, auditRepo audit.Repository, metricsSvc *admin.Service) *AdminHandler {
+func NewAdminHandler(userSvc user.Service, userRepo user.Repository, circleSvc circle.Service, auditRepo audit.Repository, metricsSvc *admin.Service, featureFlagSvc featureflag.Service, flagCache *featureflag.Cache) *AdminHandler {
 	return &AdminHandler{
-		userService:   userSvc,
-		userRepo:      userRepo,
-		circleService: circleSvc,
-		auditRepo:     auditRepo,
-		metricsSvc:    metricsSvc,
+		userService:    userSvc,
+		userRepo:       userRepo,
+		circleService:  circleSvc,
+		auditRepo:      auditRepo,
+		metricsSvc:     metricsSvc,
+		featureFlagSvc: featureFlagSvc,
+		flagCache:      flagCache,
 	}
 }
 
@@ -153,29 +159,106 @@ func (h *AdminHandler) GetMetrics(c *gin.Context) {
 	})
 }
 
-// @Summary [Admin] Update feature flag
-// @Description Enables or disables a feature flag. Admin only.
+// @Summary [Admin] List feature flags
+// @Description Lists all feature flags and their current state. Admin only.
+// @Tags Admin
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} response.Envelope{data=object{flags=array}}
+// @Failure 500 {object} response.Envelope
+// @Router /admin/feature-flags [get]
+func (h *AdminHandler) ListFeatureFlags(c *gin.Context) {
+	flags, err := h.featureFlagSvc.List(c.Request.Context())
+	if err != nil {
+		response.InternalError(c, "failed to list feature flags")
+		return
+	}
+	response.OK(c, gin.H{"flags": flags})
+}
+
+// @Summary [Admin] Get feature flag
+// @Description Returns a single feature flag by name. Admin only.
+// @Tags Admin
+// @Produce json
+// @Security BearerAuth
+// @Param flag path string true "Feature flag name"
+// @Success 200 {object} response.Envelope{data=object{flag=object}}
+// @Failure 404 {object} response.Envelope
+// @Router /admin/feature-flags/{flag} [get]
+func (h *AdminHandler) GetFeatureFlag(c *gin.Context) {
+	flag, err := h.featureFlagSvc.Get(c.Request.Context(), c.Param("flag"))
+	if err != nil {
+		if errors.Is(err, apperrors.ErrNotFound) {
+			response.NotFound(c, "feature flag not found")
+			return
+		}
+		response.InternalError(c, "failed to get feature flag")
+		return
+	}
+	response.OK(c, gin.H{"flag": flag})
+}
+
+// @Summary [Admin] Create or update feature flag
+// @Description Creates a feature flag if it doesn't exist, or updates its enabled state and description. Admin only. Takes effect for this process immediately; other instances pick it up within the flag cache's reload interval.
 // @Tags Admin
 // @Accept json
 // @Produce json
 // @Security BearerAuth
-// @Param body body object{flag=string,value=bool} true "Feature flag name and value"
-// @Success 200 {object} response.Envelope{data=object{flag=string,value=bool}}
+// @Param body body object{flag=string,value=bool,description=string} true "Feature flag name, value, and optional description"
+// @Success 200 {object} response.Envelope{data=object{flag=object}}
 // @Failure 400 {object} response.Envelope
 // @Router /admin/feature-flags [post]
 func (h *AdminHandler) UpdateFeatureFlag(c *gin.Context) {
 	var req struct {
-		Flag  string `json:"flag" binding:"required"`
-		Value bool   `json:"value"`
+		Flag        string `json:"flag" binding:"required"`
+		Value       bool   `json:"value"`
+		Description string `json:"description"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	// Feature-flag persistence (e.g. DB or Redis) is not yet implemented.
-	// Return 501 so callers know the operation was not performed.
-	c.JSON(http.StatusNotImplemented, gin.H{
-		"success": false,
-		"error":   "feature flag persistence not yet implemented",
-	})
+
+	f, err := h.featureFlagSvc.Set(c.Request.Context(), req.Flag, req.Value, req.Description)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	if h.flagCache != nil {
+		// Best-effort: refresh this process's cache immediately so the
+		// change is visible right away instead of waiting for the next
+		// scheduled reload. A failure here just means the periodic reload
+		// picks it up on its own schedule.
+		_ = h.flagCache.Refresh(c.Request.Context())
+	}
+
+	response.OK(c, gin.H{"flag": f})
+}
+
+// @Summary [Admin] Delete feature flag
+// @Description Permanently removes a feature flag. Admin only.
+// @Tags Admin
+// @Produce json
+// @Security BearerAuth
+// @Param flag path string true "Feature flag name"
+// @Success 200 {object} response.Envelope
+// @Failure 404 {object} response.Envelope
+// @Router /admin/feature-flags/{flag} [delete]
+func (h *AdminHandler) DeleteFeatureFlag(c *gin.Context) {
+	flag := c.Param("flag")
+	if err := h.featureFlagSvc.Delete(c.Request.Context(), flag); err != nil {
+		if errors.Is(err, apperrors.ErrNotFound) {
+			response.NotFound(c, "feature flag not found")
+			return
+		}
+		response.InternalError(c, "failed to delete feature flag")
+		return
+	}
+
+	if h.flagCache != nil {
+		_ = h.flagCache.Refresh(c.Request.Context())
+	}
+
+	response.OK(c, gin.H{"deleted": flag})
 }

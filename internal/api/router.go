@@ -252,7 +252,10 @@ func NewRouter(
 			admin.GET("/circles", adminHandler.ListCircles)
 			admin.GET("/audit-log", adminHandler.GetAuditLog)
 			admin.GET("/metrics", adminHandler.GetMetrics)
+			admin.GET("/feature-flags", adminHandler.ListFeatureFlags)
+			admin.GET("/feature-flags/:flag", adminHandler.GetFeatureFlag)
 			admin.POST("/feature-flags", adminHandler.UpdateFeatureFlag)
+			admin.DELETE("/feature-flags/:flag", adminHandler.DeleteFeatureFlag)
 			admin.GET("/jobs/dead-letter", adminJobQueueHandler.GetDeadLetterJobs)
 			admin.POST("/jobs/dead-letter/:id/retry", adminJobQueueHandler.RetryDeadLetterJob)
 		}
