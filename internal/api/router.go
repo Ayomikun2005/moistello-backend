@@ -69,7 +69,6 @@ func NewRouter(
 	r.GET("/metrics", middleware.AdminAPIKeyMiddleware(metricsKey), gin.WrapH(promhttp.Handler()))
 
 	r.Use(middleware.RateLimitMiddleware(redisClient, cfg.RateLimit))
-	r.Use(middleware.IdempotencyMiddleware(redisClient))
 
 	r.GET("/health", healthHandler.Health)
 	r.GET("/health/ready", healthHandler.Ready)
@@ -107,6 +106,10 @@ func NewRouter(
 		authenticated.Use(middleware.AuthMiddleware(jwtPublicKey))
 		authenticated.Use(middleware.TokenBlocklistMiddleware(redisClient))
 		authenticated.Use(middleware.CSRFTokenValidator(redisClient))
+		// Idempotency must run after AuthMiddleware so keys are scoped per
+		// user (#198) — a global, pre-auth middleware let idempotency keys
+		// collide across different users' requests.
+		authenticated.Use(middleware.IdempotencyMiddleware(redisClient))
 		{
 			authenticated.GET("/me", authHandler.Me)
 			authenticated.POST("/auth/logout", authHandler.Logout)
