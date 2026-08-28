@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/moistello/backend/config"
@@ -35,6 +36,7 @@ import (
 	"github.com/moistello/backend/internal/domain/governance"
 	"github.com/moistello/backend/internal/domain/incentives"
 	"github.com/moistello/backend/internal/domain/invite"
+	"github.com/moistello/backend/internal/domain/mobilemoney"
 	"github.com/moistello/backend/internal/domain/notification"
 	"github.com/moistello/backend/internal/domain/payout"
 	"github.com/moistello/backend/internal/domain/push"
@@ -269,6 +271,70 @@ func main() {
 		WithFeatureFlags(featureFlagCache)
 	ycWebhookH := handler.NewYellowCardWebhookHandler(depositRepo, withdrawalRepo, cfg.YellowCard.WebhookSecret)
 
+	// Mobile-money bridge (#190) — on/off-ramp for non-NGN markets. Each
+	// provider is only registered when its credentials are configured, so
+	// deployments that haven't onboarded a given provider yet just don't
+	// advertise support for its currency rather than failing to start.
+	mmRegistry := mobilemoney.NewRegistry()
+	if cfg.MobileMoney.MPesaConsumerKey != "" {
+		mmRegistry.Register(mobilemoney.NewMPesaProvider(mobilemoney.MPesaConfig{
+			ConsumerKey:        cfg.MobileMoney.MPesaConsumerKey,
+			ConsumerSecret:     cfg.MobileMoney.MPesaConsumerSecret,
+			Shortcode:          cfg.MobileMoney.MPesaShortcode,
+			Passkey:            cfg.MobileMoney.MPesaPasskey,
+			SecurityCredential: cfg.MobileMoney.MPesaSecurityCredential,
+			InitiatorName:      cfg.MobileMoney.MPesaInitiatorName,
+			CallbackBaseURL:    cfg.MobileMoney.CallbackBaseURL,
+			Sandbox:            cfg.MobileMoney.MPesaSandbox,
+		}))
+	}
+	if cfg.MobileMoney.MTNSubscriptionKey != "" {
+		mmRegistry.Register(mobilemoney.NewMTNProvider(mobilemoney.MTNConfig{
+			SubscriptionKey: cfg.MobileMoney.MTNSubscriptionKey,
+			APIUser:         cfg.MobileMoney.MTNAPIUser,
+			APIKey:          cfg.MobileMoney.MTNAPIKey,
+			TargetCurrency:  cfg.MobileMoney.MTNTargetCurrency,
+			CallbackBaseURL: cfg.MobileMoney.CallbackBaseURL,
+			Sandbox:         cfg.MobileMoney.MTNSandbox,
+		}))
+	}
+	if cfg.MobileMoney.AirtelClientID != "" {
+		mmRegistry.Register(mobilemoney.NewAirtelProvider(mobilemoney.AirtelConfig{
+			ClientID:        cfg.MobileMoney.AirtelClientID,
+			ClientSecret:    cfg.MobileMoney.AirtelClientSecret,
+			Country:         cfg.MobileMoney.AirtelCountry,
+			TargetCurrency:  cfg.MobileMoney.AirtelTargetCurrency,
+			CallbackBaseURL: cfg.MobileMoney.CallbackBaseURL,
+			Sandbox:         cfg.MobileMoney.AirtelSandbox,
+		}))
+	}
+	mmRepo := mobilemoney.NewRepository(db)
+	mmSvc := mobilemoney.NewService(mmRepo, mmRegistry)
+	mobileMoneyH := handler.NewMobileMoneyHandler(mmSvc, walletSvc)
+
+	reconcileInterval := time.Duration(cfg.MobileMoney.ReconcileIntervalMin) * time.Minute
+	if reconcileInterval <= 0 {
+		reconcileInterval = 5 * time.Minute
+	}
+	mmReconcileStop := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(reconcileInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				count, err := mmSvc.Reconcile(context.Background())
+				if err != nil {
+					log.Warn().Err(err).Msg("mobile money reconciliation pass failed")
+				} else if count > 0 {
+					log.Info().Int("count", count).Msg("mobile money reconciliation updated pending transactions")
+				}
+			case <-mmReconcileStop:
+				return
+			}
+		}
+	}()
+
 	// Savings goals
 	savingsRepo := savings.NewRepository(db)
 	savingsSvc := savings.NewService(savingsRepo)
@@ -320,9 +386,12 @@ func main() {
 	jobQueue := jobqueue.NewJobQueue(db)
 	adminJobQueueH := handler.NewAdminJobQueueHandler(jobQueue)
 
-	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, communityH, wsH, savingsH, tokenH, swapH, governanceH, reputationH, referralH, consentH, adminJobQueueH, webhookRepo, ycWebhookH, jwtPublicKey)
+	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, mobileMoneyH, communityH, wsH, savingsH, tokenH, swapH, governanceH, reputationH, referralH, consentH, adminJobQueueH, webhookRepo, ycWebhookH, jwtPublicKey)
 
-	if err := api.RunServer(router, cfg.Server, func(context.Context) { featureFlagCache.Stop() }); err != nil {
+	if err := api.RunServer(router, cfg.Server, func(context.Context) {
+		featureFlagCache.Stop()
+		close(mmReconcileStop)
+	}); err != nil {
 		log.Fatal().Err(err).Msg("server error")
 	}
 }

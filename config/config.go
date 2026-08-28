@@ -30,7 +30,8 @@ type Config struct {
 	Environment  string
 	YellowCard   YellowCardConfig `mapstructure:"yellow_card"`
 	Tracing      TracingConfig
-	Swap         SwapConfig `mapstructure:"swap"`
+	Swap         SwapConfig        `mapstructure:"swap"`
+	MobileMoney  MobileMoneyConfig `mapstructure:"mobile_money"`
 }
 
 type ServerConfig struct {
@@ -102,6 +103,36 @@ type YellowCardConfig struct {
 	MaxWithdrawUSDC      float64 `mapstructure:"max_withdraw_usdc"`
 	DailyDepositCapNGN   float64 `mapstructure:"daily_deposit_cap_ngn"`
 	DailyWithdrawCapUSDC float64 `mapstructure:"daily_withdraw_cap_usdc"`
+}
+
+// MobileMoneyConfig holds credentials for the mobile-money bridge (#190,
+// product-spec.md §7): M-Pesa, MTN Mobile Money, and Airtel Money adapters
+// for non-NGN African markets. Each provider is only registered at startup
+// when its required credentials are non-empty, so an unconfigured provider
+// simply isn't available rather than failing startup.
+type MobileMoneyConfig struct {
+	CallbackBaseURL      string `mapstructure:"callback_base_url"`
+	ReconcileIntervalMin int    `mapstructure:"reconcile_interval_minutes"`
+
+	MPesaConsumerKey        string `mapstructure:"mpesa_consumer_key"`
+	MPesaConsumerSecret     string `mapstructure:"mpesa_consumer_secret"`
+	MPesaShortcode          string `mapstructure:"mpesa_shortcode"`
+	MPesaPasskey            string `mapstructure:"mpesa_passkey"`
+	MPesaSecurityCredential string `mapstructure:"mpesa_security_credential"`
+	MPesaInitiatorName      string `mapstructure:"mpesa_initiator_name"`
+	MPesaSandbox            bool   `mapstructure:"mpesa_sandbox"`
+
+	MTNSubscriptionKey string `mapstructure:"mtn_subscription_key"`
+	MTNAPIUser         string `mapstructure:"mtn_api_user"`
+	MTNAPIKey          string `mapstructure:"mtn_api_key"`
+	MTNTargetCurrency  string `mapstructure:"mtn_target_currency"`
+	MTNSandbox         bool   `mapstructure:"mtn_sandbox"`
+
+	AirtelClientID       string `mapstructure:"airtel_client_id"`
+	AirtelClientSecret   string `mapstructure:"airtel_client_secret"`
+	AirtelCountry        string `mapstructure:"airtel_country"`
+	AirtelTargetCurrency string `mapstructure:"airtel_target_currency"`
+	AirtelSandbox        bool   `mapstructure:"airtel_sandbox"`
 }
 
 type AuthConfig struct {

@@ -42,6 +42,7 @@ func NewRouter(
 	passkeyCredentialHandler *handler.PasskeyCredentialHandler,
 	walletHandler *handler.WalletHandler,
 	depositHandler *handler.DepositHandler,
+	mobileMoneyHandler *handler.MobileMoneyHandler,
 	communityHandler *handler.CommunityHandler,
 	wsHandler *handler.WebSocketHandler,
 	savingsGoalHandler *handler.SavingsGoalHandler,
@@ -144,6 +145,9 @@ func NewRouter(
 			authenticated.POST("/wallet/deposit", perResource(redisClient, "wallet-transfer", cfg.RateLimit.WalletTransferLimit, cfg.RateLimit.WalletTransferWindowSeconds), depositHandler.InitiateDeposit)
 			authenticated.POST("/wallet/withdraw", perResource(redisClient, "wallet-transfer", cfg.RateLimit.WalletTransferLimit, cfg.RateLimit.WalletTransferWindowSeconds), depositHandler.InitiateWithdraw)
 			authenticated.GET("/wallet/transactions/:yellowCardId", depositHandler.GetTransactionStatus)
+			authenticated.POST("/wallet/mobile-money/onramp", perResource(redisClient, "wallet-transfer", cfg.RateLimit.WalletTransferLimit, cfg.RateLimit.WalletTransferWindowSeconds), mobileMoneyHandler.InitiateOnramp)
+			authenticated.POST("/wallet/mobile-money/offramp", perResource(redisClient, "wallet-transfer", cfg.RateLimit.WalletTransferLimit, cfg.RateLimit.WalletTransferWindowSeconds), mobileMoneyHandler.InitiateOfframp)
+			authenticated.GET("/wallet/mobile-money/:id", mobileMoneyHandler.GetTransaction)
 
 			// Circles
 			authenticated.POST("/circles", circleHandler.CreateCircle)
