@@ -249,9 +249,12 @@ func TestCommunityService_DeleteAnnouncement(t *testing.T) {
 	svc := community.NewService(repo, nil)
 	id := uuid.New()
 
+	// allow delete by author
+	ann := &community.Announcement{ID: id, CommunityID: uuid.New(), AuthorID: uuid.New()}
+	repo.On("GetAnnouncementByID", mock.Anything, id).Return(ann, nil)
 	repo.On("DeleteAnnouncement", mock.Anything, id).Return(nil)
 
-	err := svc.DeleteAnnouncement(ctx(), id.String(), "anyone")
+	err := svc.DeleteAnnouncement(ctx(), id.String(), ann.AuthorID.String())
 
 	assert.NoError(t, err)
 	repo.AssertExpectations(t)
@@ -262,9 +265,12 @@ func TestCommunityService_LikeAnnouncement(t *testing.T) {
 	svc := community.NewService(repo, nil)
 	id := uuid.New()
 
+	ann := &community.Announcement{ID: id, CommunityID: uuid.New(), AuthorID: uuid.New()}
+	repo.On("GetAnnouncementByID", mock.Anything, id).Return(ann, nil)
+	repo.On("IsMember", mock.Anything, ann.CommunityID, mock.Anything).Return(true, nil)
 	repo.On("LikeAnnouncement", mock.Anything, id).Return(nil)
 
-	err := svc.LikeAnnouncement(ctx(), id.String())
+	err := svc.LikeAnnouncement(ctx(), id.String(), uuid.New().String())
 
 	assert.NoError(t, err)
 	repo.AssertExpectations(t)
@@ -275,9 +281,17 @@ func TestCommunityService_PinAnnouncement(t *testing.T) {
 	svc := community.NewService(repo, nil)
 	id := uuid.New()
 
+	commID := uuid.New()
+	ann := &community.Announcement{ID: id, CommunityID: commID, AuthorID: uuid.New()}
+	owner := uuid.New()
+	comm := community.NewCommunity(owner)
+	comm.ID = commID
+
+	repo.On("GetAnnouncementByID", mock.Anything, id).Return(ann, nil)
+	repo.On("FindByID", mock.Anything, commID).Return(comm, nil)
 	repo.On("SetAnnouncementPin", mock.Anything, id, true).Return(nil)
 
-	err := svc.PinAnnouncement(ctx(), id.String(), "anyone", true)
+	err := svc.PinAnnouncement(ctx(), id.String(), owner.String(), true)
 
 	assert.NoError(t, err)
 	repo.AssertExpectations(t)

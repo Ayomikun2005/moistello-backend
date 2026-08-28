@@ -65,7 +65,13 @@ func main() {
 	// --- Indexer components ---
 
 	cursor := indexer.NewCursorTracker(db)
-	contractIDs := []string{cfg.Stellar.MasterPublicKey}
+	// Build contractIDs from configured contracts block (Soroban contract IDs)
+	contractIDs := []string{}
+	for _, v := range cfg.Contracts {
+		if v != "" {
+			contractIDs = append(contractIDs, v)
+		}
+	}
 	poller := indexer.NewPoller(cfg.Stellar.HorizonURL, contractIDs)
 	processor := indexer.NewEventProcessor(
 		db, rmqClient,

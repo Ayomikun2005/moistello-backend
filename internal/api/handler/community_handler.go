@@ -179,7 +179,8 @@ func (h *CommunityHandler) DeleteAnnouncement(c *gin.Context) {
 
 func (h *CommunityHandler) LikeAnnouncement(c *gin.Context) {
 	id := c.Param("announcementId")
-	if err := h.communitySvc.LikeAnnouncement(c.Request.Context(), id); err != nil {
+	userID := middleware.GetUserID(c)
+	if err := h.communitySvc.LikeAnnouncement(c.Request.Context(), id, userID); err != nil {
 		response.InternalError(c, "failed to like announcement")
 		return
 	}

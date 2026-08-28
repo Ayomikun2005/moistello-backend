@@ -298,7 +298,7 @@ func (m *mockCommunityService) GetAnnouncements(_ context.Context, _ string) ([]
 	return []community.Announcement{}, nil
 }
 func (m *mockCommunityService) DeleteAnnouncement(_ context.Context, _, _ string) error { return nil }
-func (m *mockCommunityService) LikeAnnouncement(_ context.Context, _ string) error      { return nil }
+func (m *mockCommunityService) LikeAnnouncement(_ context.Context, _ string, _ string) error      { return nil }
 func (m *mockCommunityService) PinAnnouncement(_ context.Context, _, _ string, _ bool) error {
 	return nil
 }

@@ -18,6 +18,7 @@ type Config struct {
 	Redis        RedisConfig
 	RabbitMQ     RabbitMQConfig
 	Stellar      StellarConfig
+	Contracts    map[string]string `mapstructure:"contracts"`
 	Auth         AuthConfig
 	Security     SecurityConfig
 	Brevo        BrevoConfig

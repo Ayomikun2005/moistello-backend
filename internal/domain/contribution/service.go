@@ -4,12 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 
 	"github.com/moistello/backend/pkg/apperrors"
+	"github.com/moistello/backend/pkg/stellar"
 )
 
 // Broadcaster defines the interface for real-time event broadcasting
@@ -41,13 +43,18 @@ type RecordInput struct {
 }
 
 type contributionService struct {
-	repo        Repository
-	broadcaster Broadcaster
-	tx          Transactor
+	repo           Repository
+	broadcaster    Broadcaster
+	tx             Transactor
+	stellarClient  *stellar.Client
+	masterReceiver string // master public key / default recipient for contributions
 }
 
-func NewService(repo Repository, broadcaster Broadcaster, tx Transactor) Service {
-	return &contributionService{repo: repo, broadcaster: broadcaster, tx: tx}
+// NewService creates a contribution service. The last two parameters are optional
+// and may be nil. When a Stellar client and masterReceiver are provided, contributions
+// with a TxnHash will be verified on-chain before recording.
+func NewService(repo Repository, broadcaster Broadcaster, tx Transactor, stellarClient *stellar.Client, masterReceiver string) Service {
+	return &contributionService{repo: repo, broadcaster: broadcaster, tx: tx, stellarClient: stellarClient, masterReceiver: masterReceiver}
 }
 
 type contribTransactor struct {
@@ -121,6 +128,22 @@ func (s *contributionService) Record(ctx context.Context, input RecordInput) (*C
 		VerificationStatus: verificationStatus,
 		CreatedAt:          now,
 		UpdatedAt:          now,
+	}
+
+	// If a Stellar client is configured, verify the transaction on-chain.
+	if s.stellarClient != nil && input.TxnHash != "" {
+		// Format amount to match Horizon string representation (7 decimal places)
+		amtStr := strconv.FormatFloat(input.Amount, 'f', 7, 64)
+		ok, err := s.stellarClient.VerifyTransaction(ctx, input.TxnHash, s.masterReceiver, amtStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to verify transaction: %w", err)
+		}
+		if !ok {
+			return nil, fmt.Errorf("on-chain verification failed")
+		}
+		// mark verified
+		c.VerifiedOnchain = true
+		c.VerificationStatus = VerificationStatusVerified
 	}
 
 	if s.tx != nil {

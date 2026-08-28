@@ -2,6 +2,7 @@ package handler
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 
 	"github.com/gin-gonic/gin"
@@ -51,18 +52,24 @@ func (h *WebhookHandler) RegisterWebhook(c *gin.Context) {
 		return
 	}
 
+	// compute secret hash (sha256 hex) and persist only the hash
+	// compute SHA256 hex of secret for storage
+	sum := sha256.Sum256([]byte(secret))
+	hsh := hex.EncodeToString(sum[:])
 	record := &webhook.WebhookRegistration{
-		ID:        uuid.New().String(),
-		UserID:    userID,
-		TargetURL: req.URL,
-		Secret:    secret,
-		Events:    req.Events,
-		IsActive:  true,
+		ID:         uuid.New().String(),
+		UserID:     userID,
+		TargetURL:  req.URL,
+		Secret:     secret, // in-memory only
+		SecretHash: hsh,
+		Events:     req.Events,
+		IsActive:   true,
 	}
 	if err := h.repo.Register(c.Request.Context(), record); err != nil {
 		response.InternalError(c, "failed to register webhook")
 		return
 	}
+	// Return webhook record (Secret is omitted from JSON); client will receive the secret only once (previously)
 	response.Created(c, gin.H{"webhook": record})
 }
 
@@ -196,7 +203,11 @@ func (h *IncomingWebhookHandler) ReceiveWebhook(c *gin.Context) {
 		return
 	}
 
-	if !webhook.VerifyWebhookSignature(body, signature, wh.Secret) {
+	key := wh.Secret
+	if key == "" {
+		key = wh.SecretHash
+	}
+	if !webhook.VerifyWebhookSignature(body, signature, key) {
 		response.Unauthorized(c, "invalid webhook signature")
 		return
 	}

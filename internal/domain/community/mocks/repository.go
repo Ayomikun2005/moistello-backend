@@ -88,6 +88,14 @@ func (m *Repository) GetAnnouncements(ctx context.Context, communityID uuid.UUID
 	return args.Get(0).([]community.Announcement), args.Error(1)
 }
 
+func (m *Repository) GetAnnouncementByID(ctx context.Context, id uuid.UUID) (*community.Announcement, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*community.Announcement), args.Error(1)
+}
+
 func (m *Repository) DeleteAnnouncement(ctx context.Context, id uuid.UUID) error {
 	return m.Called(ctx, id).Error(0)
 }

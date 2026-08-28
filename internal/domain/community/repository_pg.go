@@ -231,6 +231,16 @@ func (r *pgRepo) GetAnnouncements(ctx context.Context, communityID uuid.UUID, pi
 	return announcements, nil
 }
 
+func (r *pgRepo) GetAnnouncementByID(ctx context.Context, id uuid.UUID) (*Announcement, error) {
+	query := `SELECT id, community_id, author_id, content, is_pinned, like_count, created_at, updated_at FROM community_announcements WHERE id = $1`
+	var a Announcement
+	err := r.db.GetContext(ctx, &a, query, id)
+	if err != nil {
+		return nil, fmt.Errorf("getting announcement: %w", err)
+	}
+	return &a, nil
+}
+
 func (r *pgRepo) DeleteAnnouncement(ctx context.Context, id uuid.UUID) error {
 	_, err := r.db.ExecContext(ctx, `DELETE FROM community_announcements WHERE id = $1`, id)
 	return err

@@ -26,7 +26,7 @@ type Service interface {
 	CreateAnnouncement(ctx context.Context, communityID, userID, content string) (*Announcement, error)
 	GetAnnouncements(ctx context.Context, communityID string) ([]Announcement, error)
 	DeleteAnnouncement(ctx context.Context, id, userID string) error
-	LikeAnnouncement(ctx context.Context, id string) error
+	LikeAnnouncement(ctx context.Context, id string, userID string) error
 
 	PinAnnouncement(ctx context.Context, id, userID string, pinned bool) error
 	RemoveMember(ctx context.Context, communityID, userID, targetID string) error
@@ -267,6 +267,15 @@ func (s *communityService) CreateAnnouncement(ctx context.Context, communityID, 
 		return nil, err
 	}
 
+	// Require membership to create announcements
+	isMember, err := s.repo.IsMember(ctx, cid, uid)
+	if err != nil {
+		return nil, fmt.Errorf("checking membership: %w", err)
+	}
+	if !isMember {
+		return nil, apperrors.ErrForbidden
+	}
+
 	now := time.Now().UTC()
 	a := &Announcement{
 		ID:          uuid.New(),
@@ -296,15 +305,68 @@ func (s *communityService) DeleteAnnouncement(ctx context.Context, id, userID st
 	if err != nil {
 		return err
 	}
-	return s.repo.DeleteAnnouncement(ctx, uid)
-}
-
-func (s *communityService) LikeAnnouncement(ctx context.Context, id string) error {
-	uid, err := parseUUID(id)
+	requesterID, err := parseUUID(userID)
 	if err != nil {
 		return err
 	}
-	return s.repo.LikeAnnouncement(ctx, uid)
+
+	ann, err := s.repo.GetAnnouncementByID(ctx, uid)
+	if err != nil {
+		return err
+	}
+
+	// Allow the author or community admin/owner to delete
+	if ann.AuthorID == requesterID {
+		return s.repo.DeleteAnnouncement(ctx, uid)
+	}
+
+	// Fetch community to check owner
+	comm, err := s.repo.FindByID(ctx, ann.CommunityID)
+	if err != nil {
+		return err
+	}
+	if comm.OwnerID == requesterID {
+		return s.repo.DeleteAnnouncement(ctx, uid)
+	}
+
+	// Check member role
+	members, err := s.repo.GetMembers(ctx, ann.CommunityID)
+	if err != nil {
+		return err
+	}
+	for _, m := range members {
+		if m.UserID == requesterID && m.Role == "admin" {
+			return s.repo.DeleteAnnouncement(ctx, uid)
+		}
+	}
+
+	return apperrors.ErrForbidden
+}
+
+func (s *communityService) LikeAnnouncement(ctx context.Context, id string, userID string) error {
+	annID, err := parseUUID(id)
+	if err != nil {
+		return err
+	}
+	uid, err := parseUUID(userID)
+	if err != nil {
+		return err
+	}
+
+	ann, err := s.repo.GetAnnouncementByID(ctx, annID)
+	if err != nil {
+		return err
+	}
+
+	// require membership to like
+	isMember, err := s.repo.IsMember(ctx, ann.CommunityID, uid)
+	if err != nil {
+		return fmt.Errorf("checking membership: %w", err)
+	}
+	if !isMember {
+		return apperrors.ErrForbidden
+	}
+	return s.repo.LikeAnnouncement(ctx, annID)
 }
 
 func (s *communityService) PinAnnouncement(ctx context.Context, id, userID string, pinned bool) error {
@@ -312,7 +374,34 @@ func (s *communityService) PinAnnouncement(ctx context.Context, id, userID strin
 	if err != nil {
 		return err
 	}
-	return s.repo.SetAnnouncementPin(ctx, annID, pinned)
+	uid, err := parseUUID(userID)
+	if err != nil {
+		return err
+	}
+
+	ann, err := s.repo.GetAnnouncementByID(ctx, annID)
+	if err != nil {
+		return err
+	}
+
+	// Only admins/owner can pin
+	comm, err := s.repo.FindByID(ctx, ann.CommunityID)
+	if err != nil {
+		return err
+	}
+	if comm.OwnerID == uid {
+		return s.repo.SetAnnouncementPin(ctx, annID, pinned)
+	}
+	members, err := s.repo.GetMembers(ctx, ann.CommunityID)
+	if err != nil {
+		return err
+	}
+	for _, m := range members {
+		if m.UserID == uid && m.Role == "admin" {
+			return s.repo.SetAnnouncementPin(ctx, annID, pinned)
+		}
+	}
+	return apperrors.ErrForbidden
 }
 
 func (s *communityService) RemoveMember(ctx context.Context, communityID, userID, targetID string) error {
@@ -362,10 +451,20 @@ func (s *communityService) TransferOwnership(ctx context.Context, communityID, u
 		return apperrors.ErrForbidden
 	}
 
+	// Verify new owner is a member
+	isMember, err := s.repo.IsMember(ctx, cid, nid)
+	if err != nil {
+		return fmt.Errorf("checking new owner membership: %w", err)
+	}
+	if !isMember {
+		return apperrors.ErrInvalidInput
+	}
+
 	if err := s.repo.UpdateOwner(ctx, cid, nid); err != nil {
 		return fmt.Errorf("transferring ownership: %w", err)
 	}
 
+	// demote previous owner to member
 	return s.repo.UpdateMemberRole(ctx, cid, uid, "member")
 }
 

@@ -22,7 +22,10 @@ type WebhookRegistration struct {
 	ID        string    `json:"id"`
 	UserID    string    `json:"user_id"`
 	TargetURL string    `json:"target_url"`
-	Secret    string    `json:"secret"`
+	// Secret is kept in-memory only and not returned in API responses or persisted.
+	Secret    string    `json:"-"`
+	// SecretHash stores the SHA256 hex of the secret and is persisted.
+	SecretHash string   `json:"secret_hash"`
 	Events    []string  `json:"events"`
 	IsActive  bool      `json:"is_active"`
 	CreatedAt time.Time `json:"created_at"`
@@ -57,15 +60,15 @@ func NewPostgresRepository(db *sql.DB) *PostgresRepository {
 
 func (r *PostgresRepository) Register(ctx context.Context, wh *WebhookRegistration) error {
 	query := `
-		INSERT INTO webhooks (id, user_id, target_url, secret, created_at)
+		INSERT INTO webhooks (id, user_id, target_url, secret_hash, created_at)
 		VALUES ($1, $2, $3, $4, $5)
 	`
-	_, err := r.db.ExecContext(ctx, query, wh.ID, wh.UserID, wh.TargetURL, wh.Secret, time.Now())
+	_, err := r.db.ExecContext(ctx, query, wh.ID, wh.UserID, wh.TargetURL, wh.SecretHash, time.Now())
 	return err
 }
 
 func (r *PostgresRepository) GetActiveWebhooks(ctx context.Context) ([]WebhookRegistration, error) {
-	query := `SELECT id, user_id, target_url, secret, created_at FROM webhooks`
+	query := `SELECT id, user_id, target_url, secret_hash, created_at FROM webhooks`
 	rows, err := r.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -75,7 +78,7 @@ func (r *PostgresRepository) GetActiveWebhooks(ctx context.Context) ([]WebhookRe
 	var list []WebhookRegistration
 	for rows.Next() {
 		var wh WebhookRegistration
-		if err := rows.Scan(&wh.ID, &wh.UserID, &wh.TargetURL, &wh.Secret, &wh.CreatedAt); err != nil {
+		if err := rows.Scan(&wh.ID, &wh.UserID, &wh.TargetURL, &wh.SecretHash, &wh.CreatedAt); err != nil {
 			return nil, err
 		}
 		list = append(list, wh)
@@ -84,9 +87,9 @@ func (r *PostgresRepository) GetActiveWebhooks(ctx context.Context) ([]WebhookRe
 }
 
 func (r *PostgresRepository) GetByID(ctx context.Context, id string) (*WebhookRegistration, error) {
-	query := `SELECT id, user_id, target_url, secret, created_at FROM webhooks WHERE id = $1`
+	query := `SELECT id, user_id, target_url, secret_hash, created_at FROM webhooks WHERE id = $1`
 	var wh WebhookRegistration
-	if err := r.db.QueryRowContext(ctx, query, id).Scan(&wh.ID, &wh.UserID, &wh.TargetURL, &wh.Secret, &wh.CreatedAt); err != nil {
+	if err := r.db.QueryRowContext(ctx, query, id).Scan(&wh.ID, &wh.UserID, &wh.TargetURL, &wh.SecretHash, &wh.CreatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -96,7 +99,7 @@ func (r *PostgresRepository) GetByID(ctx context.Context, id string) (*WebhookRe
 }
 
 func (r *PostgresRepository) GetByUserID(ctx context.Context, userID string) ([]WebhookRegistration, error) {
-	query := `SELECT id, user_id, target_url, secret, created_at FROM webhooks WHERE user_id = $1`
+	query := `SELECT id, user_id, target_url, secret_hash, created_at FROM webhooks WHERE user_id = $1`
 	rows, err := r.db.QueryContext(ctx, query, userID)
 	if err != nil {
 		return nil, err
@@ -106,7 +109,7 @@ func (r *PostgresRepository) GetByUserID(ctx context.Context, userID string) ([]
 	var list []WebhookRegistration
 	for rows.Next() {
 		var wh WebhookRegistration
-		if err := rows.Scan(&wh.ID, &wh.UserID, &wh.TargetURL, &wh.Secret, &wh.CreatedAt); err != nil {
+		if err := rows.Scan(&wh.ID, &wh.UserID, &wh.TargetURL, &wh.SecretHash, &wh.CreatedAt); err != nil {
 			return nil, err
 		}
 		list = append(list, wh)
@@ -154,7 +157,7 @@ type JobEnqueuer interface {
 type WebhookRetryPayload struct {
 	WebhookID string          `json:"webhook_id"`
 	TargetURL string          `json:"target_url"`
-	Secret    string          `json:"secret"`
+	SecretHash string        `json:"secret_hash"`
 	Payload   json.RawMessage `json:"payload"`
 	RequestID string          `json:"request_id,omitempty"`
 }
@@ -272,7 +275,12 @@ func (d *Dispatcher) DispatchPayload(ctx context.Context, payload interface{}, m
 
 func (d *Dispatcher) deliverWithRetry(ctx context.Context, wh WebhookRegistration, body []byte, maxRetries int, reqID string) {
 	// Attempt initial delivery on background context with per-attempt timeout
-	err := d.sendHTTP(ctx, wh.TargetURL, wh.Secret, body, reqID)
+	// Use SecretHash as signing key (hex-encoded). If wh.Secret is present in-memory prefer it, otherwise use SecretHash.
+	key := wh.Secret
+	if key == "" {
+		key = wh.SecretHash
+	}
+	err := d.sendHTTP(ctx, wh.TargetURL, key, body, reqID)
 	if err == nil {
 		return
 	}
@@ -282,7 +290,7 @@ func (d *Dispatcher) deliverWithRetry(ctx context.Context, wh WebhookRegistratio
 		retryPayload := WebhookRetryPayload{
 			WebhookID: wh.ID,
 			TargetURL: wh.TargetURL,
-			Secret:    wh.Secret,
+			SecretHash: wh.SecretHash,
 			Payload:   body,
 			RequestID: reqID,
 		}
@@ -306,7 +314,11 @@ func (d *Dispatcher) inMemoryRetry(ctx context.Context, wh WebhookRegistration, 
 		case <-time.After(backoff):
 		}
 
-		err := d.sendHTTP(ctx, wh.TargetURL, wh.Secret, body, reqID)
+		key := wh.Secret
+		if key == "" {
+			key = wh.SecretHash
+		}
+		err := d.sendHTTP(ctx, wh.TargetURL, key, body, reqID)
 		if err == nil {
 			return
 		}
@@ -349,7 +361,8 @@ func (d *Dispatcher) ProcessRetryJob(ctx context.Context, job *jobqueue.Job) err
 		return fmt.Errorf("unmarshaling retry payload: %w", err)
 	}
 	bgCtx := context.WithoutCancel(ctx)
-	return d.sendHTTP(bgCtx, payload.TargetURL, payload.Secret, payload.Payload, payload.RequestID)
+	// payload.SecretHash contains the hex-encoded secret hash used as signing key
+	return d.sendHTTP(bgCtx, payload.TargetURL, payload.SecretHash, payload.Payload, payload.RequestID)
 }
 
 // Shutdown gracefully waits for all active in-flight delivery goroutines to complete.
@@ -380,7 +393,18 @@ func (d *Dispatcher) Shutdown(ctx context.Context) error {
 // SignWebhookPayload computes an HMAC-SHA256 signature for the given payload
 // using the webhook secret. The signature is returned as a hex string.
 func SignWebhookPayload(payload []byte, secret string) string {
-	mac := hmac.New(sha256.New, []byte(secret))
+	// If secret looks like a hex-encoded SHA256 (64 chars), decode it and use raw bytes as key.
+	var key []byte
+	if len(secret) == 64 {
+		if kb, err := hex.DecodeString(secret); err == nil {
+			key = kb
+		} else {
+			key = []byte(secret)
+		}
+	} else {
+		key = []byte(secret)
+	}
+	mac := hmac.New(sha256.New, key)
 	mac.Write(payload)
 	return hex.EncodeToString(mac.Sum(nil))
 }

@@ -105,15 +105,62 @@ func (c *Client) GetTransaction(ctx context.Context, txnHash string) (result map
 }
 
 func (c *Client) VerifyTransaction(ctx context.Context, txnHash string, expectedFrom string, expectedAmount string) (bool, error) {
+	// Ensure transaction exists and was successful
 	txn, err := c.GetTransaction(ctx, txnHash)
 	if err != nil {
-		log.Warn().Err(err).Str("txn", txnHash).Msg("failed to verify transaction")
+		log.Warn().Err(err).Str("txn", txnHash).Msg("failed to fetch transaction")
+		return false, err
+	}
+	if success, ok := txn["successful"].(bool); ok && !success {
 		return false, nil
 	}
-	_ = txn
-	_ = expectedFrom
-	_ = expectedAmount
-	return true, nil
+
+	// Fetch operations for the transaction and look for a matching payment
+	url := fmt.Sprintf("%s/transactions/%s/operations?limit=200", c.horizonURL, txnHash)
+	resp, err := c.httpClient.Get(url)
+	if err != nil {
+		return false, fmt.Errorf("horizon request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return false, fmt.Errorf("horizon error %d: %s", resp.StatusCode, string(body))
+	}
+
+	var ops struct {
+		Embedded struct {
+			Records []map[string]any `json:"records"`
+		} `json:"_embedded"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&ops); err != nil {
+		return false, fmt.Errorf("decoding horizon operations: %w", err)
+	}
+
+	for _, r := range ops.Embedded.Records {
+		typ, _ := r["type"].(string)
+		if typ != "payment" && typ != "payment_strict_receive" && typ != "payment_strict_send" {
+			continue
+		}
+		to, _ := r["to"].(string)
+		amount, _ := r["amount"].(string)
+		from, _ := r["from"].(string)
+
+		// If expectedFrom is provided, ensure operation source matches
+		if expectedFrom != "" && from != expectedFrom {
+			// skip if source doesn't match expectedFrom when provided
+			continue
+		}
+
+		if amount == expectedAmount && (expectedFrom == "" || to == expectedFrom || from == expectedFrom) {
+			return true, nil
+		}
+		if expectedFrom != "" && to == expectedFrom && amount == expectedAmount {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 func (c *Client) NetworkPassphrase() string { return c.networkPassphrase }

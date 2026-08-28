@@ -228,7 +228,10 @@ func TestCommunityHandler_LikeAnnouncement(t *testing.T) {
 	repo := new(communityMocks.Repository)
 	svc := community.NewService(repo, nil)
 	annID := uuid.New()
-
+	// Expect membership check and like
+	ann := &community.Announcement{ID: annID, CommunityID: uuid.New(), AuthorID: uuid.New()}
+	repo.On("GetAnnouncementByID", mock.Anything, annID).Return(ann, nil)
+	repo.On("IsMember", mock.Anything, ann.CommunityID, mock.Anything).Return(true, nil)
 	repo.On("LikeAnnouncement", mock.Anything, annID).Return(nil)
 
 	h := handler.NewCommunityHandler(svc)

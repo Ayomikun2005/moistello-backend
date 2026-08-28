@@ -125,8 +125,11 @@ func main() {
 
 	userSvc := user.NewService(userRepo, circleRepo)
 	circleSvc := circle.NewService(circleRepo, &moiAdapter{repo: userRepo}, &communityAdapter{repo: communityRepo}, wsBroadcaster, circle.NewTransactor(db))
-	contribSvc := contribution.NewService(contribRepo, wsBroadcaster, contribution.NewTransactor(db))
-	payoutSvc := payout.NewService(payoutRepo)
+	// Stellar client used for on-chain verification
+	horizonClient := stellar.NewClient(cfg.Stellar.HorizonURL, cfg.Stellar.SorobanRPCURL, cfg.Stellar.NetworkPassphrase)
+
+	contribSvc := contribution.NewService(contribRepo, wsBroadcaster, contribution.NewTransactor(db), horizonClient, cfg.Stellar.MasterPublicKey)
+	payoutSvc := payout.NewService(payoutRepo, horizonClient, userRepo)
 	reputationSvc := reputation.NewService(reputationRepo)
 	notificationSvc := notification.NewService(notificationRepo, nil, wsBroadcaster)
 	authSvc, err := auth.NewService(redisClient, cfg.Auth.NonceTTL, cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL, cfg.Auth.JWTPrivateKeyPEM, cfg.Auth.JWTPublicKeyPEM)
@@ -219,7 +222,6 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to create stellar signer")
 	}
-	horizonClient := stellar.NewClient(cfg.Stellar.HorizonURL, cfg.Stellar.SorobanRPCURL, cfg.Stellar.NetworkPassphrase)
 	accountMgr := stellar.NewAccountManager(horizonClient, cfg.Stellar.MasterPublicKey)
 
 	// Create escrow swap contract invoker and client

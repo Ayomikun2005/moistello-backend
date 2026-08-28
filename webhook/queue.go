@@ -27,6 +27,7 @@ type Message struct {
 	RegistrationID string          `json:"registrationId"`
 	UserID         string          `json:"userId,omitempty"`
 	TargetURL      string          `json:"targetUrl"`
+	// Secret contains either the raw secret (if available in-memory) or the stored secret hash.
 	Secret         string          `json:"secret"`
 	Payload        json.RawMessage `json:"payload"`
 	RequestID      string          `json:"requestId,omitempty"`
@@ -100,11 +101,15 @@ func (d *QueuedDispatcher) DispatchPayload(ctx context.Context, payload interfac
 	}
 
 	for _, wh := range webhooks {
+		key := wh.Secret
+		if key == "" {
+			key = wh.SecretHash
+		}
 		msg := Message{
 			RegistrationID: wh.ID,
 			UserID:         wh.UserID,
 			TargetURL:      wh.TargetURL,
-			Secret:         wh.Secret,
+			Secret:         key,
 			Payload:        body,
 			RequestID:      requestID,
 			MaxRetries:     maxRetries,
