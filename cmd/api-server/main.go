@@ -27,6 +27,7 @@ import (
 	"github.com/moistello/backend/internal/domain/admin"
 	"github.com/moistello/backend/internal/domain/audit"
 	"github.com/moistello/backend/internal/domain/auth"
+	"github.com/moistello/backend/internal/domain/chat"
 	"github.com/moistello/backend/internal/domain/circle"
 	"github.com/moistello/backend/internal/domain/community"
 	"github.com/moistello/backend/internal/domain/contribution"
@@ -312,6 +313,13 @@ func main() {
 	mmSvc := mobilemoney.NewService(mmRepo, mmRegistry)
 	mobileMoneyH := handler.NewMobileMoneyHandler(mmSvc, walletSvc)
 
+	// E2EE chat (#188): X3DH key bundles + encrypted message store on top
+	// of the crypto primitives in internal/domain/chat/x3dh.go.
+	chatKeyRepo := chat.NewKeyRepository(db)
+	chatMsgRepo := chat.NewRepository(db)
+	chatSvc := chat.NewService(chatKeyRepo, chatMsgRepo, wsBroadcaster)
+	chatH := handler.NewChatHandler(chatSvc)
+
 	reconcileInterval := time.Duration(cfg.MobileMoney.ReconcileIntervalMin) * time.Minute
 	if reconcileInterval <= 0 {
 		reconcileInterval = 5 * time.Minute
@@ -386,7 +394,7 @@ func main() {
 	jobQueue := jobqueue.NewJobQueue(db)
 	adminJobQueueH := handler.NewAdminJobQueueHandler(jobQueue)
 
-	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, mobileMoneyH, communityH, wsH, savingsH, tokenH, swapH, governanceH, reputationH, referralH, consentH, adminJobQueueH, webhookRepo, ycWebhookH, jwtPublicKey)
+	router := api.NewRouter(cfg, redisClient, authH, userH, circleH, contribH, payoutH, inviteH, notifH, adminH, webhookH, healthH, passkeyCredH, walletH, depositH, mobileMoneyH, chatH, communityH, wsH, savingsH, tokenH, swapH, governanceH, reputationH, referralH, consentH, adminJobQueueH, webhookRepo, ycWebhookH, jwtPublicKey)
 
 	if err := api.RunServer(router, cfg.Server, func(context.Context) {
 		featureFlagCache.Stop()

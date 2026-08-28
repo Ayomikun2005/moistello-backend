@@ -43,6 +43,7 @@ func NewRouter(
 	walletHandler *handler.WalletHandler,
 	depositHandler *handler.DepositHandler,
 	mobileMoneyHandler *handler.MobileMoneyHandler,
+	chatHandler *handler.ChatHandler,
 	communityHandler *handler.CommunityHandler,
 	wsHandler *handler.WebSocketHandler,
 	savingsGoalHandler *handler.SavingsGoalHandler,
@@ -148,6 +149,13 @@ func NewRouter(
 			authenticated.POST("/wallet/mobile-money/onramp", perResource(redisClient, "wallet-transfer", cfg.RateLimit.WalletTransferLimit, cfg.RateLimit.WalletTransferWindowSeconds), mobileMoneyHandler.InitiateOnramp)
 			authenticated.POST("/wallet/mobile-money/offramp", perResource(redisClient, "wallet-transfer", cfg.RateLimit.WalletTransferLimit, cfg.RateLimit.WalletTransferWindowSeconds), mobileMoneyHandler.InitiateOfframp)
 			authenticated.GET("/wallet/mobile-money/:id", mobileMoneyHandler.GetTransaction)
+
+			authenticated.POST("/chat/keys", chatHandler.PublishKeys)
+			authenticated.GET("/chat/keys/:userId", chatHandler.GetBundle)
+			authenticated.POST("/chat/conversations", chatHandler.CreateConversation)
+			authenticated.GET("/chat/conversations", chatHandler.ListConversations)
+			authenticated.POST("/chat/conversations/:id/messages", chatHandler.SendMessage)
+			authenticated.GET("/chat/conversations/:id/messages", chatHandler.ListMessages)
 
 			// Circles
 			authenticated.POST("/circles", circleHandler.CreateCircle)

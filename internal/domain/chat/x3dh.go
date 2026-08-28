@@ -135,6 +135,72 @@ func InitiateHandshake(aliceIK, aliceEK *X3DHKeyPair, bobBundle *PreKeyBundle) (
 	}, nil
 }
 
+// RespondToHandshake computes the same shared secret as InitiateHandshake,
+// from the responder's (Bob's) side: given Bob's own long-term key material
+// and the ephemeral public key + consumed one-time prekey ID Alice sent in
+// her initial message. ECDH is symmetric (bobPriv.ECDH(alicePub) ==
+// alicePriv.ECDH(bobPub)), so mirroring each DH step in the same order
+// InitiateHandshake used reconstructs an identical SharedMasterKey.
+func RespondToHandshake(bobIK, bobSPK *X3DHKeyPair, bobOPK *X3DHKeyPair, aliceIKHex, aliceEKHex string) (*X3DHSession, error) {
+	aliceIKBytes, err := hex.DecodeString(aliceIKHex)
+	if err != nil {
+		return nil, fmt.Errorf("invalid alice identity key hex: %w", err)
+	}
+	aliceIK, err := ecdh.X25519().NewPublicKey(aliceIKBytes)
+	if err != nil {
+		return nil, fmt.Errorf("invalid alice identity key: %w", err)
+	}
+
+	aliceEKBytes, err := hex.DecodeString(aliceEKHex)
+	if err != nil {
+		return nil, fmt.Errorf("invalid alice ephemeral key hex: %w", err)
+	}
+	aliceEK, err := ecdh.X25519().NewPublicKey(aliceEKBytes)
+	if err != nil {
+		return nil, fmt.Errorf("invalid alice ephemeral key: %w", err)
+	}
+
+	// DH1 = ECDH(Bob_SPK, Alice_IK)  — mirrors ECDH(Alice_IK, Bob_SPK)
+	dh1, err := bobSPK.PrivateKey.ECDH(aliceIK)
+	if err != nil {
+		return nil, fmt.Errorf("DH1 failed: %w", err)
+	}
+
+	// DH2 = ECDH(Bob_IK, Alice_EK) — mirrors ECDH(Alice_EK, Bob_IK)
+	dh2, err := bobIK.PrivateKey.ECDH(aliceEK)
+	if err != nil {
+		return nil, fmt.Errorf("DH2 failed: %w", err)
+	}
+
+	// DH3 = ECDH(Bob_SPK, Alice_EK) — mirrors ECDH(Alice_EK, Bob_SPK)
+	dh3, err := bobSPK.PrivateKey.ECDH(aliceEK)
+	if err != nil {
+		return nil, fmt.Errorf("DH3 failed: %w", err)
+	}
+
+	dhSecret := append(dh1, append(dh2, dh3...)...)
+
+	// DH4 = ECDH(Bob_OPK, Alice_EK) — mirrors ECDH(Alice_EK, Bob_OPK), only
+	// when Alice's initial message consumed a one-time prekey.
+	if bobOPK != nil {
+		dh4, err := bobOPK.PrivateKey.ECDH(aliceEK)
+		if err != nil {
+			return nil, fmt.Errorf("DH4 failed: %w", err)
+		}
+		dhSecret = append(dhSecret, dh4...)
+	}
+
+	masterKey, err := deriveHKDF(dhSecret, []byte("Moistello-X3DH-Protocol-Info"), 32)
+	if err != nil {
+		return nil, fmt.Errorf("HKDF derivation failed: %w", err)
+	}
+
+	return &X3DHSession{
+		SharedMasterKey: masterKey,
+		EphemeralPubKey: aliceEKHex,
+	}, nil
+}
+
 // DeriveMessageKey derives a message key using HMAC-SHA256 ratchet step for forward secrecy.
 func (s *X3DHSession) DeriveMessageKey(sequence uint64) []byte {
 	h := hmac.New(sha256.New, s.SharedMasterKey)
