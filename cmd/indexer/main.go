@@ -60,7 +60,7 @@ func main() {
 	contribRepo := contribution.NewRepository(db)
 	payoutRepo := payout.NewRepository(db)
 	reputationRepo := reputation.NewRepository(db)
-	_ = user.NewRepository(db) // wired for future account auto-creation
+	userRepo := user.NewRepository(db)
 
 	// --- Indexer components ---
 
@@ -75,7 +75,7 @@ func main() {
 	poller := indexer.NewPoller(cfg.Stellar.HorizonURL, contractIDs)
 	processor := indexer.NewEventProcessor(
 		db, rmqClient,
-		circleRepo, contribRepo, payoutRepo, reputationRepo,
+		circleRepo, contribRepo, payoutRepo, reputationRepo, userRepo,
 	)
 
 	// Wire WebSocket broadcast via Redis so API server instances

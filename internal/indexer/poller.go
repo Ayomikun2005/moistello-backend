@@ -55,6 +55,10 @@ type Operation struct {
 	Type          string `json:"type"`
 	SourceAccount string `json:"source_account"`
 	ContractID    string `json:"contract_id,omitempty"`
+	// ResultMetaXDR is the base64-encoded TransactionMeta XDR from Horizon.
+	// Populated for invoke_host_function operations and used by the XDR parser
+	// to extract Soroban contract events (ContractEvent topic/data SCVals).
+	ResultMetaXDR string `json:"result_meta_xdr"`
 }
 
 // NewPoller creates a Poller that queries the given Horizon URL and filters
