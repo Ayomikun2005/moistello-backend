@@ -36,4 +36,9 @@ type Repository interface {
 	GetPenaltiesByCircle(ctx context.Context, circleID uuid.UUID) ([]Penalty, error)
 	GetPenaltiesByUser(ctx context.Context, userID uuid.UUID) ([]Penalty, error)
 	GetContributionsByCircleAndRound(ctx context.Context, circleID uuid.UUID, roundNumber int) ([]uuid.UUID, error)
+	CreateDispute(ctx context.Context, dispute *CircleDispute) error
+	CreateVote(ctx context.Context, vote *CircleVote) error
+	GetVotesByRound(ctx context.Context, circleID uuid.UUID, roundNumber int) ([]CircleVote, error)
+	CreateAuctionBid(ctx context.Context, bid *CircleAuctionBid) error
+	GetAuctionBidsByRound(ctx context.Context, circleID uuid.UUID, roundNumber int) ([]CircleAuctionBid, error)
 }

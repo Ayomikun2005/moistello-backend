@@ -123,3 +123,31 @@ func (m *Repository) GetContributionsByCircleAndRound(ctx context.Context, circl
 	}
 	return args.Get(0).([]uuid.UUID), args.Error(1)
 }
+
+func (m *Repository) CreateDispute(ctx context.Context, dispute *circle.CircleDispute) error {
+	return m.Called(ctx, dispute).Error(0)
+}
+
+func (m *Repository) CreateVote(ctx context.Context, vote *circle.CircleVote) error {
+	return m.Called(ctx, vote).Error(0)
+}
+
+func (m *Repository) GetVotesByRound(ctx context.Context, circleID uuid.UUID, roundNumber int) ([]circle.CircleVote, error) {
+	args := m.Called(ctx, circleID, roundNumber)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]circle.CircleVote), args.Error(1)
+}
+
+func (m *Repository) CreateAuctionBid(ctx context.Context, bid *circle.CircleAuctionBid) error {
+	return m.Called(ctx, bid).Error(0)
+}
+
+func (m *Repository) GetAuctionBidsByRound(ctx context.Context, circleID uuid.UUID, roundNumber int) ([]circle.CircleAuctionBid, error) {
+	args := m.Called(ctx, circleID, roundNumber)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]circle.CircleAuctionBid), args.Error(1)
+}

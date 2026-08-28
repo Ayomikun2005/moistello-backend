@@ -146,6 +146,18 @@ func (s *lifecycleCircleService) ProcessMissedContributions(_ context.Context, _
 	return nil
 }
 
+func (s *lifecycleCircleService) RaiseDispute(_ context.Context, _, _ string, _ circle.DisputeInput) (*circle.CircleDispute, error) {
+	return nil, nil
+}
+
+func (s *lifecycleCircleService) CastVote(_ context.Context, _, _ string, _ circle.VoteInput) (*circle.CircleVote, bool, string, error) {
+	return nil, false, "", nil
+}
+
+func (s *lifecycleCircleService) SubmitAuctionBid(_ context.Context, _, _ string, _ circle.AuctionBidInput) (*circle.CircleAuctionBid, error) {
+	return nil, nil
+}
+
 type lifecycleContributionService struct{ store *lifecycleStore }
 
 func (s *lifecycleContributionService) Record(
@@ -325,7 +337,7 @@ func TestCircleLifecycle_DisputeEndpoint(t *testing.T) {
 		"reason":  "Suspicious activity",
 		"details": "Member X did not contribute",
 	})
-	assert.Equal(t, http.StatusNotImplemented, code)
+	assert.Equal(t, http.StatusCreated, code)
 }
 
 func TestCircleLifecycle_DisputeEndpoint_MissingReason(t *testing.T) {
@@ -354,7 +366,7 @@ func TestCircleLifecycle_DisputeEndpoint_MissingReason(t *testing.T) {
 	code, _ = lifecycleRequest(t, router, http.MethodPost, "/circles/"+store.circle.ID.String()+"/dispute", organizer.String(), map[string]any{
 		"details": "Missing reason",
 	})
-	assert.Equal(t, http.StatusBadRequest, code)
+	assert.Equal(t, http.StatusUnprocessableEntity, code)
 }
 
 func TestCircleLifecycle_VoteEndpoint(t *testing.T) {
@@ -383,7 +395,7 @@ func TestCircleLifecycle_VoteEndpoint(t *testing.T) {
 	code, _ = lifecycleRequest(t, router, http.MethodPost, "/circles/"+store.circle.ID.String()+"/vote", member.String(), map[string]any{
 		"recipientId": organizer.String(),
 	})
-	assert.Equal(t, http.StatusNotImplemented, code)
+	assert.Equal(t, http.StatusOK, code)
 }
 
 func TestCircleLifecycle_VoteEndpoint_MissingRecipient(t *testing.T) {
@@ -410,7 +422,7 @@ func TestCircleLifecycle_VoteEndpoint_MissingRecipient(t *testing.T) {
 	require.Equal(t, http.StatusCreated, code)
 
 	code, _ = lifecycleRequest(t, router, http.MethodPost, "/circles/"+store.circle.ID.String()+"/vote", organizer.String(), map[string]any{})
-	assert.Equal(t, http.StatusBadRequest, code)
+	assert.Equal(t, http.StatusUnprocessableEntity, code)
 }
 
 func TestCircleLifecycle_AuctionBidEndpoint(t *testing.T) {
@@ -439,7 +451,7 @@ func TestCircleLifecycle_AuctionBidEndpoint(t *testing.T) {
 	code, _ = lifecycleRequest(t, router, http.MethodPost, "/circles/"+store.circle.ID.String()+"/auction-bid", bidder.String(), map[string]any{
 		"bidAmount": 150,
 	})
-	assert.Equal(t, http.StatusNotImplemented, code)
+	assert.Equal(t, http.StatusCreated, code)
 }
 
 func TestCircleLifecycle_AuctionBidEndpoint_MissingAmount(t *testing.T) {
@@ -466,7 +478,7 @@ func TestCircleLifecycle_AuctionBidEndpoint_MissingAmount(t *testing.T) {
 	require.Equal(t, http.StatusCreated, code)
 
 	code, _ = lifecycleRequest(t, router, http.MethodPost, "/circles/"+store.circle.ID.String()+"/auction-bid", organizer.String(), map[string]any{})
-	assert.Equal(t, http.StatusBadRequest, code)
+	assert.Equal(t, http.StatusUnprocessableEntity, code)
 }
 
 func TestCircleLifecycle_Contribute_MissingFields(t *testing.T) {

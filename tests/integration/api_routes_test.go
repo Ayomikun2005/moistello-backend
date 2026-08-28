@@ -172,6 +172,15 @@ func (m *mockCircleService) RemoveMember(_ context.Context, _, _, _ string, _ st
 func (m *mockCircleService) ProcessMissedContributions(_ context.Context, _ string, _ int) error {
 	return nil
 }
+func (m *mockCircleService) RaiseDispute(_ context.Context, _, _ string, _ circle.DisputeInput) (*circle.CircleDispute, error) {
+	return nil, nil
+}
+func (m *mockCircleService) CastVote(_ context.Context, _, _ string, _ circle.VoteInput) (*circle.CircleVote, bool, string, error) {
+	return nil, false, "", nil
+}
+func (m *mockCircleService) SubmitAuctionBid(_ context.Context, _, _ string, _ circle.AuctionBidInput) (*circle.CircleAuctionBid, error) {
+	return nil, nil
+}
 
 type mockInviteService struct{}
 
@@ -650,7 +659,7 @@ func TestCircleRoutes_Dispute_HappyPath(t *testing.T) {
 	code, _ := authedRequest(t, r, "POST", "/v1/circles/"+circleID+"/dispute", userID, map[string]any{
 		"reason": "Suspicious activity",
 	})
-	assert.Equal(t, http.StatusNotImplemented, code)
+	assert.Equal(t, http.StatusCreated, code)
 }
 
 func TestCircleRoutes_Dispute_MissingReason(t *testing.T) {
@@ -658,7 +667,7 @@ func TestCircleRoutes_Dispute_MissingReason(t *testing.T) {
 	circleID := uuid.New().String()
 	userID := uuid.New().String()
 	code, _ := authedRequest(t, r, "POST", "/v1/circles/"+circleID+"/dispute", userID, map[string]any{})
-	assert.Equal(t, http.StatusBadRequest, code)
+	assert.Equal(t, http.StatusUnprocessableEntity, code)
 }
 
 func TestCircleRoutes_Vote_HappyPath(t *testing.T) {
@@ -668,7 +677,7 @@ func TestCircleRoutes_Vote_HappyPath(t *testing.T) {
 	code, _ := authedRequest(t, r, "POST", "/v1/circles/"+circleID+"/vote", userID, map[string]any{
 		"recipientId": uuid.New().String(),
 	})
-	assert.Equal(t, http.StatusNotImplemented, code)
+	assert.Equal(t, http.StatusOK, code)
 }
 
 func TestCircleRoutes_Vote_MissingRecipient(t *testing.T) {
@@ -676,7 +685,7 @@ func TestCircleRoutes_Vote_MissingRecipient(t *testing.T) {
 	circleID := uuid.New().String()
 	userID := uuid.New().String()
 	code, _ := authedRequest(t, r, "POST", "/v1/circles/"+circleID+"/vote", userID, map[string]any{})
-	assert.Equal(t, http.StatusBadRequest, code)
+	assert.Equal(t, http.StatusUnprocessableEntity, code)
 }
 
 func TestCircleRoutes_AuctionBid_HappyPath(t *testing.T) {
@@ -686,7 +695,7 @@ func TestCircleRoutes_AuctionBid_HappyPath(t *testing.T) {
 	code, _ := authedRequest(t, r, "POST", "/v1/circles/"+circleID+"/auction-bid", userID, map[string]any{
 		"bidAmount": 150,
 	})
-	assert.Equal(t, http.StatusNotImplemented, code)
+	assert.Equal(t, http.StatusCreated, code)
 }
 
 func TestCircleRoutes_AuctionBid_MissingAmount(t *testing.T) {
@@ -694,7 +703,7 @@ func TestCircleRoutes_AuctionBid_MissingAmount(t *testing.T) {
 	circleID := uuid.New().String()
 	userID := uuid.New().String()
 	code, _ := authedRequest(t, r, "POST", "/v1/circles/"+circleID+"/auction-bid", userID, map[string]any{})
-	assert.Equal(t, http.StatusBadRequest, code)
+	assert.Equal(t, http.StatusUnprocessableEntity, code)
 }
 
 // ── Invite routes ─────────────────────────────────────────────────────

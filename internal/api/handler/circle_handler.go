@@ -1,8 +1,6 @@
 package handler
 
 import (
-	"net/http"
-
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/moistello/backend/internal/api/middleware"
@@ -385,44 +383,77 @@ func (h *CircleHandler) GetPayouts(c *gin.Context) {
 func (h *CircleHandler) Dispute(c *gin.Context) {
 	circleID := c.Param("id")
 	userID := middleware.GetUserID(c)
-	var req struct {
-		Reason  string `json:"reason" binding:"required"`
-		Details string `json:"details"`
-	}
+	var req circle.DisputeInput
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	_ = circleID
-	_ = userID
-	// TODO: persist dispute to a disputes table, notify organizer, and trigger
-	// an audit log entry.  Return 501 until the dispute domain is implemented
-	// so callers are not misled into thinking the dispute was recorded.
-	c.JSON(http.StatusNotImplemented, gin.H{
-		"success": false,
-		"error":   "dispute submission is not yet implemented",
-	})
+	if err := validator.Validate.Struct(req); err != nil {
+		response.ValidationErrors(c, "validation failed: "+err.Error())
+		return
+	}
+
+	dispute, err := h.circleService.RaiseDispute(c.Request.Context(), circleID, userID, req)
+	if err != nil {
+		if err == circle.ErrCircleNotFound {
+			response.NotFound(c, "circle not found")
+			return
+		}
+		if err == circle.ErrNotMember {
+			response.Forbidden(c, "only active circle members can raise disputes")
+			return
+		}
+		if err == circle.ErrCircleNotActive {
+			response.BadRequest(c, "circle is not active")
+			return
+		}
+		response.InternalError(c, "failed to raise dispute: "+err.Error())
+		return
+	}
+
+	response.Created(c, gin.H{"success": true, "dispute": dispute})
 }
 
 func (h *CircleHandler) Vote(c *gin.Context) {
 	circleID := c.Param("id")
 	userID := middleware.GetUserID(c)
-	var req struct {
-		RecipientID string `json:"recipientId" binding:"required"`
-	}
+	var req circle.VoteInput
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	_ = circleID
-	_ = userID
-	// TODO: record vote in a circle_votes table and determine winner when all
-	// eligible members have voted.  Return 501 until the vote domain is
-	// implemented.
-	c.JSON(http.StatusNotImplemented, gin.H{
-		"success": false,
-		"error":   "circle voting is not yet implemented",
-	})
+	if err := validator.Validate.Struct(req); err != nil {
+		response.ValidationErrors(c, "validation failed: "+err.Error())
+		return
+	}
+
+	vote, allVoted, winnerID, err := h.circleService.CastVote(c.Request.Context(), circleID, userID, req)
+	if err != nil {
+		if err == circle.ErrCircleNotFound {
+			response.NotFound(c, "circle not found")
+			return
+		}
+		if err == circle.ErrNotMember {
+			response.Forbidden(c, "only active circle members can vote")
+			return
+		}
+		if err == circle.ErrCircleNotActive {
+			response.BadRequest(c, "circle is not active")
+			return
+		}
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	res := gin.H{
+		"success":  true,
+		"vote":     vote,
+		"allVoted": allVoted,
+	}
+	if allVoted {
+		res["winnerId"] = winnerID
+	}
+	response.OK(c, res)
 }
 
 // RemoveMember allows the circle organizer to remove a member by their user ID (address).
@@ -469,20 +500,33 @@ func (h *CircleHandler) RemoveMember(c *gin.Context) {
 func (h *CircleHandler) AuctionBid(c *gin.Context) {
 	circleID := c.Param("id")
 	userID := middleware.GetUserID(c)
-	var req struct {
-		BidAmount float64 `json:"bidAmount" binding:"required,gt=0"`
-	}
+	var req circle.AuctionBidInput
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	_ = circleID
-	_ = userID
-	// TODO: record bid in a circle_auction_bids table and resolve when the
-	// auction window closes.  Return 501 until the auction domain is
-	// implemented.
-	c.JSON(http.StatusNotImplemented, gin.H{
-		"success": false,
-		"error":   "auction bidding is not yet implemented",
-	})
+	if err := validator.Validate.Struct(req); err != nil {
+		response.ValidationErrors(c, "validation failed: "+err.Error())
+		return
+	}
+
+	bid, err := h.circleService.SubmitAuctionBid(c.Request.Context(), circleID, userID, req)
+	if err != nil {
+		if err == circle.ErrCircleNotFound {
+			response.NotFound(c, "circle not found")
+			return
+		}
+		if err == circle.ErrNotMember {
+			response.Forbidden(c, "only active circle members can bid")
+			return
+		}
+		if err == circle.ErrCircleNotActive {
+			response.BadRequest(c, "circle is not active")
+			return
+		}
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	response.Created(c, gin.H{"success": true, "bid": bid})
 }

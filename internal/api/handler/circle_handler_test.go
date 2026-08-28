@@ -580,3 +580,129 @@ func TestCircleHandler_ListCircles_NilSliceReturned(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "[]")
 	repo.AssertExpectations(t)
 }
+
+func TestCircleHandler_Dispute_Success(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	repo := new(circleMocks.Repository)
+	svc := circle.NewService(repo, nil)
+
+	cid := uuid.New()
+	uid := uuid.New()
+
+	c := &circle.Circle{
+		ID: cid, Name: "Test Circle", Status: circle.CircleStatusActive, OrganizerID: uuid.New(),
+	}
+	member := &circle.CircleMember{CircleID: cid, UserID: uid, Status: circle.MemberStatusActive}
+
+	repo.On("FindByID", mock.Anything, cid).Return(c, nil)
+	repo.On("FindMemberByCircleAndUser", mock.Anything, cid, uid).Return(member, nil)
+	repo.On("CreateDispute", mock.Anything, mock.AnythingOfType("*circle.CircleDispute")).Return(nil)
+
+	h := handler.NewCircleHandler(svc, nil, nil, nil)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set("userID", uid.String())
+		c.Next()
+	})
+	r.POST("/circles/:id/dispute", h.Dispute)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"reason":  "Payment issue",
+		"details": "Details here",
+	})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/circles/"+cid.String()+"/dispute", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, 201, w.Code)
+	assert.Contains(t, w.Body.String(), `"success":true`)
+	assert.Contains(t, w.Body.String(), "Payment issue")
+	repo.AssertExpectations(t)
+}
+
+func TestCircleHandler_Vote_Success(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	repo := new(circleMocks.Repository)
+	svc := circle.NewService(repo, nil)
+
+	cid := uuid.New()
+	voterID := uuid.New()
+	recipientID := uuid.New()
+
+	c := &circle.Circle{
+		ID: cid, Name: "Vote Circle", Status: circle.CircleStatusActive, PayoutType: circle.PayoutTypeVote, CurrentRound: 1, MaxMembers: 3,
+	}
+	voter := &circle.CircleMember{CircleID: cid, UserID: voterID, Status: circle.MemberStatusActive}
+	recipient := &circle.CircleMember{CircleID: cid, UserID: recipientID, Status: circle.MemberStatusActive}
+
+	repo.On("FindByID", mock.Anything, cid).Return(c, nil)
+	repo.On("FindMemberByCircleAndUser", mock.Anything, cid, voterID).Return(voter, nil)
+	repo.On("FindMemberByCircleAndUser", mock.Anything, cid, recipientID).Return(recipient, nil)
+	repo.On("CreateVote", mock.Anything, mock.AnythingOfType("*circle.CircleVote")).Return(nil)
+	repo.On("GetVotesByRound", mock.Anything, cid, 1).Return([]circle.CircleVote{{RecipientID: recipientID}}, nil)
+	repo.On("GetMemberCount", mock.Anything, cid).Return(3, nil)
+
+	h := handler.NewCircleHandler(svc, nil, nil, nil)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set("userID", voterID.String())
+		c.Next()
+	})
+	r.POST("/circles/:id/vote", h.Vote)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"recipientId": recipientID.String(),
+	})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/circles/"+cid.String()+"/vote", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.Contains(t, w.Body.String(), `"success":true`)
+	assert.Contains(t, w.Body.String(), `"allVoted":false`)
+	repo.AssertExpectations(t)
+}
+
+func TestCircleHandler_AuctionBid_Success(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	repo := new(circleMocks.Repository)
+	svc := circle.NewService(repo, nil)
+
+	cid := uuid.New()
+	bidderID := uuid.New()
+
+	c := &circle.Circle{
+		ID: cid, Name: "Auction Circle", Status: circle.CircleStatusActive, PayoutType: circle.PayoutTypeAuction, CurrentRound: 1,
+	}
+	bidder := &circle.CircleMember{CircleID: cid, UserID: bidderID, Status: circle.MemberStatusActive}
+
+	repo.On("FindByID", mock.Anything, cid).Return(c, nil)
+	repo.On("FindMemberByCircleAndUser", mock.Anything, cid, bidderID).Return(bidder, nil)
+	repo.On("CreateAuctionBid", mock.Anything, mock.AnythingOfType("*circle.CircleAuctionBid")).Return(nil)
+
+	h := handler.NewCircleHandler(svc, nil, nil, nil)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set("userID", bidderID.String())
+		c.Next()
+	})
+	r.POST("/circles/:id/auction-bid", h.AuctionBid)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"bidAmount": 50.0,
+	})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/circles/"+cid.String()+"/auction-bid", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, 201, w.Code)
+	assert.Contains(t, w.Body.String(), `"success":true`)
+	assert.Contains(t, w.Body.String(), `"bidAmount":50`)
+	repo.AssertExpectations(t)
+}

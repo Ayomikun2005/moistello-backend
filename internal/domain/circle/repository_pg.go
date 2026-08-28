@@ -425,3 +425,121 @@ func (r *pgRepo) GetContributionsByCircleAndRound(ctx context.Context, circleID 
 	err := r.db.SelectContext(ctx, &userIDs, query, circleID, roundNumber)
 	return userIDs, err
 }
+
+func (r *pgRepo) CreateDispute(ctx context.Context, dispute *CircleDispute) error {
+	query := `
+		INSERT INTO circle_disputes (id, circle_id, raiser_id, reason, details, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`
+	_, err := r.db.ExecContext(ctx, query,
+		dispute.ID,
+		dispute.CircleID,
+		dispute.RaiserID,
+		dispute.Reason,
+		dispute.Details,
+		dispute.Status,
+		dispute.CreatedAt,
+		dispute.UpdatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("creating dispute: %w", err)
+	}
+	return nil
+}
+
+func (r *pgRepo) CreateVote(ctx context.Context, vote *CircleVote) error {
+	query := `
+		INSERT INTO circle_votes (id, circle_id, voter_id, recipient_id, round_number, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`
+	_, err := r.db.ExecContext(ctx, query,
+		vote.ID,
+		vote.CircleID,
+		vote.VoterID,
+		vote.RecipientID,
+		vote.RoundNumber,
+		vote.CreatedAt,
+	)
+	if err != nil {
+		if isUniqueViolationPg(err) {
+			return apperrors.ErrConflict
+		}
+		return fmt.Errorf("creating vote: %w", err)
+	}
+	return nil
+}
+
+func (r *pgRepo) GetVotesByRound(ctx context.Context, circleID uuid.UUID, roundNumber int) ([]CircleVote, error) {
+	query := `
+		SELECT id, circle_id, voter_id, recipient_id, round_number, created_at
+		FROM circle_votes
+		WHERE circle_id = $1 AND round_number = $2
+		ORDER BY created_at ASC
+	`
+	rows, err := r.db.QueryxContext(ctx, query, circleID, roundNumber)
+	if err != nil {
+		return nil, fmt.Errorf("getting votes by round: %w", err)
+	}
+	defer rows.Close()
+
+	var votes []CircleVote
+	for rows.Next() {
+		var v CircleVote
+		if err := rows.StructScan(&v); err != nil {
+			return nil, fmt.Errorf("scanning vote: %w", err)
+		}
+		votes = append(votes, v)
+	}
+	if votes == nil {
+		votes = []CircleVote{}
+	}
+	return votes, nil
+}
+
+func (r *pgRepo) CreateAuctionBid(ctx context.Context, bid *CircleAuctionBid) error {
+	query := `
+		INSERT INTO circle_auction_bids (id, circle_id, bidder_id, round_number, bid_amount, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (circle_id, bidder_id, round_number)
+		DO UPDATE SET bid_amount = EXCLUDED.bid_amount, created_at = EXCLUDED.created_at
+	`
+	_, err := r.db.ExecContext(ctx, query,
+		bid.ID,
+		bid.CircleID,
+		bid.BidderID,
+		bid.RoundNumber,
+		bid.BidAmount,
+		bid.CreatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("creating auction bid: %w", err)
+	}
+	return nil
+}
+
+func (r *pgRepo) GetAuctionBidsByRound(ctx context.Context, circleID uuid.UUID, roundNumber int) ([]CircleAuctionBid, error) {
+	query := `
+		SELECT id, circle_id, bidder_id, round_number, bid_amount, created_at
+		FROM circle_auction_bids
+		WHERE circle_id = $1 AND round_number = $2
+		ORDER BY bid_amount DESC, created_at ASC
+	`
+	rows, err := r.db.QueryxContext(ctx, query, circleID, roundNumber)
+	if err != nil {
+		return nil, fmt.Errorf("getting auction bids by round: %w", err)
+	}
+	defer rows.Close()
+
+	var bids []CircleAuctionBid
+	for rows.Next() {
+		var b CircleAuctionBid
+		if err := rows.StructScan(&b); err != nil {
+			return nil, fmt.Errorf("scanning auction bid: %w", err)
+		}
+		bids = append(bids, b)
+	}
+	if bids == nil {
+		bids = []CircleAuctionBid{}
+	}
+	return bids, nil
+}

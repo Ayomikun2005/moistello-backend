@@ -114,3 +114,45 @@ type Penalty struct {
 	Reason         sql.NullString `json:"reason,omitempty" db:"reason"`
 	CreatedAt      time.Time      `json:"createdAt" db:"created_at"`
 }
+
+type CircleDispute struct {
+	ID        uuid.UUID      `json:"id" db:"id"`
+	CircleID  uuid.UUID      `json:"circleId" db:"circle_id"`
+	RaiserID  uuid.UUID      `json:"raiserId" db:"raiser_id"`
+	Reason    string         `json:"reason" db:"reason"`
+	Details   sql.NullString `json:"details,omitempty" db:"details"`
+	Status    string         `json:"status" db:"status"`
+	CreatedAt time.Time      `json:"createdAt" db:"created_at"`
+	UpdatedAt time.Time      `json:"updatedAt" db:"updated_at"`
+}
+
+type DisputeInput struct {
+	Reason  string `json:"reason" validate:"required"`
+	Details string `json:"details"`
+}
+
+type CircleVote struct {
+	ID          uuid.UUID `json:"id" db:"id"`
+	CircleID    uuid.UUID `json:"circleId" db:"circle_id"`
+	VoterID     uuid.UUID `json:"voterId" db:"voter_id"`
+	RecipientID uuid.UUID `json:"recipientId" db:"recipient_id"`
+	RoundNumber int       `json:"roundNumber" db:"round_number"`
+	CreatedAt   time.Time `json:"createdAt" db:"created_at"`
+}
+
+type VoteInput struct {
+	RecipientID string `json:"recipientId" validate:"required"`
+}
+
+type CircleAuctionBid struct {
+	ID          uuid.UUID `json:"id" db:"id"`
+	CircleID    uuid.UUID `json:"circleId" db:"circle_id"`
+	BidderID    uuid.UUID `json:"bidderId" db:"bidder_id"`
+	RoundNumber int       `json:"roundNumber" db:"round_number"`
+	BidAmount   float64   `json:"bidAmount" db:"bid_amount"`
+	CreatedAt   time.Time `json:"createdAt" db:"created_at"`
+}
+
+type AuctionBidInput struct {
+	BidAmount float64 `json:"bidAmount" validate:"required,gt=0"`
+}
