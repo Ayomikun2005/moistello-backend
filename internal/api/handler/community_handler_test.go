@@ -249,15 +249,21 @@ func TestCommunityHandler_PinAnnouncement(t *testing.T) {
 	repo := new(communityMocks.Repository)
 	svc := community.NewService(repo, nil)
 	annID := uuid.New()
+	communityID := uuid.New()
+	ownerID := uuid.New()
 
+	ann := &community.Announcement{ID: annID, CommunityID: communityID, AuthorID: uuid.New()}
+	comm := &community.Community{ID: communityID, OwnerID: ownerID}
+	repo.On("GetAnnouncementByID", mock.Anything, annID).Return(ann, nil)
+	repo.On("FindByID", mock.Anything, communityID).Return(comm, nil)
 	repo.On("SetAnnouncementPin", mock.Anything, annID, true).Return(nil)
 
 	h := handler.NewCommunityHandler(svc)
-	r := setupCommunityRouter(h, uuid.New().String())
+	r := setupCommunityRouter(h, ownerID.String())
 
 	body, _ := json.Marshal(map[string]interface{}{"pinned": true})
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("PATCH", "/communities/"+uuid.New().String()+"/announcements/"+annID.String()+"/pin", bytes.NewBuffer(body))
+	req, _ := http.NewRequest("PATCH", "/communities/"+communityID.String()+"/announcements/"+annID.String()+"/pin", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
@@ -273,6 +279,7 @@ func TestCommunityHandler_TransferOwnership(t *testing.T) {
 	newOwner := uuid.New()
 
 	repo.On("FindByID", mock.Anything, c.ID).Return(c, nil)
+	repo.On("IsMember", mock.Anything, c.ID, newOwner).Return(true, nil)
 	repo.On("UpdateOwner", mock.Anything, c.ID, newOwner).Return(nil)
 	repo.On("UpdateMemberRole", mock.Anything, c.ID, ownerID, "member").Return(nil)
 

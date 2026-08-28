@@ -97,6 +97,7 @@ func (s StellarConfig) String() string {
 type YellowCardConfig struct {
 	APIKey               string  `mapstructure:"api_key"`
 	APISecret            string  `mapstructure:"api_secret"`
+	WebhookSecret        string  `mapstructure:"webhook_secret"`
 	MaxDepositNGN        float64 `mapstructure:"max_deposit_ngn"`
 	MaxWithdrawUSDC      float64 `mapstructure:"max_withdraw_usdc"`
 	DailyDepositCapNGN   float64 `mapstructure:"daily_deposit_cap_ngn"`
