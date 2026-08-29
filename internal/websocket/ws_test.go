@@ -1,9 +1,12 @@
 package websocket
 
 import (
+	"context"
+	"runtime"
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -52,15 +55,65 @@ func TestHub_Broadcast(t *testing.T) {
 
 func TestHub_BroadcastToUser(t *testing.T) {
 	hub := NewHub()
-	c1 := &Client{ID: "u1", Send: make(chan []byte, 10), Hub: hub}
+	// Client has random UUID ID and authentic UserID
+	c1 := &Client{ID: "conn-uuid-1", UserID: "user-42", Send: make(chan []byte, 10), Hub: hub}
 	hub.Register(c1)
-	hub.BroadcastToUser("u1", Message{Type: "private", Payload: "secret"})
+
+	hub.BroadcastToUser("user-42", Message{Type: "private", Payload: "secret"})
 	select {
 	case msg := <-c1.Send:
 		assert.Contains(t, string(msg), "private")
+		assert.Contains(t, string(msg), "secret")
 	case <-time.After(200 * time.Millisecond):
-		t.Fatal("timeout")
+		t.Fatal("timeout waiting for user broadcast")
 	}
+}
+
+func TestHub_BroadcastToUser_MultipleConnections(t *testing.T) {
+	hub := NewHub()
+	// Two connections for the same user (e.g. phone and laptop)
+	c1 := &Client{ID: "conn-phone", UserID: "user-99", Send: make(chan []byte, 10), Hub: hub}
+	c2 := &Client{ID: "conn-laptop", UserID: "user-99", Send: make(chan []byte, 10), Hub: hub}
+	cOther := &Client{ID: "conn-other", UserID: "user-other", Send: make(chan []byte, 10), Hub: hub}
+
+	hub.Register(c1)
+	hub.Register(c2)
+	hub.Register(cOther)
+
+	assert.Equal(t, 2, hub.UserClientCount("user-99"))
+	assert.Equal(t, 1, hub.UserClientCount("user-other"))
+
+	hub.BroadcastToUser("user-99", Message{Type: "notification.new", Payload: "badge"})
+
+	// Both c1 and c2 should receive
+	select {
+	case msg := <-c1.Send:
+		assert.Contains(t, string(msg), "notification.new")
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("timeout on c1")
+	}
+
+	select {
+	case msg := <-c2.Send:
+		assert.Contains(t, string(msg), "notification.new")
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("timeout on c2")
+	}
+
+	// cOther should not receive
+	select {
+	case <-cOther.Send:
+		t.Fatal("cOther should not receive message for user-99")
+	default:
+	}
+
+	// Unregister one connection
+	hub.Unregister(c1)
+	assert.Equal(t, 1, hub.UserClientCount("user-99"))
+
+	// Unregister second connection
+	hub.Unregister(c2)
+	assert.Equal(t, 0, hub.UserClientCount("user-99"))
 }
 
 func TestHub_Broadcast_DifferentRoom(t *testing.T) {
@@ -136,4 +189,54 @@ func TestHub_Stats(t *testing.T) {
 	c, r := hub.Stats()
 	assert.Equal(t, 0, c)
 	assert.Equal(t, 0, r)
+}
+
+func TestHub_NoGoroutineLeakOnFullBufferBroadcast(t *testing.T) {
+	hub := NewHub()
+	const numClients = 50
+
+	for i := 0; i < numClients; i++ {
+		// Client with zero/full buffer capacity
+		client := &Client{
+			ID:   string(rune('A' + i)),
+			Send: make(chan []byte, 1),
+			Hub:  hub,
+		}
+		client.Send <- []byte("already full")
+		hub.Register(client)
+		hub.JoinRoom("room-leak-test", client.ID)
+	}
+
+	beforeGoroutines := runtime.NumGoroutine()
+
+	// Broadcast 20 times to room with all full buffers
+	for i := 0; i < 20; i++ {
+		hub.Broadcast("room-leak-test", Message{Type: "test", Payload: "data"})
+	}
+
+	afterGoroutines := runtime.NumGoroutine()
+	// All full-buffer clients should have been unregistered deterministically
+	assert.LessOrEqual(t, afterGoroutines, beforeGoroutines+2, "goroutine count should not explode")
+	assert.Equal(t, 0, hub.ClientCount(), "all dropped clients should be unregistered")
+}
+
+func TestRedisBridge_CloseExitsCleanly(t *testing.T) {
+	rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379", DB: 15})
+	defer rdb.Close()
+
+	if err := rdb.Ping(context.Background()).Err(); err != nil {
+		t.Skip("Redis not running, skipping live RedisBridge test")
+	}
+
+	hub := NewHub()
+	before := runtime.NumGoroutine()
+
+	bridge := NewRedisBridge(hub, rdb)
+	time.Sleep(20 * time.Millisecond)
+
+	bridge.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	after := runtime.NumGoroutine()
+	assert.LessOrEqual(t, after, before+2, "RedisBridge should exit cleanly without leaking goroutines")
 }

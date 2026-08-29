@@ -16,17 +16,17 @@ const (
 )
 
 type Proposal struct {
-	ID            uuid.UUID      `json:"id" db:"id"`
-	Title         string         `json:"title" db:"title"`
-	Description   string         `json:"description" db:"description"`
-	ProposalType  string         `json:"proposalType" db:"proposal_type"`
-	CreatorID     uuid.UUID      `json:"creatorId" db:"creator_id"`
-	Status        ProposalStatus `json:"status" db:"status"`
-	ForVotes      int            `json:"forVotes" db:"for_votes"`
-	AgainstVotes  int            `json:"againstVotes" db:"against_votes"`
-	ExecutedAt    *time.Time     `json:"executedAt,omitempty" db:"executed_at"`
-	CreatedAt     time.Time      `json:"createdAt" db:"created_at"`
-	UpdatedAt     time.Time      `json:"updatedAt" db:"updated_at"`
+	ID           uuid.UUID      `json:"id" db:"id"`
+	Title        string         `json:"title" db:"title"`
+	Description  string         `json:"description" db:"description"`
+	ProposalType string         `json:"proposalType" db:"proposal_type"`
+	CreatorID    uuid.UUID      `json:"creatorId" db:"creator_id"`
+	Status       ProposalStatus `json:"status" db:"status"`
+	ForVotes     int            `json:"forVotes" db:"for_votes"`
+	AgainstVotes int            `json:"againstVotes" db:"against_votes"`
+	ExecutedAt   *time.Time     `json:"executedAt,omitempty" db:"executed_at"`
+	CreatedAt    time.Time      `json:"createdAt" db:"created_at"`
+	UpdatedAt    time.Time      `json:"updatedAt" db:"updated_at"`
 }
 
 type CreateProposalInput struct {

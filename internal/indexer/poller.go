@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"time"
-
 )
 
 // Poller fetches ledgers and transactions from the Stellar Horizon API.
@@ -49,10 +48,17 @@ type Transaction struct {
 }
 
 // Operation represents a single operation within a Stellar transaction.
+// ContractID is populated for Soroban contract invocations from the
+// operation's function / contract reference when it is available.
 type Operation struct {
 	ID            int64  `json:"id"`
 	Type          string `json:"type"`
 	SourceAccount string `json:"source_account"`
+	ContractID    string `json:"contract_id,omitempty"`
+	// ResultMetaXDR is the base64-encoded TransactionMeta XDR from Horizon.
+	// Populated for invoke_host_function operations and used by the XDR parser
+	// to extract Soroban contract events (ContractEvent topic/data SCVals).
+	ResultMetaXDR string `json:"result_meta_xdr"`
 }
 
 // NewPoller creates a Poller that queries the given Horizon URL and filters
@@ -67,7 +73,11 @@ func NewPoller(horizonURL string, contractIDs []string) *Poller {
 
 // FetchLedgers retrieves ledgers after the given cursor, up to the specified limit.
 func (p *Poller) FetchLedgers(ctx context.Context, cursor int64, limit int) ([]Ledger, error) {
-	url := fmt.Sprintf("%s/ledgers?order=asc&limit=%d&cursor=%d", p.horizonURL, limit, cursor)
+	pagingToken := cursor
+	if pagingToken > 0 {
+		pagingToken = pagingToken << 32
+	}
+	url := fmt.Sprintf("%s/ledgers?order=asc&limit=%d&cursor=%d", p.horizonURL, limit, pagingToken)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
@@ -119,25 +129,43 @@ func (p *Poller) FetchTransactions(ctx context.Context, ledger int64) ([]Transac
 }
 
 // FilterByContract keeps only transactions that reference one of the configured
-// contract IDs or involve an invoke_host_function operation.
+// contract IDs. A transaction is a match if any of its operations originates
+// from a configured account (e.g. the master public key) or invokes one of the
+// configured contracts. It deliberately does NOT match every invoke_host_function
+// operation — only operations against the specific contracts being indexed.
 func (p *Poller) FilterByContract(txns []Transaction) []Transaction {
 	if len(p.contractIDs) == 0 {
 		return txns
 	}
 
+	wanted := make(map[string]struct{}, len(p.contractIDs))
+	for _, cid := range p.contractIDs {
+		wanted[cid] = struct{}{}
+	}
+
 	var filtered []Transaction
 	for _, txn := range txns {
-		for _, op := range txn.Operations {
-			for _, cid := range p.contractIDs {
-				if op.SourceAccount == cid || op.Type == "invoke_host_function" {
-					filtered = append(filtered, txn)
-					goto nextTxn
-				}
-			}
+		if txn.MatchesContract(wanted) {
+			filtered = append(filtered, txn)
 		}
-	nextTxn:
 	}
 	return filtered
+}
+
+// MatchesContract reports whether any operation in the transaction originates
+// from or targets one of the provided contract identifiers.
+func (t Transaction) MatchesContract(wanted map[string]struct{}) bool {
+	for _, op := range t.Operations {
+		if _, ok := wanted[op.SourceAccount]; ok {
+			return true
+		}
+		if op.ContractID != "" {
+			if _, ok := wanted[op.ContractID]; ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // GetLedgerCount returns the number of new ledgers available after the cursor.

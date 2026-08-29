@@ -25,13 +25,15 @@ type Service interface {
 }
 
 type service struct {
-	mu         sync.RWMutex
-	proposals  map[uuid.UUID]*Proposal
-	votesByID  map[uuid.UUID]map[uuid.UUID]bool
+	repo      Repository
+	mu        sync.RWMutex
+	proposals map[uuid.UUID]*Proposal
+	votesByID map[uuid.UUID]map[uuid.UUID]bool
 }
 
-func NewService() Service {
+func NewService(repo Repository) Service {
 	return &service{
+		repo:      repo,
 		proposals: make(map[uuid.UUID]*Proposal),
 		votesByID: make(map[uuid.UUID]map[uuid.UUID]bool),
 	}
@@ -66,6 +68,13 @@ func (s *service) CreateProposal(ctx context.Context, input CreateProposalInput)
 		UpdatedAt:    now,
 	}
 
+	if s.repo != nil {
+		if err := s.repo.CreateProposal(ctx, proposal); err != nil {
+			return nil, fmt.Errorf("persisting proposal: %w", err)
+		}
+		return proposal, nil
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.proposals[proposal.ID] = proposal
@@ -74,6 +83,10 @@ func (s *service) CreateProposal(ctx context.Context, input CreateProposalInput)
 }
 
 func (s *service) ListProposals(ctx context.Context) ([]Proposal, error) {
+	if s.repo != nil {
+		return s.repo.ListProposals(ctx)
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -91,6 +104,10 @@ func (s *service) GetProposal(ctx context.Context, id string) (*Proposal, error)
 	proposalID, err := parseUUID(id)
 	if err != nil {
 		return nil, err
+	}
+
+	if s.repo != nil {
+		return s.repo.GetProposal(ctx, proposalID)
 	}
 
 	s.mu.RLock()
@@ -112,6 +129,10 @@ func (s *service) VoteProposal(ctx context.Context, proposalID, userID string, v
 	voterID, err := parseUUID(userID)
 	if err != nil {
 		return err
+	}
+
+	if s.repo != nil {
+		return s.repo.RecordVote(ctx, proposalUUID, voterID, vote)
 	}
 
 	s.mu.Lock()
@@ -146,6 +167,12 @@ func (s *service) ExecuteProposal(ctx context.Context, id string) error {
 	proposalID, err := parseUUID(id)
 	if err != nil {
 		return err
+	}
+
+	if s.repo != nil {
+		now := time.Now().UTC()
+		nowStr := now.Format(time.RFC3339)
+		return s.repo.UpdateStatus(ctx, proposalID, ProposalStatusExecuted, &nowStr)
 	}
 
 	s.mu.Lock()

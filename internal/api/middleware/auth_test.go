@@ -1,6 +1,8 @@
 package middleware_test
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -20,8 +22,8 @@ import (
 
 // rsaTestKeys holds a generated RSA key pair for use across tests in this package.
 type rsaTestKeys struct {
-	privateKey    *rsa.PrivateKey
-	publicKeyPEM  []byte
+	privateKey   *rsa.PrivateKey
+	publicKeyPEM []byte
 }
 
 // newRSATestKeys generates a 2048-bit RSA key pair and returns PEM-encoded public key.
@@ -198,6 +200,44 @@ func TestAuthMiddleware_WrongAlgorithm(t *testing.T) {
 	assert.Equal(t, 401, w.Code)
 }
 
+func TestAuthMiddleware_ECDSATokenUsesES256(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	pubDER, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
+	require.NoError(t, err)
+	pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
+
+	claims := &middleware.Claims{
+		UserID: "user-ec",
+		Wallet: "GABC...",
+		Role:   "user",
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
+	tokenString, err := token.SignedString(priv)
+	require.NoError(t, err)
+	assert.Equal(t, "ES256", token.Header["alg"])
+
+	r := gin.New()
+	r.Use(middleware.AuthMiddleware(pubPEM))
+	r.GET("/test", func(c *gin.Context) {
+		c.JSON(200, gin.H{"userID": middleware.GetUserID(c)})
+	})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.Contains(t, w.Body.String(), "user-ec")
+}
+
 func TestAdminMiddleware_AdminUser(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -232,6 +272,72 @@ func TestAdminMiddleware_RegularUser(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, 403, w.Code)
+}
+
+func TestAdminMiddleware_FullPipeline_AdminJWT(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	keys := newRSATestKeys(t)
+
+	claims := &middleware.Claims{
+		UserID: "admin-user-123",
+		Wallet: "GADMIN...",
+		Role:   "admin",
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+	}
+	tokenString := signRS256(t, keys.privateKey, claims)
+
+	r := gin.New()
+	r.Use(middleware.AuthMiddleware(keys.publicKeyPEM))
+	r.Use(middleware.AdminMiddleware())
+	r.GET("/admin/protected", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"userID": middleware.GetUserID(c),
+			"role":   middleware.GetRole(c),
+		})
+	})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/admin/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.Contains(t, w.Body.String(), "admin-user-123")
+	assert.Contains(t, w.Body.String(), "admin")
+}
+
+func TestAdminMiddleware_FullPipeline_UserJWT_Forbidden(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	keys := newRSATestKeys(t)
+
+	claims := &middleware.Claims{
+		UserID: "regular-user-456",
+		Wallet: "GUSER...",
+		Role:   "user",
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+	}
+	tokenString := signRS256(t, keys.privateKey, claims)
+
+	r := gin.New()
+	r.Use(middleware.AuthMiddleware(keys.publicKeyPEM))
+	r.Use(middleware.AdminMiddleware())
+	r.GET("/admin/protected", func(c *gin.Context) {
+		c.JSON(200, gin.H{"status": "ok"})
+	})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/admin/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, 403, w.Code)
+	assert.Contains(t, w.Body.String(), "admin access required")
 }
 
 func TestOptionalAuthMiddleware_WithValidToken(t *testing.T) {

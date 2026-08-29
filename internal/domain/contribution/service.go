@@ -4,12 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 
 	"github.com/moistello/backend/pkg/apperrors"
+	"github.com/moistello/backend/pkg/stellar"
 )
 
 // Broadcaster defines the interface for real-time event broadcasting
@@ -21,6 +23,7 @@ type Broadcaster interface {
 
 type Service interface {
 	Record(ctx context.Context, input RecordInput) (*Contribution, error)
+	UpdateVerification(ctx context.Context, id string, verifiedOnchain bool, status VerificationStatus) error
 	GetUserHistory(ctx context.Context, userID string, page, limit int) ([]Contribution, int, error)
 	GetCircleHistory(ctx context.Context, circleID string, page, limit int) ([]Contribution, int, error)
 }
@@ -30,21 +33,28 @@ type Transactor interface {
 }
 
 type RecordInput struct {
-	CircleID    string  `json:"circleId" validate:"required"`
-	UserID      string  `json:"userId" validate:"required"`
-	RoundNumber int     `json:"roundNumber" validate:"required,gte=1"`
-	Amount      float64 `json:"amount" validate:"required,gt=0"`
-	TxnHash     string  `json:"txnHash" validate:"required"`
+	CircleID           string              `json:"circleId" validate:"required"`
+	UserID             string              `json:"userId" validate:"required"`
+	RoundNumber        int                 `json:"roundNumber" validate:"required,gte=1"`
+	Amount             float64             `json:"amount" validate:"required,gt=0"`
+	TxnHash            string              `json:"txnHash" validate:"required"`
+	VerifiedOnchain    *bool               `json:"verifiedOnchain,omitempty"`
+	VerificationStatus *VerificationStatus `json:"verificationStatus,omitempty"`
 }
 
 type contributionService struct {
-	repo        Repository
-	broadcaster Broadcaster
-	tx          Transactor
+	repo           Repository
+	broadcaster    Broadcaster
+	tx             Transactor
+	stellarClient  *stellar.Client
+	masterReceiver string // master public key / default recipient for contributions
 }
 
-func NewService(repo Repository, broadcaster Broadcaster, tx Transactor) Service {
-	return &contributionService{repo: repo, broadcaster: broadcaster, tx: tx}
+// NewService creates a contribution service. The last two parameters are optional
+// and may be nil. When a Stellar client and masterReceiver are provided, contributions
+// with a TxnHash will be verified on-chain before recording.
+func NewService(repo Repository, broadcaster Broadcaster, tx Transactor, stellarClient *stellar.Client, masterReceiver string) Service {
+	return &contributionService{repo: repo, broadcaster: broadcaster, tx: tx, stellarClient: stellarClient, masterReceiver: masterReceiver}
 }
 
 type contribTransactor struct {
@@ -62,12 +72,12 @@ func (t *contribTransactor) WithTransaction(ctx context.Context, fn func(repo Re
 	}
 	defer func() {
 		if p := recover(); p != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			panic(p)
 		}
 	}()
 	if err := fn(NewRepositoryFromTx(tx)); err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		return err
 	}
 	return tx.Commit()
@@ -94,17 +104,46 @@ func (s *contributionService) Record(ctx context.Context, input RecordInput) (*C
 	now := time.Now().UTC()
 	txnHash := sql.NullString{String: input.TxnHash, Valid: true}
 
+	verifiedOnchain := false
+	if input.VerifiedOnchain != nil {
+		verifiedOnchain = *input.VerifiedOnchain
+	}
+	verificationStatus := VerificationStatusUnverified
+	if input.VerificationStatus != nil {
+		verificationStatus = *input.VerificationStatus
+	} else if verifiedOnchain {
+		verificationStatus = VerificationStatusVerified
+	}
+
 	c := &Contribution{
-		ID:          uuid.New(),
-		CircleID:    circleID,
-		UserID:      userID,
-		RoundNumber: input.RoundNumber,
-		Amount:      input.Amount,
-		TxnHash:     txnHash,
-		Status:      StatusPending,
-		OnTime:      true,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:                 uuid.New(),
+		CircleID:           circleID,
+		UserID:             userID,
+		RoundNumber:        input.RoundNumber,
+		Amount:             input.Amount,
+		TxnHash:            txnHash,
+		Status:             StatusPending,
+		OnTime:             true,
+		VerifiedOnchain:    verifiedOnchain,
+		VerificationStatus: verificationStatus,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
+
+	// If a Stellar client is configured, verify the transaction on-chain.
+	if s.stellarClient != nil && input.TxnHash != "" {
+		// Format amount to match Horizon string representation (7 decimal places)
+		amtStr := strconv.FormatFloat(input.Amount, 'f', 7, 64)
+		ok, err := s.stellarClient.VerifyTransaction(ctx, input.TxnHash, s.masterReceiver, amtStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to verify transaction: %w", err)
+		}
+		if !ok {
+			return nil, fmt.Errorf("on-chain verification failed")
+		}
+		// mark verified
+		c.VerifiedOnchain = true
+		c.VerificationStatus = VerificationStatusVerified
 	}
 
 	if s.tx != nil {
@@ -133,6 +172,14 @@ func (s *contributionService) Record(ctx context.Context, input RecordInput) (*C
 		s.broadcaster.ContributionRecorded(ctx, input.CircleID, input.UserID, input.RoundNumber, input.Amount)
 	}
 	return c, nil
+}
+
+func (s *contributionService) UpdateVerification(ctx context.Context, id string, verifiedOnchain bool, status VerificationStatus) error {
+	uid, err := parseUUID(id)
+	if err != nil {
+		return err
+	}
+	return s.repo.UpdateVerificationStatus(ctx, uid, verifiedOnchain, status)
 }
 
 func (s *contributionService) GetUserHistory(ctx context.Context, userID string, page, limit int) ([]Contribution, int, error) {

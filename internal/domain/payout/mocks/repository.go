@@ -25,6 +25,10 @@ func (m *Repository) Create(ctx context.Context, p *payout.Payout) error {
 	return m.Called(ctx, p).Error(0)
 }
 
+func (m *Repository) UpdateVerificationStatus(ctx context.Context, id uuid.UUID, verifiedOnchain bool, status payout.VerificationStatus) error {
+	return m.Called(ctx, id, verifiedOnchain, status).Error(0)
+}
+
 func (m *Repository) ListByUser(ctx context.Context, userID uuid.UUID, page, limit int) ([]payout.Payout, int, error) {
 	args := m.Called(ctx, userID, page, limit)
 	if args.Get(0) == nil {

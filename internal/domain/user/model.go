@@ -37,8 +37,10 @@ type User struct {
 	PasskeyCredentialID    *string        `json:"passkeyCredentialId,omitempty" db:"passkey_credential_id"`
 	NotificationChannels   pq.StringArray `json:"notificationChannels" db:"notification_channels"`
 	NotificationsMuted     bool           `json:"notificationsMuted" db:"notifications_muted"`
+	PushToken              *string        `json:"pushToken,omitempty" db:"push_token"`
 	CreatedAt              time.Time      `json:"createdAt" db:"created_at"`
 	UpdatedAt              time.Time      `json:"updatedAt" db:"updated_at"`
+	DeletedAt              *time.Time     `json:"deletedAt,omitempty" db:"deleted_at"`
 }
 
 // HashEmail consistently hashes an email address for storage and lookup.

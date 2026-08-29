@@ -7,15 +7,14 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/moistello/backend/pkg/logger"
 )
 
-type contextKey string
-
-const RequestIDKey contextKey = "requestID"
-
 func GetRequestID(ctx context.Context) string {
-	if id, ok := ctx.Value(RequestIDKey).(string); ok {
+	if id, ok := ctx.Value(logger.RequestIDKey).(string); ok {
 		return id
 	}
 	return "unknown"
@@ -38,8 +37,14 @@ func LoggingMiddleware() gin.HandlerFunc {
 		c.Set("requestID", requestID)
 		c.Header("X-Request-ID", requestID)
 
-		ctx := context.WithValue(c.Request.Context(), RequestIDKey, requestID)
+		ctx := context.WithValue(c.Request.Context(), logger.RequestIDKey, requestID)
 		c.Request = c.Request.WithContext(ctx)
+
+		// Correlate the OpenTelemetry span with the request so the trace shows
+		// which logical request produced each span (#229).
+		if span := trace.SpanFromContext(ctx); span.IsRecording() {
+			span.SetAttributes(attribute.String("request.id", requestID))
+		}
 
 		start := time.Now()
 		c.Next()

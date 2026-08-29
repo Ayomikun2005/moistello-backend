@@ -119,9 +119,9 @@ func (d *ContractDeployer) createContract(ctx context.Context, wasmHash string, 
 
 	builder := stellar.NewTransactionBuilder(d.accountMgr.PublicKey())
 	createOp := CreateContractOp{
-		WasmHash:  wasmHash,
-		InitArgs:  sorobanArgs[1:],
-		Salt:      d.accountMgr.PublicKey(),
+		WasmHash: wasmHash,
+		InitArgs: sorobanArgs[1:],
+		Salt:     d.accountMgr.PublicKey(),
 	}
 	builder.AddOperation(createOp)
 
@@ -186,7 +186,7 @@ type UploadWasmOp struct {
 
 // CreateContractOp represents a Soroban create contract host function operation.
 type CreateContractOp struct {
-	WasmHash string          `json:"wasm_hash"`
+	WasmHash string               `json:"wasm_hash"`
 	InitArgs []stellar.SorobanArg `json:"init_args"`
-	Salt     string          `json:"salt"`
+	Salt     string               `json:"salt"`
 }

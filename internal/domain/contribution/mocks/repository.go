@@ -37,6 +37,10 @@ func (m *Repository) UpdateStatus(ctx context.Context, id uuid.UUID, status cont
 	return m.Called(ctx, id, status, txnHash).Error(0)
 }
 
+func (m *Repository) UpdateVerificationStatus(ctx context.Context, id uuid.UUID, verifiedOnchain bool, status contribution.VerificationStatus) error {
+	return m.Called(ctx, id, verifiedOnchain, status).Error(0)
+}
+
 func (m *Repository) ListByUser(ctx context.Context, userID uuid.UUID, page, limit int) ([]contribution.Contribution, int, error) {
 	args := m.Called(ctx, userID, page, limit)
 	if args.Get(0) == nil {

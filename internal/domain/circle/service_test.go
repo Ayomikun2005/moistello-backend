@@ -369,3 +369,147 @@ func TestCircleService_Get_NotFound(t *testing.T) {
 	assert.Error(t, err)
 	repo.AssertExpectations(t)
 }
+
+func TestCircleService_ProcessMissedContributions(t *testing.T) {
+	repo := new(circleMocks.Repository)
+	svc := circle.NewService(repo, nil)
+	ctx := context.Background()
+
+	cid := uuid.New()
+	user1 := uuid.New()
+	user2 := uuid.New()
+	roundNumber := 1
+
+	c := &circle.Circle{
+		ID:                 cid,
+		ContributionAmount: 100,
+		LateFeePercent:     10,
+	}
+
+	members := []circle.CircleMember{
+		{CircleID: cid, UserID: user1, Status: circle.MemberStatusActive},
+		{CircleID: cid, UserID: user2, Status: circle.MemberStatusActive},
+	}
+
+	// Only user1 contributed
+	contributions := []uuid.UUID{user1}
+
+	repo.On("FindByID", ctx, cid).Return(c, nil)
+	repo.On("GetMembers", ctx, cid).Return(members, nil)
+	repo.On("GetContributionsByCircleAndRound", ctx, cid, roundNumber).Return(contributions, nil)
+
+	// Expected penalty for user2
+	repo.On("CreatePenalty", ctx, mock.MatchedBy(func(p *circle.Penalty) bool {
+		return p.UserID == user2 && p.Amount == 10.0 && p.RoundNumber == roundNumber
+	})).Return(nil)
+
+	err := svc.ProcessMissedContributions(ctx, cid.String(), roundNumber)
+	assert.NoError(t, err)
+
+	repo.AssertExpectations(t)
+}
+
+func TestCircleService_RaiseDispute_Success(t *testing.T) {
+	repo := new(circleMocks.Repository)
+	svc := circle.NewService(repo, nil)
+	ctx := context.Background()
+	cid := uuid.New()
+	uid := uuid.New()
+
+	c := &circle.Circle{
+		ID: cid, Name: "Test Circle", Status: circle.CircleStatusActive, OrganizerID: uuid.New(),
+	}
+	member := &circle.CircleMember{CircleID: cid, UserID: uid, Status: circle.MemberStatusActive}
+
+	repo.On("FindByID", ctx, cid).Return(c, nil)
+	repo.On("FindMemberByCircleAndUser", ctx, cid, uid).Return(member, nil)
+	repo.On("CreateDispute", ctx, mock.AnythingOfType("*circle.CircleDispute")).Return(nil)
+
+	dispute, err := svc.RaiseDispute(ctx, cid.String(), uid.String(), circle.DisputeInput{
+		Reason:  "Payment non-receipt",
+		Details: "Did not receive round 1 payout",
+	})
+
+	assert.NoError(t, err)
+	assert.NotNil(t, dispute)
+	assert.Equal(t, "Payment non-receipt", dispute.Reason)
+	repo.AssertExpectations(t)
+}
+
+func TestCircleService_RaiseDispute_NotMember(t *testing.T) {
+	repo := new(circleMocks.Repository)
+	svc := circle.NewService(repo, nil)
+	ctx := context.Background()
+	cid := uuid.New()
+	uid := uuid.New()
+
+	c := &circle.Circle{ID: cid, Name: "Test Circle", Status: circle.CircleStatusActive}
+
+	repo.On("FindByID", ctx, cid).Return(c, nil)
+	repo.On("FindMemberByCircleAndUser", ctx, cid, uid).Return(nil, apperrors.ErrNotFound)
+
+	_, err := svc.RaiseDispute(ctx, cid.String(), uid.String(), circle.DisputeInput{
+		Reason: "Issue",
+	})
+
+	assert.ErrorIs(t, err, circle.ErrNotMember)
+	repo.AssertExpectations(t)
+}
+
+func TestCircleService_CastVote_Success(t *testing.T) {
+	repo := new(circleMocks.Repository)
+	svc := circle.NewService(repo, nil)
+	ctx := context.Background()
+	cid := uuid.New()
+	voterID := uuid.New()
+	recipientID := uuid.New()
+
+	c := &circle.Circle{
+		ID: cid, Name: "Test Circle", Status: circle.CircleStatusActive, PayoutType: circle.PayoutTypeVote, CurrentRound: 1, MaxMembers: 3,
+	}
+	voter := &circle.CircleMember{CircleID: cid, UserID: voterID, Status: circle.MemberStatusActive}
+	recipient := &circle.CircleMember{CircleID: cid, UserID: recipientID, Status: circle.MemberStatusActive}
+
+	repo.On("FindByID", ctx, cid).Return(c, nil)
+	repo.On("FindMemberByCircleAndUser", ctx, cid, voterID).Return(voter, nil)
+	repo.On("FindMemberByCircleAndUser", ctx, cid, recipientID).Return(recipient, nil)
+	repo.On("CreateVote", ctx, mock.AnythingOfType("*circle.CircleVote")).Return(nil)
+	repo.On("GetVotesByRound", ctx, cid, 1).Return([]circle.CircleVote{{RecipientID: recipientID}}, nil)
+	repo.On("GetMemberCount", ctx, cid).Return(3, nil)
+
+	vote, allVoted, winnerID, err := svc.CastVote(ctx, cid.String(), voterID.String(), circle.VoteInput{
+		RecipientID: recipientID.String(),
+	})
+
+	assert.NoError(t, err)
+	assert.NotNil(t, vote)
+	assert.False(t, allVoted)
+	assert.Empty(t, winnerID)
+	repo.AssertExpectations(t)
+}
+
+func TestCircleService_SubmitAuctionBid_Success(t *testing.T) {
+	repo := new(circleMocks.Repository)
+	svc := circle.NewService(repo, nil)
+	ctx := context.Background()
+	cid := uuid.New()
+	bidderID := uuid.New()
+
+	c := &circle.Circle{
+		ID: cid, Name: "Auction Circle", Status: circle.CircleStatusActive, PayoutType: circle.PayoutTypeAuction, CurrentRound: 1,
+	}
+	bidder := &circle.CircleMember{CircleID: cid, UserID: bidderID, Status: circle.MemberStatusActive}
+
+	repo.On("FindByID", ctx, cid).Return(c, nil)
+	repo.On("FindMemberByCircleAndUser", ctx, cid, bidderID).Return(bidder, nil)
+	repo.On("CreateAuctionBid", ctx, mock.AnythingOfType("*circle.CircleAuctionBid")).Return(nil)
+
+	bid, err := svc.SubmitAuctionBid(ctx, cid.String(), bidderID.String(), circle.AuctionBidInput{
+		BidAmount: 25.5,
+	})
+
+	assert.NoError(t, err)
+	assert.NotNil(t, bid)
+	assert.Equal(t, 25.5, bid.BidAmount)
+	repo.AssertExpectations(t)
+}

@@ -3,13 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog/log"
 
 	"github.com/moistello/backend/config"
@@ -19,6 +19,7 @@ import (
 	"github.com/moistello/backend/internal/domain/reputation"
 	"github.com/moistello/backend/internal/domain/user"
 	"github.com/moistello/backend/internal/indexer"
+	"github.com/moistello/backend/pkg/jobqueue"
 	"github.com/moistello/backend/pkg/logger"
 	"github.com/moistello/backend/pkg/postgres"
 	"github.com/moistello/backend/pkg/rabbitmq"
@@ -59,25 +60,31 @@ func main() {
 	contribRepo := contribution.NewRepository(db)
 	payoutRepo := payout.NewRepository(db)
 	reputationRepo := reputation.NewRepository(db)
-	_ = user.NewRepository(db) // wired for future account auto-creation
+	userRepo := user.NewRepository(db)
 
 	// --- Indexer components ---
 
 	cursor := indexer.NewCursorTracker(db)
-	contractIDs := []string{cfg.Stellar.MasterPublicKey}
+	// Build contractIDs from configured contracts block (Soroban contract IDs)
+	contractIDs := []string{}
+	for _, v := range cfg.Contracts {
+		if v != "" {
+			contractIDs = append(contractIDs, v)
+		}
+	}
 	poller := indexer.NewPoller(cfg.Stellar.HorizonURL, contractIDs)
 	processor := indexer.NewEventProcessor(
 		db, rmqClient,
-		circleRepo, contribRepo, payoutRepo, reputationRepo,
+		circleRepo, contribRepo, payoutRepo, reputationRepo, userRepo,
 	)
 
 	// Wire WebSocket broadcast via Redis so API server instances
 	// relay indexer events to connected clients in real time.
 	processor.SetWebSocketBroadcast(func(circleID string, data any) {
 		payload, err := json.Marshal(map[string]any{
-			"type":    "indexer.event",
+			"type":     "indexer.event",
 			"circleId": circleID,
-			"payload": data,
+			"payload":  data,
 		})
 		if err != nil {
 			log.Warn().Err(err).Msg("indexer ws marshal")
@@ -90,7 +97,7 @@ func main() {
 
 	reconciler := indexer.NewReconciler(
 		cursor, poller, processor,
-		indexer.NewDeduplicator(24 * time.Hour),
+		indexer.NewDeduplicator(24*time.Hour),
 	)
 
 	engine := indexer.NewEngine(
@@ -108,6 +115,14 @@ func main() {
 		log.Fatal().Err(err).Msg("failed to start engine")
 	}
 
+	// --- Optional Job Queue Worker ---
+	var jobWorker *jobqueue.Worker
+	{
+		jobQueue := jobqueue.NewJobQueue(db)
+		jobWorker = jobqueue.NewWorker(jobQueue, 3*time.Second)
+		jobWorker.Start(ctx)
+	}
+
 	log.Info().
 		Str("horizon", cfg.Stellar.HorizonURL).
 		Strs("contracts", contractIDs).
@@ -116,31 +131,23 @@ func main() {
 		Msg("indexer engine running")
 
 	// --- Health HTTP server ---
-	// Exposes /health and /health/ready on a separate port (default 1101) so
-	// Kubernetes liveness and readiness probes can reach the indexer without
-	// adding a dependency on the API server.
+	// Exposes /health, /health/ready, and /metrics on a separate port (default
+	// 1101) so Kubernetes liveness/readiness probes and Prometheus can reach
+	// the indexer without adding a dependency on the API server. Both health
+	// endpoints check PostgreSQL, Redis, RabbitMQ, and cursor freshness so a
+	// stuck poll loop or dropped dependency shows up as unhealthy instead of
+	// the indexer always reporting ok.
 	healthPort := os.Getenv("INDEXER_HEALTH_PORT")
 	if healthPort == "" {
 		healthPort = "1101"
 	}
 
+	healthHandler := indexer.NewHealthHandler(db, redisClient, rmqClient, cursor, cfg.Indexer.MaxCursorLag)
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprintf(w, `{"status":"ok","service":"indexer"}`)
-	})
-	mux.HandleFunc("/health/ready", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		alive := rmqClient.IsAlive()
-		if !alive {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = fmt.Fprintf(w, `{"status":"not ready","error":"rabbitmq unreachable"}`)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprintf(w, `{"status":"ready","service":"indexer"}`)
-	})
+	mux.HandleFunc("/health", healthHandler.Health)
+	mux.HandleFunc("/health/ready", healthHandler.Ready)
+	mux.Handle("/metrics", promhttp.Handler())
 
 	healthSrv := &http.Server{
 		Addr:         ":" + healthPort,
@@ -163,6 +170,9 @@ func main() {
 
 	log.Info().Msg("shutting down indexer...")
 	cancel()
+	if jobWorker != nil {
+		jobWorker.Stop()
+	}
 	engine.Stop()
 
 	shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)

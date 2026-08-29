@@ -23,7 +23,7 @@ func NewRepository(db *sqlx.DB) Repository {
 
 func scanUser(row interface{ Scan(...interface{}) error }) (*User, error) {
 	var u User
-	var email, phone, displayName, avatarIpfsHash, countryCode, passkeyCredentialID, totpSecret, passwordHash sql.NullString
+	var email, phone, displayName, avatarIpfsHash, countryCode, passkeyCredentialID, totpSecret, passwordHash, pushToken sql.NullString
 	err := row.Scan(
 		&u.ID,
 		&u.WalletAddress,
@@ -42,6 +42,9 @@ func scanUser(row interface{ Scan(...interface{}) error }) (*User, error) {
 		&u.BackupCodes,
 		&u.EmailVerified,
 		&passkeyCredentialID,
+		&u.NotificationChannels,
+		&u.NotificationsMuted,
+		&pushToken,
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)
@@ -75,6 +78,9 @@ func scanUser(row interface{ Scan(...interface{}) error }) (*User, error) {
 	if passkeyCredentialID.Valid {
 		u.PasskeyCredentialID = &passkeyCredentialID.String
 	}
+	if pushToken.Valid {
+		u.PushToken = &pushToken.String
+	}
 	return &u, nil
 }
 
@@ -82,7 +88,8 @@ func (r *pgRepo) FindByID(ctx context.Context, id uuid.UUID) (*User, error) {
 	query := `SELECT id, wallet_address, email, phone, display_name, avatar_ipfs_hash,
 		country_code, preferred_language, moi_score, role,
 		session_ttl_minutes, password_hash, totp_secret, totp_enabled, backup_codes, email_verified, passkey_credential_id,
-		created_at, updated_at FROM users WHERE id = $1`
+		notification_channels, notifications_muted, push_token,
+		created_at, updated_at FROM users WHERE id = $1 AND deleted_at IS NULL`
 	return scanUser(r.db.QueryRowxContext(ctx, query, id))
 }
 
@@ -90,7 +97,8 @@ func (r *pgRepo) FindByWalletAddress(ctx context.Context, walletAddress string) 
 	query := `SELECT id, wallet_address, email, phone, display_name, avatar_ipfs_hash,
 		country_code, preferred_language, moi_score, role,
 		session_ttl_minutes, password_hash, totp_secret, totp_enabled, backup_codes, email_verified, passkey_credential_id,
-		created_at, updated_at FROM users WHERE wallet_address = $1`
+		notification_channels, notifications_muted, push_token,
+		created_at, updated_at FROM users WHERE wallet_address = $1 AND deleted_at IS NULL`
 	return scanUser(r.db.QueryRowxContext(ctx, query, walletAddress))
 }
 
@@ -99,7 +107,8 @@ func (r *pgRepo) FindByEmail(ctx context.Context, email string) (*User, error) {
 	query := `SELECT id, wallet_address, email, phone, display_name, avatar_ipfs_hash,
 		country_code, preferred_language, moi_score, role,
 		session_ttl_minutes, password_hash, totp_secret, totp_enabled, backup_codes, email_verified, passkey_credential_id,
-		created_at, updated_at FROM users WHERE email = $1`
+		notification_channels, notifications_muted, push_token,
+		created_at, updated_at FROM users WHERE email = $1 AND deleted_at IS NULL`
 	return scanUser(r.db.QueryRowxContext(ctx, query, hashedEmail))
 }
 
@@ -107,7 +116,8 @@ func (r *pgRepo) FindByPasskeyCredentialID(ctx context.Context, credentialID str
 	query := `SELECT id, wallet_address, email, phone, display_name, avatar_ipfs_hash,
 		country_code, preferred_language, moi_score, role,
 		session_ttl_minutes, password_hash, totp_secret, totp_enabled, backup_codes, email_verified, passkey_credential_id,
-		created_at, updated_at FROM users WHERE passkey_credential_id = $1`
+		notification_channels, notifications_muted, push_token,
+		created_at, updated_at FROM users WHERE passkey_credential_id = $1 AND deleted_at IS NULL`
 	return scanUser(r.db.QueryRowxContext(ctx, query, credentialID))
 }
 
@@ -175,11 +185,11 @@ func (r *pgRepo) List(ctx context.Context, filter UserFilter) ([]User, error) {
 	query := `SELECT id, wallet_address, email, phone, display_name, avatar_ipfs_hash,
 		country_code, preferred_language, moi_score, role,
 		session_ttl_minutes, password_hash, totp_secret, totp_enabled, backup_codes, email_verified, passkey_credential_id,
-		created_at, updated_at FROM users`
+		created_at, updated_at FROM users WHERE deleted_at IS NULL`
 
 	var args []interface{}
 	if filter.Search != "" {
-		query += ` WHERE (display_name ILIKE $1 OR wallet_address ILIKE $2 OR email ILIKE $3)`
+		query += ` AND (display_name ILIKE $1 OR wallet_address ILIKE $2 OR email ILIKE $3)`
 		searchPattern := "%" + filter.Search + "%"
 		args = append(args, searchPattern, searchPattern, searchPattern)
 	}
@@ -208,11 +218,11 @@ func (r *pgRepo) List(ctx context.Context, filter UserFilter) ([]User, error) {
 }
 
 func (r *pgRepo) Count(ctx context.Context, filter UserFilter) (int, error) {
-	query := "SELECT COUNT(*) FROM users"
+	query := "SELECT COUNT(*) FROM users WHERE deleted_at IS NULL"
 	var args []interface{}
 
 	if filter.Search != "" {
-		query += " WHERE (display_name ILIKE $1 OR wallet_address ILIKE $1 OR email ILIKE $1)"
+		query += " AND (display_name ILIKE $1 OR wallet_address ILIKE $1 OR email ILIKE $1)"
 		searchPattern := "%" + filter.Search + "%"
 		args = append(args, searchPattern)
 	}
@@ -235,7 +245,7 @@ func (r *pgRepo) ClaimNextName(ctx context.Context) (int64, error) {
 }
 
 func (r *pgRepo) Delete(ctx context.Context, id uuid.UUID) error {
-	query := `DELETE FROM users WHERE id = $1`
+	query := `UPDATE users SET deleted_at = NOW() WHERE id = $1`
 	result, err := r.db.ExecContext(ctx, query, id)
 	if err != nil {
 		return fmt.Errorf("deleting user: %w", err)

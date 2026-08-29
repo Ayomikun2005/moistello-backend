@@ -3,10 +3,12 @@ package incentives
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 
 	"github.com/moistello/backend/pkg/apperrors"
 )
@@ -14,7 +16,8 @@ import (
 var (
 	ErrIncentiveNotFound = fmt.Errorf("incentive not found")
 	ErrReferralNotFound  = fmt.Errorf("referral not found")
-	ErrInvalidReferral  = fmt.Errorf("invalid referral code")
+	ErrInvalidReferral   = fmt.Errorf("invalid referral code")
+	ErrReferralCodeTaken = fmt.Errorf("referral code already exists")
 )
 
 type Repository interface {
@@ -25,7 +28,7 @@ type Repository interface {
 	FindByUserIDAndType(ctx context.Context, userID uuid.UUID, incentiveType IncentiveType) ([]Incentive, error)
 	UpdateIncentiveStatus(ctx context.Context, id uuid.UUID, status IncentiveStatus) error
 	GetPendingIncentives(ctx context.Context, userID uuid.UUID) ([]Incentive, error)
-	
+
 	// Referrals
 	CreateReferral(ctx context.Context, referral *Referral) error
 	FindByReferralCode(ctx context.Context, code string) (*Referral, error)
@@ -33,17 +36,17 @@ type Repository interface {
 	FindByReferredID(ctx context.Context, referredID uuid.UUID) (*Referral, error)
 	UpdateReferralStatus(ctx context.Context, id uuid.UUID, status string) error
 	GetReferralCount(ctx context.Context, referrerID uuid.UUID) (int, error)
-	
+
 	// Savings Streak
 	CreateSavingsStreak(ctx context.Context, streak *SavingsStreak) error
 	FindStreakByUserID(ctx context.Context, userID uuid.UUID) (*SavingsStreak, error)
 	UpdateSavingsStreak(ctx context.Context, streak *SavingsStreak) error
-	
+
 	// Config
 	GetConfig(ctx context.Context) (*IncentiveConfig, error)
 	UpdateConfig(ctx context.Context, config *IncentiveConfig) error
 	CreateConfig(ctx context.Context, config *IncentiveConfig) error
-	
+
 	// Summary
 	GetUserIncentiveSummary(ctx context.Context, userID uuid.UUID) (*UserIncentiveSummary, error)
 }
@@ -149,9 +152,17 @@ func (r *repository) CreateReferral(ctx context.Context, referral *Referral) err
 		referral.CreatedAt, referral.UpdatedAt,
 	)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return ErrReferralCodeTaken
+		}
 		return fmt.Errorf("creating referral: %w", err)
 	}
 	return nil
+}
+
+func isUniqueViolation(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "23505"
 }
 
 func (r *repository) FindByReferralCode(ctx context.Context, code string) (*Referral, error) {
@@ -339,7 +350,7 @@ func (r *repository) CreateConfig(ctx context.Context, config *IncentiveConfig) 
 
 func (r *repository) GetUserIncentiveSummary(ctx context.Context, userID uuid.UUID) (*UserIncentiveSummary, error) {
 	var summary UserIncentiveSummary
-	
+
 	// Total earned and claimed
 	query := `
 		SELECT 
@@ -352,7 +363,7 @@ func (r *repository) GetUserIncentiveSummary(ctx context.Context, userID uuid.UU
 	if err != nil {
 		return nil, fmt.Errorf("getting incentive summary: %w", err)
 	}
-	
+
 	// Referral count
 	var referralCount int
 	query = `SELECT COUNT(*) FROM referrals WHERE referrer_id = $1 AND status = 'completed'`
@@ -361,7 +372,7 @@ func (r *repository) GetUserIncentiveSummary(ctx context.Context, userID uuid.UU
 		return nil, fmt.Errorf("getting referral count: %w", err)
 	}
 	summary.ReferralCount = referralCount
-	
+
 	// Savings streak info
 	var streak SavingsStreak
 	query = `SELECT * FROM savings_streaks WHERE user_id = $1`
@@ -371,6 +382,6 @@ func (r *repository) GetUserIncentiveSummary(ctx context.Context, userID uuid.UU
 		summary.LongestStreak = streak.LongestStreak
 		summary.BonusTier = streak.BonusTier
 	}
-	
+
 	return &summary, nil
 }

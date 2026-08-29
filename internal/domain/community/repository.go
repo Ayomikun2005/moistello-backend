@@ -23,6 +23,7 @@ type Repository interface {
 
 	CreateAnnouncement(ctx context.Context, a *Announcement) error
 	GetAnnouncements(ctx context.Context, communityID uuid.UUID, pinned bool) ([]Announcement, error)
+	GetAnnouncementByID(ctx context.Context, id uuid.UUID) (*Announcement, error)
 	DeleteAnnouncement(ctx context.Context, id uuid.UUID) error
 	LikeAnnouncement(ctx context.Context, id uuid.UUID) error
 	SetAnnouncementPin(ctx context.Context, id uuid.UUID, pinned bool) error

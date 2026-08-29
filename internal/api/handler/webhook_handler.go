@@ -1,36 +1,28 @@
 package handler
 
 import (
-	"sync"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/moistello/backend/internal/api/middleware"
+	"github.com/moistello/backend/pkg/pagination"
 	"github.com/moistello/backend/pkg/response"
 	"github.com/moistello/backend/webhook"
 )
 
-type webhookRecord struct {
-	ID     string `json:"id"`
-	URL    string `json:"url"`
-	Events []string `json:"events"`
-	Active bool   `json:"active"`
-	UserID string `json:"userId"`
-}
-
 type WebhookHandler struct {
-	mu       sync.RWMutex
-	webhooks map[string]webhookRecord
+	repo webhook.WebhookRepository
 }
 
-func NewWebhookHandler() *WebhookHandler {
-	return &WebhookHandler{
-		webhooks: make(map[string]webhookRecord),
-	}
+func NewWebhookHandler(repo webhook.WebhookRepository) *WebhookHandler {
+	return &WebhookHandler{repo: repo}
 }
 
 // @Summary Register a webhook
-// @Description Registers a new webhook endpoint to receive event notifications.
+// @Description Registers a new webhook endpoint to receive event notifications. The events array controls which event types are delivered; an empty array subscribes to all events.
 // @Tags Webhooks
 // @Accept json
 // @Produce json
@@ -43,23 +35,41 @@ func (h *WebhookHandler) RegisterWebhook(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	var req struct {
 		URL    string   `json:"url" binding:"required"`
-		Events []string `json:"events" binding:"required"`
+		Events []string `json:"events"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	id := uuid.New().String()
-	record := webhookRecord{
-		ID:     id,
-		URL:    req.URL,
-		Events: req.Events,
-		Active: true,
-		UserID: userID,
+	if len(req.Events) == 0 {
+		response.BadRequest(c, "events must not be empty; subscribe to at least one event type")
+		return
 	}
-	h.mu.Lock()
-	h.webhooks[id] = record
-	h.mu.Unlock()
+
+	secret, err := newWebhookSecret()
+	if err != nil {
+		response.InternalError(c, "failed to generate webhook secret")
+		return
+	}
+
+	// compute secret hash (sha256 hex) and persist only the hash
+	// compute SHA256 hex of secret for storage
+	sum := sha256.Sum256([]byte(secret))
+	hsh := hex.EncodeToString(sum[:])
+	record := &webhook.WebhookRegistration{
+		ID:         uuid.New().String(),
+		UserID:     userID,
+		TargetURL:  req.URL,
+		Secret:     secret, // in-memory only
+		SecretHash: hsh,
+		Events:     req.Events,
+		IsActive:   true,
+	}
+	if err := h.repo.Register(c.Request.Context(), record); err != nil {
+		response.InternalError(c, "failed to register webhook")
+		return
+	}
+	// Return webhook record (Secret is omitted from JSON); client will receive the secret only once (previously)
 	response.Created(c, gin.H{"webhook": record})
 }
 
@@ -72,18 +82,15 @@ func (h *WebhookHandler) RegisterWebhook(c *gin.Context) {
 // @Router /webhooks [get]
 func (h *WebhookHandler) ListWebhooks(c *gin.Context) {
 	userID := middleware.GetUserID(c)
-	h.mu.RLock()
-	var result []webhookRecord
-	for _, wh := range h.webhooks {
-		if wh.UserID == userID {
-			result = append(result, wh)
-		}
+	webhooks, err := h.repo.GetByUserID(c.Request.Context(), userID)
+	if err != nil {
+		response.InternalError(c, "failed to list webhooks")
+		return
 	}
-	h.mu.RUnlock()
-	if result == nil {
-		result = []webhookRecord{}
+	if webhooks == nil {
+		webhooks = []webhook.WebhookRegistration{}
 	}
-	response.OK(c, gin.H{"webhooks": result})
+	response.OK(c, gin.H{"webhooks": webhooks})
 }
 
 // @Summary Delete a webhook
@@ -97,17 +104,57 @@ func (h *WebhookHandler) ListWebhooks(c *gin.Context) {
 // @Router /webhooks/{id} [delete]
 func (h *WebhookHandler) DeleteWebhook(c *gin.Context) {
 	id := c.Param("id")
-	userID := middleware.GetUserID(c)
-	h.mu.Lock()
-	wh, exists := h.webhooks[id]
-	if !exists || wh.UserID != userID {
-		h.mu.Unlock()
+	wh, err := h.repo.GetByID(c.Request.Context(), id)
+	if err != nil || wh == nil {
 		response.NotFound(c, "webhook not found")
 		return
 	}
-	delete(h.webhooks, id)
-	h.mu.Unlock()
+	userID := middleware.GetUserID(c)
+	if wh.UserID != userID {
+		response.NotFound(c, "webhook not found")
+		return
+	}
+	if err := h.repo.Delete(c.Request.Context(), id); err != nil {
+		response.InternalError(c, "failed to delete webhook")
+		return
+	}
 	response.OK(c, gin.H{"success": true})
+}
+
+// @Summary List webhook deliveries
+// @Description Returns a paginated delivery history (attempts, statuses, errors) for a webhook owned by the authenticated user.
+// @Tags Webhooks
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Webhook ID"
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page" default(20)
+// @Success 200 {object} response.Envelope{data=object{deliveries=array},meta=response.PaginationMeta}
+// @Failure 404 {object} response.Envelope
+// @Router /webhooks/{id}/deliveries [get]
+func (h *WebhookHandler) ListDeliveries(c *gin.Context) {
+	id := c.Param("id")
+	wh, err := h.repo.GetByID(c.Request.Context(), id)
+	if err != nil || wh == nil {
+		response.NotFound(c, "webhook not found")
+		return
+	}
+	userID := middleware.GetUserID(c)
+	if wh.UserID != userID {
+		response.NotFound(c, "webhook not found")
+		return
+	}
+
+	page, limit, _ := pagination.Parse(c)
+	deliveries, total, err := h.repo.ListDeliveries(c.Request.Context(), id, page, limit)
+	if err != nil {
+		response.InternalError(c, "failed to list webhook deliveries")
+		return
+	}
+	if deliveries == nil {
+		deliveries = []webhook.DeliveryLog{}
+	}
+	response.OKWithMeta(c, gin.H{"deliveries": deliveries}, response.NewPaginationMeta(page, limit, total))
 }
 
 // IncomingWebhookHandler receives and verifies incoming webhook deliveries.
@@ -156,10 +203,23 @@ func (h *IncomingWebhookHandler) ReceiveWebhook(c *gin.Context) {
 		return
 	}
 
-	if !webhook.VerifyWebhookSignature(body, signature, wh.Secret) {
+	key := wh.Secret
+	if key == "" {
+		key = wh.SecretHash
+	}
+	if !webhook.VerifyWebhookSignature(body, signature, key) {
 		response.Unauthorized(c, "invalid webhook signature")
 		return
 	}
 
 	response.OK(c, gin.H{"received": true})
+}
+
+// newWebhookSecret returns a random 32-byte hex secret used to sign deliveries.
+func newWebhookSecret() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
 }

@@ -26,8 +26,8 @@ func TestCircleLifecycle(t *testing.T) {
 
 	userSvc := user.NewService(userRepo, nil)
 	circleSvc := circle.NewService(circleRepo, nil)
-	contribSvc := contribution.NewService(contribRepo, nil, nil)
-	payoutSvc := payout.NewService(payoutRepo)
+	contribSvc := contribution.NewService(contribRepo, nil, nil, nil, "")
+	payoutSvc := payout.NewService(payoutRepo, nil, nil)
 
 	_ = contribSvc
 	_ = payoutSvc
@@ -106,10 +106,12 @@ func TestCircleLifecycle(t *testing.T) {
 	})
 
 	t.Run("Step5_RecordPayout", func(t *testing.T) {
+		circleID := uuid.New()
+		payoutRepo.On("ListByCircle", mock.Anything, circleID, 1, 100).Return([]payout.Payout{}, 0, nil).Once()
 		payoutRepo.On("Create", mock.Anything, mock.AnythingOfType("*payout.Payout")).Return(nil).Once()
 
 		p, err := payoutSvc.Record(nil, payout.RecordInput{
-			CircleID:    uuid.New().String(),
+			CircleID:    circleID.String(),
 			RecipientID: member1.ID.String(),
 			RoundNumber: 1,
 			Amount:      200.0,
@@ -149,7 +151,7 @@ func TestCircleLifecycle_FullCircle(t *testing.T) {
 	circleRepo.On("Create", mock.Anything, mock.AnythingOfType("*circle.Circle")).Return(nil).Once()
 	circleRepo.On("CreateMember", mock.Anything, mock.AnythingOfType("*circle.CircleMember")).Return(nil).Once()
 	c, err := circleSvc.Create(nil, org.ID.String(), circle.CreateCircleInput{
-		Name:               "Full Circle", CircleType: circle.CircleTypePublic,
+		Name: "Full Circle", CircleType: circle.CircleTypePublic,
 		PayoutType: circle.PayoutTypeRandom, ContributionAmount: 50,
 		Currency: circle.CurrencyXLM, Frequency: circle.FrequencyDaily,
 		MaxMembers: 3, MaxStrikes: 3,

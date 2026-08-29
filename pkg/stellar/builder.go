@@ -21,9 +21,9 @@ type PaymentOp struct {
 
 // SorobanInvokeOp is a Soroban contract invocation operation
 type SorobanInvokeOp struct {
-	ContractID string        `json:"contract_id"`
-	Function   string        `json:"function"`
-	Args       []SorobanArg  `json:"args"`
+	ContractID string       `json:"contract_id"`
+	Function   string       `json:"function"`
+	Args       []SorobanArg `json:"args"`
 }
 
 type SorobanArg struct {

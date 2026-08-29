@@ -8,20 +8,21 @@ import (
 )
 
 type Community struct {
-	ID          uuid.UUID `json:"id" db:"id"`
-	Name        string    `json:"name" db:"name"`
-	Slug        string    `json:"slug" db:"slug"`
-	Description string    `json:"description" db:"description"`
-	Category    string    `json:"category" db:"category"`
+	ID          uuid.UUID      `json:"id" db:"id"`
+	Name        string         `json:"name" db:"name"`
+	Slug        string         `json:"slug" db:"slug"`
+	Description string         `json:"description" db:"description"`
+	Category    string         `json:"category" db:"category"`
 	Tags        pq.StringArray `json:"tags" db:"tags"`
-	AvatarURL   *string   `json:"avatarUrl,omitempty" db:"avatar_url"`
-	BannerURL   *string   `json:"bannerUrl,omitempty" db:"banner_url"`
-	OwnerID     uuid.UUID `json:"ownerId" db:"owner_id"`
-	MemberCount int       `json:"memberCount" db:"member_count"`
-	TotalSaved  float64   `json:"totalSaved" db:"total_saved"`
-	IsFeatured  bool      `json:"isFeatured" db:"is_featured"`
-	CreatedAt   time.Time `json:"createdAt" db:"created_at"`
-	UpdatedAt   time.Time `json:"updatedAt" db:"updated_at"`
+	AvatarURL   *string        `json:"avatarUrl,omitempty" db:"avatar_url"`
+	BannerURL   *string        `json:"bannerUrl,omitempty" db:"banner_url"`
+	OwnerID     uuid.UUID      `json:"ownerId" db:"owner_id"`
+	MemberCount int            `json:"memberCount" db:"member_count"`
+	TotalSaved  float64        `json:"totalSaved" db:"total_saved"`
+	IsFeatured  bool           `json:"isFeatured" db:"is_featured"`
+	CreatedAt   time.Time      `json:"createdAt" db:"created_at"`
+	UpdatedAt   time.Time      `json:"updatedAt" db:"updated_at"`
+	DeletedAt   *time.Time     `json:"deletedAt,omitempty" db:"deleted_at"`
 }
 
 type CommunityMember struct {

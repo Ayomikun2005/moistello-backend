@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	masterPublicKey = "GAX23V3WWDPPR5WRER3KTEUTDLSCGZYMSJY5FDRRKKCIQ4JADF5T27RC"
-	horizonURL      = "https://horizon-testnet.stellar.org"
+	masterPublicKey   = "GAX23V3WWDPPR5WRER3KTEUTDLSCGZYMSJY5FDRRKKCIQ4JADF5T27RC"
+	horizonURL        = "https://horizon-testnet.stellar.org"
 	testnetPassphrase = "Test SDF Network ; September 2015"
 )
 
@@ -28,9 +28,9 @@ func masterSecretKey() string {
 }
 
 type horizonAccount struct {
-	ID        string `json:"id"`
-	Sequence  string `json:"sequence"`
-	Balances  []struct {
+	ID       string `json:"id"`
+	Sequence string `json:"sequence"`
+	Balances []struct {
 		Balance   string `json:"balance"`
 		AssetType string `json:"asset_type"`
 		AssetCode string `json:"asset_code,omitempty"`

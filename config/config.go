@@ -18,6 +18,7 @@ type Config struct {
 	Redis        RedisConfig
 	RabbitMQ     RabbitMQConfig
 	Stellar      StellarConfig
+	Contracts    map[string]string `mapstructure:"contracts"`
 	Auth         AuthConfig
 	Security     SecurityConfig
 	Brevo        BrevoConfig
@@ -29,6 +30,8 @@ type Config struct {
 	Environment  string
 	YellowCard   YellowCardConfig `mapstructure:"yellow_card"`
 	Tracing      TracingConfig
+	Swap         SwapConfig        `mapstructure:"swap"`
+	MobileMoney  MobileMoneyConfig `mapstructure:"mobile_money"`
 }
 
 type ServerConfig struct {
@@ -93,8 +96,43 @@ func (s StellarConfig) String() string {
 }
 
 type YellowCardConfig struct {
-	APIKey    string `mapstructure:"api_key"`
-	APISecret string `mapstructure:"api_secret"`
+	APIKey               string  `mapstructure:"api_key"`
+	APISecret            string  `mapstructure:"api_secret"`
+	WebhookSecret        string  `mapstructure:"webhook_secret"`
+	MaxDepositNGN        float64 `mapstructure:"max_deposit_ngn"`
+	MaxWithdrawUSDC      float64 `mapstructure:"max_withdraw_usdc"`
+	DailyDepositCapNGN   float64 `mapstructure:"daily_deposit_cap_ngn"`
+	DailyWithdrawCapUSDC float64 `mapstructure:"daily_withdraw_cap_usdc"`
+}
+
+// MobileMoneyConfig holds credentials for the mobile-money bridge (#190,
+// product-spec.md §7): M-Pesa, MTN Mobile Money, and Airtel Money adapters
+// for non-NGN African markets. Each provider is only registered at startup
+// when its required credentials are non-empty, so an unconfigured provider
+// simply isn't available rather than failing startup.
+type MobileMoneyConfig struct {
+	CallbackBaseURL      string `mapstructure:"callback_base_url"`
+	ReconcileIntervalMin int    `mapstructure:"reconcile_interval_minutes"`
+
+	MPesaConsumerKey        string `mapstructure:"mpesa_consumer_key"`
+	MPesaConsumerSecret     string `mapstructure:"mpesa_consumer_secret"`
+	MPesaShortcode          string `mapstructure:"mpesa_shortcode"`
+	MPesaPasskey            string `mapstructure:"mpesa_passkey"`
+	MPesaSecurityCredential string `mapstructure:"mpesa_security_credential"`
+	MPesaInitiatorName      string `mapstructure:"mpesa_initiator_name"`
+	MPesaSandbox            bool   `mapstructure:"mpesa_sandbox"`
+
+	MTNSubscriptionKey string `mapstructure:"mtn_subscription_key"`
+	MTNAPIUser         string `mapstructure:"mtn_api_user"`
+	MTNAPIKey          string `mapstructure:"mtn_api_key"`
+	MTNTargetCurrency  string `mapstructure:"mtn_target_currency"`
+	MTNSandbox         bool   `mapstructure:"mtn_sandbox"`
+
+	AirtelClientID       string `mapstructure:"airtel_client_id"`
+	AirtelClientSecret   string `mapstructure:"airtel_client_secret"`
+	AirtelCountry        string `mapstructure:"airtel_country"`
+	AirtelTargetCurrency string `mapstructure:"airtel_target_currency"`
+	AirtelSandbox        bool   `mapstructure:"airtel_sandbox"`
 }
 
 type AuthConfig struct {
@@ -109,8 +147,11 @@ type AuthConfig struct {
 }
 
 type SecurityConfig struct {
+	// WalletPepper is the single server-side secret used for deterministic
+	// wallet seed derivation. The former, unused PasskeyPepper field and its
+	// MOISTELLO_PASSKEY_PEPPER env binding were removed in #163 so there is
+	// exactly one pepper source of truth.
 	WalletPepper  string `mapstructure:"wallet_pepper"`
-	PasskeyPepper string `mapstructure:"passkey_pepper"`
 	EncryptionKey string `mapstructure:"encryption_key"`
 	Argon2Time    int    `mapstructure:"argon2_time"`
 	Argon2Memory  int    `mapstructure:"argon2_memory"`
@@ -127,6 +168,9 @@ type IndexerConfig struct {
 	PollInterval time.Duration `mapstructure:"poll_interval"`
 	BatchSize    int           `mapstructure:"batch_size"`
 	StartLedger  int64         `mapstructure:"start_ledger"`
+	// MaxCursorLag is how long the cursor's last_processed_at may trail the
+	// current time before the health server reports the indexer as unhealthy.
+	MaxCursorLag time.Duration `mapstructure:"max_cursor_lag"`
 }
 
 type NotificationConfig struct {
@@ -154,10 +198,39 @@ type CORSConfig struct {
 	MaxAge           time.Duration `mapstructure:"max_age"`
 }
 
+type SwapConfig struct {
+	// SweepInterval is how often the swap sweep worker runs. The sweep
+	// releases escrow on-chain for created swap offers past their expiry and
+	// marks them expired (#243).
+	SweepInterval time.Duration `mapstructure:"sweep_interval"`
+}
+
 type RateLimitConfig struct {
 	Global        int `mapstructure:"global"`
 	Authenticated int `mapstructure:"authenticated"`
 	Auth          int `mapstructure:"auth"`
+	// FailClosed decides what happens when Redis is unreachable during a rate
+	// limit check. True (the default, and the single policy documented in
+	// docs/rate-limiting.md) refuses the request with 503 — the same posture
+	// the legacy JS middleware/rateLimiter.js always had. False falls back to
+	// the in-memory limiter (fails open). Individual routes may override this
+	// per-route via middleware.RateLimitMiddleware options.
+	FailClosed bool `mapstructure:"fail_closed"`
+
+	// Per-resource limits (#197). middleware.PerResourceRateLimitMiddleware
+	// existed but was never applied to any route — these give the
+	// high-value/sensitive resources their own configurable, tighter buckets
+	// instead of sharing the coarse Global/Authenticated/Auth limits above.
+	OTPLimit                    int `mapstructure:"otp_limit"`
+	OTPWindowSeconds            int `mapstructure:"otp_window_seconds"`
+	SwapLimit                   int `mapstructure:"swap_limit"`
+	SwapWindowSeconds           int `mapstructure:"swap_window_seconds"`
+	ContributeLimit             int `mapstructure:"contribute_limit"`
+	ContributeWindowSeconds     int `mapstructure:"contribute_window_seconds"`
+	WalletTransferLimit         int `mapstructure:"wallet_transfer_limit"`
+	WalletTransferWindowSeconds int `mapstructure:"wallet_transfer_window_seconds"`
+	ReferralLimit               int `mapstructure:"referral_limit"`
+	ReferralWindowSeconds       int `mapstructure:"referral_window_seconds"`
 }
 
 type LoggingConfig struct {
@@ -167,10 +240,10 @@ type LoggingConfig struct {
 }
 
 type TracingConfig struct {
-	Enabled          bool          `mapstructure:"enabled"`
-	CollectorEndpoint string       `mapstructure:"collector_endpoint"`
-	ServiceName      string       `mapstructure:"service_name"`
-	SampleRate       float64      `mapstructure:"sample_rate"`
+	Enabled           bool    `mapstructure:"enabled"`
+	CollectorEndpoint string  `mapstructure:"collector_endpoint"`
+	ServiceName       string  `mapstructure:"service_name"`
+	SampleRate        float64 `mapstructure:"sample_rate"`
 }
 
 func Load(path string) (*Config, error) {
@@ -219,6 +292,7 @@ func Load(path string) (*Config, error) {
 	setDefault(v, "brevo.from_name", "Moistello")
 	setDefault(v, "indexer.poll_interval", "3s")
 	setDefault(v, "indexer.batch_size", 50)
+	setDefault(v, "indexer.max_cursor_lag", "2m")
 	setDefault(v, "cors.allowed_origins", []string{"http://localhost:1110"})
 	setDefault(v, "cors.allowed_methods", []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"})
 	setDefault(v, "cors.allowed_headers", []string{"Authorization", "Content-Type", "X-Request-ID"})
@@ -227,6 +301,17 @@ func Load(path string) (*Config, error) {
 	setDefault(v, "rate_limit.global", 100)
 	setDefault(v, "rate_limit.authenticated", 300)
 	setDefault(v, "rate_limit.auth", 10)
+	setDefault(v, "rate_limit.fail_closed", true)
+	setDefault(v, "rate_limit.otp_limit", 5)
+	setDefault(v, "rate_limit.otp_window_seconds", 900)
+	setDefault(v, "rate_limit.swap_limit", 10)
+	setDefault(v, "rate_limit.swap_window_seconds", 60)
+	setDefault(v, "rate_limit.contribute_limit", 10)
+	setDefault(v, "rate_limit.contribute_window_seconds", 60)
+	setDefault(v, "rate_limit.wallet_transfer_limit", 5)
+	setDefault(v, "rate_limit.wallet_transfer_window_seconds", 60)
+	setDefault(v, "rate_limit.referral_limit", 10)
+	setDefault(v, "rate_limit.referral_window_seconds", 3600)
 	setDefault(v, "logging.level", "debug")
 	setDefault(v, "logging.format", "json")
 	setDefault(v, "logging.output", "stdout")
@@ -241,6 +326,8 @@ func Load(path string) (*Config, error) {
 	setDefault(v, "notification.push.fcm_server_key", "")
 	setDefault(v, "yellow_card.api_key", "")
 	setDefault(v, "yellow_card.api_secret", "")
+	setDefault(v, "yellow_card.webhook_secret", "")
+	setDefault(v, "swap.sweep_interval", "1m")
 	setDefault(v, "security.wallet_pepper", "")
 	setDefault(v, "security.passkey_pepper", "")
 	setDefault(v, "security.encryption_key", "")
@@ -250,7 +337,6 @@ func Load(path string) (*Config, error) {
 	mustBindEnv(v, "stellar.master_secret_key", "MOISTELLO_STELLAR_MASTER_SECRET_KEY", "STELLAR_MASTER_SECRET_KEY")
 	mustBindEnv(v, "stellar.master_public_key", "MOISTELLO_STELLAR_MASTER_PUBLIC_KEY", "STELLAR_MASTER_PUBLIC_KEY")
 	mustBindEnv(v, "security.wallet_pepper", "MOISTELLO_WALLET_PEPPER")
-	mustBindEnv(v, "security.passkey_pepper", "MOISTELLO_PASSKEY_PEPPER")
 	mustBindEnv(v, "security.encryption_key", "ENCRYPTION_KEY")
 	mustBindEnv(v, "auth.jwt_private_key_pem", "JWT_PRIVATE_KEY")
 	mustBindEnv(v, "auth.jwt_public_key_pem", "JWT_PUBLIC_KEY")
@@ -259,6 +345,7 @@ func Load(path string) (*Config, error) {
 	mustBindEnv(v, "brevo.from_name", "MOISTELLO_BREVO_FROM_NAME", "MOISTELLO_NOTIFICATION_EMAIL_FROM_NAME")
 	mustBindEnv(v, "yellow_card.api_key", "YELLOW_CARD_API_KEY")
 	mustBindEnv(v, "yellow_card.api_secret", "YELLOW_CARD_API_SECRET")
+	mustBindEnv(v, "yellow_card.webhook_secret", "YELLOW_CARD_WEBHOOK_SECRET")
 	v.SetDefault("server.port", 1100)
 	v.SetDefault("server.host", "0.0.0.0")
 	v.SetDefault("server.read_timeout", "10s")
@@ -292,6 +379,7 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("brevo.from_name", "Moistello")
 	v.SetDefault("indexer.poll_interval", "3s")
 	v.SetDefault("indexer.batch_size", 50)
+	v.SetDefault("indexer.max_cursor_lag", "2m")
 	v.SetDefault("cors.allowed_origins", []string{"http://localhost:1110"})
 	v.SetDefault("cors.allowed_methods", []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"})
 	v.SetDefault("cors.allowed_headers", []string{"Authorization", "Content-Type", "X-Request-ID"})
@@ -300,6 +388,17 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("rate_limit.global", 100)
 	v.SetDefault("rate_limit.authenticated", 300)
 	v.SetDefault("rate_limit.auth", 10)
+	v.SetDefault("rate_limit.fail_closed", true)
+	v.SetDefault("rate_limit.otp_limit", 5)
+	v.SetDefault("rate_limit.otp_window_seconds", 900)
+	v.SetDefault("rate_limit.swap_limit", 10)
+	v.SetDefault("rate_limit.swap_window_seconds", 60)
+	v.SetDefault("rate_limit.contribute_limit", 10)
+	v.SetDefault("rate_limit.contribute_window_seconds", 60)
+	v.SetDefault("rate_limit.wallet_transfer_limit", 5)
+	v.SetDefault("rate_limit.wallet_transfer_window_seconds", 60)
+	v.SetDefault("rate_limit.referral_limit", 10)
+	v.SetDefault("rate_limit.referral_window_seconds", 3600)
 	v.SetDefault("logging.level", "debug")
 	v.SetDefault("logging.format", "json")
 	v.SetDefault("logging.output", "stdout")
@@ -325,7 +424,6 @@ func Load(path string) (*Config, error) {
 	cfg.Stellar.MasterSecretKey = requireString("stellar.master_secret_key", cfg.Stellar.MasterSecretKey, "set MOISTELLO_STELLAR_MASTER_SECRET_KEY or STELLAR_MASTER_SECRET_KEY")
 	cfg.Stellar.MasterPublicKey = requireString("stellar.master_public_key", cfg.Stellar.MasterPublicKey, "set MOISTELLO_STELLAR_MASTER_PUBLIC_KEY or STELLAR_MASTER_PUBLIC_KEY")
 	cfg.Security.WalletPepper = requireString("security.wallet_pepper", cfg.Security.WalletPepper, "set MOISTELLO_WALLET_PEPPER")
-	cfg.Security.PasskeyPepper = requireString("security.passkey_pepper", cfg.Security.PasskeyPepper, "set MOISTELLO_PASSKEY_PEPPER")
 	cfg.Security.EncryptionKey = requireString("security.encryption_key", cfg.Security.EncryptionKey, "set ENCRYPTION_KEY")
 
 	cfg.Auth.JWTPrivateKeyPEM = loadRequiredText(cfg.Auth.JWTPrivateKeyPEM, cfg.Auth.JWTPrivateKeyPath, "auth.jwt_private_key_pem", "auth.jwt_private_key_path")

@@ -144,6 +144,16 @@ func (c *Client) ResetMissedPings() {
 	c.missedPings.Store(0)
 }
 
+// sendError writes a simple error message to the client if the send buffer
+// has room.
+func (c *Client) sendError(message string) {
+	data, _ := json.Marshal(map[string]string{"type": "error", "message": message})
+	select {
+	case c.Send <- data:
+	default:
+	}
+}
+
 // handleMessage processes a single incoming WebSocket message.
 // Supported message types:
 //   - "ping": responds with a pong
@@ -165,8 +175,12 @@ func (c *Client) handleMessage(data []byte) {
 		}
 	case "subscribe":
 		circleID, _ := msg["circleId"].(string)
-		if circleID != "" {
-			c.Hub.JoinRoom(circleID, c.ID)
+		if circleID == "" {
+			return
+		}
+		if !c.Hub.JoinRoom(circleID, c.ID) {
+			c.sendError("forbidden: not a circle member")
+			return
 		}
 	case "unsubscribe":
 		circleID, _ := msg["circleId"].(string)

@@ -61,6 +61,7 @@ indexer:
   poll_interval: "3s"
   batch_size: 50
   start_ledger: 0
+  max_cursor_lag: "2m"
 
 notification:
   email:
@@ -97,6 +98,10 @@ rate_limit:
   global: 100
   authenticated: 300
   auth: 10
+  # Single policy when Redis is unreachable: fail closed (503) by default —
+  # the same posture the legacy JS middleware/rateLimiter.js always had.
+  # Individual routes may opt into fail-open via the middleware options.
+  fail_closed: true
 
 logging:
   level: "debug"
@@ -106,6 +111,34 @@ logging:
 yellow_card:
   api_key: ""
   api_secret: ""
+  webhook_secret: ""
+
+# Mobile-money bridge (#190, product-spec.md §7) for non-NGN markets.
+# Each provider is only registered at startup when its credentials are set.
+mobile_money:
+  callback_base_url: ""
+  reconcile_interval_minutes: 5
+  mpesa_consumer_key: ""
+  mpesa_consumer_secret: ""
+  mpesa_shortcode: ""
+  mpesa_passkey: ""
+  mpesa_security_credential: ""
+  mpesa_initiator_name: ""
+  mpesa_sandbox: true
+  mtn_subscription_key: ""
+  mtn_api_user: ""
+  mtn_api_key: ""
+  mtn_target_currency: ""
+  mtn_sandbox: true
+  airtel_client_id: ""
+  airtel_client_secret: ""
+  airtel_country: ""
+  airtel_target_currency: ""
+  airtel_sandbox: true
+
+swap:
+  # How often the sweep worker releases escrow for expired swap offers (#243).
+  sweep_interval: "1m"
 
 # Deployed Contract IDs (Testnet)
 contracts:

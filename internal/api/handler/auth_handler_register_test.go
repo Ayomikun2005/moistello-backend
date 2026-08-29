@@ -17,7 +17,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
-	"github.com/moistello/backend/config"
 	"github.com/moistello/backend/internal/api/handler"
 	"github.com/moistello/backend/internal/domain/auth"
 	"github.com/moistello/backend/internal/domain/user"
@@ -128,14 +127,11 @@ func newRegisterEnv(t *testing.T) *registerTestEnv {
 		return nil
 	}, nil)
 
-	security := config.SecurityConfig{
-		WalletPepper:  "test-wallet-pepper-only",
-		PasskeyPepper: "test-passkey-pepper-only",
-		Argon2Time:    1,
-		Argon2Memory:  64 * 1024,
-		Argon2Threads: 4,
-	}
-	env.handler = handler.NewAuthHandler(mockAuthSvc, userSvc, wallet, nil, verificationSvc, nil, nil, mockUserRepo, security)
+	// Seed derivation lives in the wallet domain service (#166); the mock
+	// returns a fixed deterministic seed so the register flows stay focused
+	// on handler behaviour.
+	wallet.On("DeriveWalletSeed", mock.Anything, mock.AnythingOfType("string")).Return(testWalletSeed, nil)
+	env.handler = handler.NewAuthHandler(mockAuthSvc, userSvc, wallet, nil, verificationSvc, nil, nil, mockUserRepo)
 	return env
 }
 
@@ -147,6 +143,16 @@ func emailWalletAddr(email string) string {
 }
 
 type mockWalletService struct{ mock.Mock }
+
+const testWalletSeed = "7b0ed4e5f2a6c9d18b3a5f7e2c4d6a8091f3b5d7e9a1c3f5b7d9e1f3a5b7c9d1e"
+
+func (m *mockWalletService) DeriveWalletSeed(ctx context.Context, email string) (string, error) {
+	args := m.Called(ctx, email)
+	if args.Get(0) == nil {
+		return "", args.Error(1)
+	}
+	return args.Get(0).(string), args.Error(1)
+}
 
 func (m *mockWalletService) CreateWallet(ctx context.Context, userID string, passkeySeed []byte) (*wallet.Wallet, error) {
 	args := m.Called(ctx, userID, passkeySeed)
@@ -206,9 +212,38 @@ func TestAuthHandler_Register_Success(t *testing.T) {
 
 	assert.Equal(t, 201, w.Code)
 	assert.Contains(t, w.Body.String(), "verification code sent")
-	assert.Contains(t, w.Body.String(), "walletSeed")
+	assert.NotContains(t, w.Body.String(), "walletSeed")
+	assert.NotContains(t, w.Body.String(), "seed")
 	assert.NotEmpty(t, env.sentOTP, "OTP email should have been sent")
 	env.mockUserRepo.AssertExpectations(t)
+}
+
+func TestAuthHandler_Register_DoesNotExposeWalletSeed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	env := newRegisterEnv(t)
+
+	env.mockUserRepo.On("FindByWalletAddress", mock.Anything, emailWalletAddr("sec-test@example.com")).Return(nil, apperrors.ErrNotFound)
+
+	r := gin.New()
+	r.POST("/v1/auth/register", env.handler.Register)
+
+	body, _ := json.Marshal(map[string]string{
+		"email":    "sec-test@example.com",
+		"password": "SecurePassword123!",
+	})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/v1/auth/register", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, 201, w.Code)
+	var resp map[string]any
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.NoError(t, err)
+	data, ok := resp["data"].(map[string]any)
+	assert.True(t, ok)
+	assert.Nil(t, data["walletSeed"], "walletSeed must not be present in response data")
+	assert.Nil(t, data["seed"], "seed must not be present in response data")
 }
 
 func TestAuthHandler_Register_MissingFields(t *testing.T) {
@@ -276,7 +311,7 @@ func TestAuthHandler_RegisterVerify_Success(t *testing.T) {
 
 	env.mockUserRepo.On("Create", mock.Anything, mock.AnythingOfType("*user.User")).Return(nil)
 	env.mockUserRepo.On("FindByWalletAddress", mock.Anything, emailWalletAddr(testEmail)).Return(nil, apperrors.ErrNotFound)
-	env.mockAuthSvc.On("CreateSession", mock.Anything, mock.AnythingOfType("uuid.UUID"), mock.Anything, mock.Anything).Return(
+	env.mockAuthSvc.On("CreateSession", mock.Anything, mock.AnythingOfType("uuid.UUID"), mock.Anything, mock.Anything, mock.Anything).Return(
 		&auth.TokenPair{AccessToken: "jwt-token", RefreshToken: "refresh-token", CSRFToken: "csrf-token"}, nil,
 	)
 	env.walletMock().On("CreateWallet", mock.Anything, mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8")).Return(nil, nil)

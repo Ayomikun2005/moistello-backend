@@ -1,14 +1,30 @@
 package api
 
 import (
+	"time"
+
 	"github.com/gin-gonic/gin"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/redis/go-redis/v9"
 	"github.com/moistello/backend/config"
 	"github.com/moistello/backend/internal/api/handler"
 	"github.com/moistello/backend/internal/api/middleware"
 	"github.com/moistello/backend/webhook"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/redis/go-redis/v9"
 )
+
+// perResource is a small helper so route registration below doesn't have to
+// repeat the redisClient/resource/limit/window/fail-closed boilerplate for
+// every sensitive route (#197 — PerResourceRateLimitMiddleware existed but
+// was never applied to any route).
+func perResource(redisClient *redis.Client, resource string, limit, windowSeconds int) gin.HandlerFunc {
+	return middleware.PerResourceRateLimitMiddleware(
+		redisClient,
+		resource,
+		limit,
+		time.Duration(windowSeconds)*time.Second,
+		middleware.WithFailClosed(),
+	)
+}
 
 func NewRouter(
 	cfg *config.Config,
@@ -26,6 +42,8 @@ func NewRouter(
 	passkeyCredentialHandler *handler.PasskeyCredentialHandler,
 	walletHandler *handler.WalletHandler,
 	depositHandler *handler.DepositHandler,
+	mobileMoneyHandler *handler.MobileMoneyHandler,
+	chatHandler *handler.ChatHandler,
 	communityHandler *handler.CommunityHandler,
 	wsHandler *handler.WebSocketHandler,
 	savingsGoalHandler *handler.SavingsGoalHandler,
@@ -35,7 +53,9 @@ func NewRouter(
 	reputationHandler *handler.ReputationHandler,
 	referralHandler *handler.ReferralHandler,
 	consentHandler *handler.ConsentHandler,
+	adminJobQueueHandler *handler.AdminJobQueueHandler,
 	webhookRepo webhook.WebhookRepository,
+	yellowCardWebhookHandler *handler.YellowCardWebhookHandler,
 	jwtPublicKey []byte,
 ) *gin.Engine {
 	r := gin.New()
@@ -51,7 +71,6 @@ func NewRouter(
 	r.GET("/metrics", middleware.AdminAPIKeyMiddleware(metricsKey), gin.WrapH(promhttp.Handler()))
 
 	r.Use(middleware.RateLimitMiddleware(redisClient, cfg.RateLimit))
-	r.Use(middleware.IdempotencyMiddleware(redisClient))
 
 	r.GET("/health", healthHandler.Health)
 	r.GET("/health/ready", healthHandler.Ready)
@@ -74,10 +93,12 @@ func NewRouter(
 		auth := api.Group("/auth")
 		auth.Use(middleware.AuthRateLimitMiddleware(redisClient, cfg.RateLimit))
 		{
-			auth.POST("/register", authHandler.Register)
-			auth.POST("/register/verify", authHandler.RegisterVerify)
+			auth.POST("/register", perResource(redisClient, "otp", cfg.RateLimit.OTPLimit, cfg.RateLimit.OTPWindowSeconds), authHandler.Register)
+			auth.POST("/register/verify", perResource(redisClient, "otp", cfg.RateLimit.OTPLimit, cfg.RateLimit.OTPWindowSeconds), authHandler.RegisterVerify)
 			auth.POST("/login", authHandler.Login)
 			auth.POST("/refresh", middleware.RefreshTokenBlocklistMiddleware(redisClient), authHandler.Refresh)
+			auth.POST("/nonce", authHandler.Nonce)
+			auth.POST("/verify", authHandler.Verify)
 			auth.POST("/passkey/nonce", authHandler.PasskeyNonce)
 			auth.POST("/passkey/verify", authHandler.PasskeyVerify)
 			auth.POST("/recovery", authHandler.Recovery)
@@ -87,6 +108,10 @@ func NewRouter(
 		authenticated.Use(middleware.AuthMiddleware(jwtPublicKey))
 		authenticated.Use(middleware.TokenBlocklistMiddleware(redisClient))
 		authenticated.Use(middleware.CSRFTokenValidator(redisClient))
+		// Idempotency must run after AuthMiddleware so keys are scoped per
+		// user (#198) — a global, pre-auth middleware let idempotency keys
+		// collide across different users' requests.
+		authenticated.Use(middleware.IdempotencyMiddleware(redisClient))
 		{
 			authenticated.GET("/me", authHandler.Me)
 			authenticated.POST("/auth/logout", authHandler.Logout)
@@ -103,22 +128,34 @@ func NewRouter(
 			authenticated.DELETE("/users/me", userHandler.DeleteUser)
 			authenticated.GET("/users/me/reputation", userHandler.GetReputation)
 			authenticated.GET("/users/me/circles", userHandler.GetMyCircles)
+			authenticated.POST("/users/me/kyc", userHandler.SubmitKYC)
+			authenticated.GET("/users/me/kyc/status", userHandler.GetKYCStatus)
 
-		// Public — claim a unique anonymous name (before auth)
-		api.POST("/claim-name", userHandler.ClaimName)
+			// Public — claim a unique anonymous name (before auth)
+			api.POST("/claim-name", userHandler.ClaimName)
 
 			// Wallet routes
 			authenticated.POST("/wallets", walletHandler.CreateWallet)
 			authenticated.GET("/wallets", walletHandler.ListWallets)
 			authenticated.GET("/wallets/balance", walletHandler.GetBalance)
-			authenticated.POST("/wallets/withdraw", walletHandler.Withdraw)
+			authenticated.POST("/wallets/withdraw", perResource(redisClient, "wallet-transfer", cfg.RateLimit.WalletTransferLimit, cfg.RateLimit.WalletTransferWindowSeconds), walletHandler.Withdraw)
 			authenticated.DELETE("/wallets/:id", walletHandler.DeleteWallet)
 
 			// Deposit / Withdraw routes
 			authenticated.GET("/wallet/deposit/quote", depositHandler.GetDepositQuote)
-			authenticated.POST("/wallet/deposit", depositHandler.InitiateDeposit)
-			authenticated.POST("/wallet/withdraw", depositHandler.InitiateWithdraw)
+			authenticated.POST("/wallet/deposit", perResource(redisClient, "wallet-transfer", cfg.RateLimit.WalletTransferLimit, cfg.RateLimit.WalletTransferWindowSeconds), depositHandler.InitiateDeposit)
+			authenticated.POST("/wallet/withdraw", perResource(redisClient, "wallet-transfer", cfg.RateLimit.WalletTransferLimit, cfg.RateLimit.WalletTransferWindowSeconds), depositHandler.InitiateWithdraw)
 			authenticated.GET("/wallet/transactions/:yellowCardId", depositHandler.GetTransactionStatus)
+			authenticated.POST("/wallet/mobile-money/onramp", perResource(redisClient, "wallet-transfer", cfg.RateLimit.WalletTransferLimit, cfg.RateLimit.WalletTransferWindowSeconds), mobileMoneyHandler.InitiateOnramp)
+			authenticated.POST("/wallet/mobile-money/offramp", perResource(redisClient, "wallet-transfer", cfg.RateLimit.WalletTransferLimit, cfg.RateLimit.WalletTransferWindowSeconds), mobileMoneyHandler.InitiateOfframp)
+			authenticated.GET("/wallet/mobile-money/:id", mobileMoneyHandler.GetTransaction)
+
+			authenticated.POST("/chat/keys", chatHandler.PublishKeys)
+			authenticated.GET("/chat/keys/:userId", chatHandler.GetBundle)
+			authenticated.POST("/chat/conversations", chatHandler.CreateConversation)
+			authenticated.GET("/chat/conversations", chatHandler.ListConversations)
+			authenticated.POST("/chat/conversations/:id/messages", chatHandler.SendMessage)
+			authenticated.GET("/chat/conversations/:id/messages", chatHandler.ListMessages)
 
 			// Circles
 			authenticated.POST("/circles", circleHandler.CreateCircle)
@@ -129,7 +166,7 @@ func NewRouter(
 			authenticated.POST("/circles/:id/close", circleHandler.CloseCircle)
 			authenticated.DELETE("/circles/:id", circleHandler.CancelCircle)
 			authenticated.POST("/circles/:id/join", circleHandler.JoinCircle)
-			authenticated.POST("/circles/:id/contribute", circleHandler.Contribute)
+			authenticated.POST("/circles/:id/contribute", perResource(redisClient, "contribute", cfg.RateLimit.ContributeLimit, cfg.RateLimit.ContributeWindowSeconds), circleHandler.Contribute)
 			authenticated.POST("/circles/:id/exit", circleHandler.ExitCircle)
 			authenticated.GET("/circles/:id/members", circleHandler.GetMembers)
 			authenticated.GET("/circles/:id/rounds", circleHandler.GetRounds)
@@ -161,7 +198,7 @@ func NewRouter(
 			authenticated.GET("/reputation/tier/:address", reputationHandler.GetTierByAddress)
 
 			// Referral system
-			authenticated.POST("/referral/code", referralHandler.GenerateCode)
+			authenticated.POST("/referral/code", perResource(redisClient, "referral", cfg.RateLimit.ReferralLimit, cfg.RateLimit.ReferralWindowSeconds), referralHandler.GenerateCode)
 			authenticated.GET("/referral/stats", referralHandler.GetStats)
 			authenticated.GET("/referral/history", referralHandler.GetHistory)
 
@@ -207,33 +244,32 @@ func NewRouter(
 			authenticated.POST("/token/unstake", tokenHandler.Unstake)
 			authenticated.GET("/token/stakes/:address", tokenHandler.GetStakes)
 			// Swap endpoints
-			authenticated.POST("/swap/offer", swapHandler.CreateSwapOffer)
-			authenticated.POST("/swap/accept", swapHandler.AcceptSwapOffer)
+			authenticated.POST("/swap/offer", perResource(redisClient, "swap", cfg.RateLimit.SwapLimit, cfg.RateLimit.SwapWindowSeconds), swapHandler.CreateSwapOffer)
+			authenticated.POST("/swap/accept", perResource(redisClient, "swap", cfg.RateLimit.SwapLimit, cfg.RateLimit.SwapWindowSeconds), swapHandler.AcceptSwapOffer)
+			authenticated.POST("/swap/cancel", perResource(redisClient, "swap", cfg.RateLimit.SwapLimit, cfg.RateLimit.SwapWindowSeconds), swapHandler.CancelSwapOffer)
 			authenticated.GET("/swap/history", swapHandler.GetSwapHistory)
 
-		authenticated.POST("/webhooks", webhookHandler.RegisterWebhook)
-		authenticated.GET("/webhooks", webhookHandler.ListWebhooks)
-		authenticated.DELETE("/webhooks/:id", webhookHandler.DeleteWebhook)
-	}
+			authenticated.POST("/webhooks", webhookHandler.RegisterWebhook)
+			authenticated.GET("/webhooks", webhookHandler.ListWebhooks)
+			authenticated.DELETE("/webhooks/:id", webhookHandler.DeleteWebhook)
+		}
 
-	incomingWebhookH := handler.NewIncomingWebhookHandler(webhookRepo)
-	r.POST("/webhooks/incoming/:id", incomingWebhookH.ReceiveWebhook)
+		incomingWebhookH := handler.NewIncomingWebhookHandler(webhookRepo)
+		r.POST("/webhooks/incoming/:id", incomingWebhookH.ReceiveWebhook)
 
-	admin := authenticated.Group("/admin")
-			admin.Use(middleware.AdminMiddleware())
-			{
-				admin.GET("/users", adminHandler.ListUsers)
-				admin.GET("/circles", adminHandler.ListCircles)
-				admin.GET("/audit-log", adminHandler.GetAuditLog)
-				admin.GET("/metrics", adminHandler.GetMetrics)
-				admin.POST("/feature-flags", adminHandler.UpdateFeatureFlag)
-				admin.GET("/jobs/dead-letter", func(c *gin.Context) {
-					c.JSON(200, gin.H{"dead_letter_jobs": []any{}})
-				})
-			admin.POST("/jobs/dead-letter/:id/retry", func(c *gin.Context) {
-				jobID := c.Param("id")
-				c.JSON(200, gin.H{"message": "dead letter job requeued successfully", "job_id": jobID})
-			})
+		admin := authenticated.Group("/admin")
+		admin.Use(middleware.AdminMiddleware())
+		{
+			admin.GET("/users", adminHandler.ListUsers)
+			admin.GET("/circles", adminHandler.ListCircles)
+			admin.GET("/audit-log", adminHandler.GetAuditLog)
+			admin.GET("/metrics", adminHandler.GetMetrics)
+			admin.GET("/feature-flags", adminHandler.ListFeatureFlags)
+			admin.GET("/feature-flags/:flag", adminHandler.GetFeatureFlag)
+			admin.POST("/feature-flags", adminHandler.UpdateFeatureFlag)
+			admin.DELETE("/feature-flags/:flag", adminHandler.DeleteFeatureFlag)
+			admin.GET("/jobs/dead-letter", adminJobQueueHandler.GetDeadLetterJobs)
+			admin.POST("/jobs/dead-letter/:id/retry", adminJobQueueHandler.RetryDeadLetterJob)
 		}
 
 		optional := api.Group("")

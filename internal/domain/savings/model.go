@@ -27,14 +27,14 @@ type CreateGoalRequest struct {
 }
 
 type UpdateGoalRequest struct {
-	Name         *string  `json:"name"`
-	Description  *string  `json:"description"`
-	TargetAmount *float64 `json:"targetAmount"`
+	Name          *string  `json:"name"`
+	Description   *string  `json:"description"`
+	TargetAmount  *float64 `json:"targetAmount"`
 	CurrentAmount *float64 `json:"currentAmount"`
-	TargetDate   *string  `json:"targetDate"`
-	CircleID     *string  `json:"circleId"`
-	AutoReserve  *bool    `json:"autoReserve"`
-	Status       *string  `json:"status"`
+	TargetDate    *string  `json:"targetDate"`
+	CircleID      *string  `json:"circleId"`
+	AutoReserve   *bool    `json:"autoReserve"`
+	Status        *string  `json:"status"`
 }
 
 type GoalSummary struct {

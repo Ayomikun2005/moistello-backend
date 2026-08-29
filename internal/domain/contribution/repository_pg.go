@@ -34,7 +34,11 @@ func NewRepositoryFromTx(tx *sqlx.Tx) Repository {
 func scanContribution(row interface{ Scan(...interface{}) error }) (*Contribution, error) {
 	var c Contribution
 	var txnHash sql.NullString
-	err := row.Scan(&c.ID, &c.CircleID, &c.UserID, &c.RoundNumber, &c.Amount, &txnHash, &c.Status, &c.OnTime, &c.CreatedAt, &c.UpdatedAt)
+	err := row.Scan(
+		&c.ID, &c.CircleID, &c.UserID, &c.RoundNumber, &c.Amount,
+		&txnHash, &c.Status, &c.OnTime, &c.VerifiedOnchain, &c.VerificationStatus,
+		&c.CreatedAt, &c.UpdatedAt,
+	)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, apperrors.ErrNotFound
@@ -46,20 +50,20 @@ func scanContribution(row interface{ Scan(...interface{}) error }) (*Contributio
 }
 
 func (r *pgRepo) FindByID(ctx context.Context, id uuid.UUID) (*Contribution, error) {
-	query := `SELECT id, circle_id, user_id, round_number, amount, txn_hash, status, on_time, created_at, updated_at
+	query := `SELECT id, circle_id, user_id, round_number, amount, txn_hash, status, on_time, verified_onchain, verification_status, created_at, updated_at
 		FROM contributions WHERE id = $1`
 	return scanContribution(r.db.QueryRowxContext(ctx, query, id))
 }
 
 func (r *pgRepo) FindByCircleAndUser(ctx context.Context, circleID, userID uuid.UUID) (*Contribution, error) {
-	query := `SELECT id, circle_id, user_id, round_number, amount, txn_hash, status, on_time, created_at, updated_at
+	query := `SELECT id, circle_id, user_id, round_number, amount, txn_hash, status, on_time, verified_onchain, verification_status, created_at, updated_at
 		FROM contributions WHERE circle_id = $1 AND user_id = $2 ORDER BY created_at DESC LIMIT 1`
 	return scanContribution(r.db.QueryRowxContext(ctx, query, circleID, userID))
 }
 
 func (r *pgRepo) Create(ctx context.Context, c *Contribution) error {
-	query := `INSERT INTO contributions (id, circle_id, user_id, round_number, amount, txn_hash, status, on_time, created_at, updated_at)
-		VALUES (:id, :circle_id, :user_id, :round_number, :amount, :txn_hash, :status, :on_time, :created_at, :updated_at)`
+	query := `INSERT INTO contributions (id, circle_id, user_id, round_number, amount, txn_hash, status, on_time, verified_onchain, verification_status, created_at, updated_at)
+		VALUES (:id, :circle_id, :user_id, :round_number, :amount, :txn_hash, :status, :on_time, :verified_onchain, :verification_status, :created_at, :updated_at)`
 	_, err := r.db.NamedExecContext(ctx, query, c)
 	if err != nil {
 		if isUniqueViolationPg(err) {
@@ -83,6 +87,19 @@ func (r *pgRepo) UpdateStatus(ctx context.Context, id uuid.UUID, status Contribu
 	return nil
 }
 
+func (r *pgRepo) UpdateVerificationStatus(ctx context.Context, id uuid.UUID, verifiedOnchain bool, status VerificationStatus) error {
+	query := `UPDATE contributions SET verified_onchain = $1, verification_status = $2, updated_at = NOW() WHERE id = $3`
+	result, err := r.db.ExecContext(ctx, query, verifiedOnchain, status, id)
+	if err != nil {
+		return fmt.Errorf("updating contribution verification status: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return apperrors.ErrNotFound
+	}
+	return nil
+}
+
 func (r *pgRepo) ListByUser(ctx context.Context, userID uuid.UUID, page, limit int) ([]Contribution, int, error) {
 	if page < 1 {
 		page = 1
@@ -98,7 +115,7 @@ func (r *pgRepo) ListByUser(ctx context.Context, userID uuid.UUID, page, limit i
 		return nil, 0, fmt.Errorf("counting user contributions: %w", err)
 	}
 
-	query := `SELECT id, circle_id, user_id, round_number, amount, txn_hash, status, on_time, created_at, updated_at
+	query := `SELECT id, circle_id, user_id, round_number, amount, txn_hash, status, on_time, verified_onchain, verification_status, created_at, updated_at
 		FROM contributions WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`
 	rows, err := r.db.QueryxContext(ctx, query, userID, limit, offset)
 	if err != nil {
@@ -135,7 +152,7 @@ func (r *pgRepo) ListByCircle(ctx context.Context, circleID uuid.UUID, page, lim
 		return nil, 0, fmt.Errorf("counting circle contributions: %w", err)
 	}
 
-	query := `SELECT id, circle_id, user_id, round_number, amount, txn_hash, status, on_time, created_at, updated_at
+	query := `SELECT id, circle_id, user_id, round_number, amount, txn_hash, status, on_time, verified_onchain, verification_status, created_at, updated_at
 		FROM contributions WHERE circle_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`
 	rows, err := r.db.QueryxContext(ctx, query, circleID, limit, offset)
 	if err != nil {

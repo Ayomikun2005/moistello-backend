@@ -17,10 +17,11 @@ import (
 // The client must be initialized with API credentials obtained from
 // https://yellowcard.io after completing the KYB process.
 type Client struct {
-	apiKey     string
-	apiSecret  string
-	baseURL    string
-	httpClient *http.Client
+	apiKey         string
+	apiSecret      string
+	baseURL        string
+	stellarAddress string
+	httpClient     *http.Client
 }
 
 // Quote represents an FX rate quote from Yellow Card.
@@ -95,21 +96,34 @@ type TransactionStatus struct {
 
 // NewClient creates a Yellow Card API client.
 // The apiKey and apiSecret can be left empty to use the sandbox environment.
-// Set them once you have completed KYB with Yellow Card.
-func NewClient(apiKey, apiSecret string) *Client {
+// Set them once you have completed KYB with Yellow Card. stellarAddress is the
+// Stellar public key USDC should be sent to for fiat withdrawals, configured at
+// startup rather than hard-coded.
+func NewClient(apiKey, apiSecret, stellarAddress string) *Client {
 	baseURL := "https://api.yellowcard.io/v1"
 	if apiKey == "" {
 		baseURL = "https://sandbox.yellowcard.io/v1"
 	}
 	return &Client{
-		apiKey:    apiKey,
-		apiSecret: apiSecret,
-		baseURL:   baseURL,
+		apiKey:         apiKey,
+		apiSecret:      apiSecret,
+		stellarAddress: stellarAddress,
+		baseURL:        baseURL,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 	}
 }
+
+// SetHTTPClient overrides the underlying HTTP client. Intended for tests.
+func (c *Client) SetHTTPClient(client *http.Client) { c.httpClient = client }
+
+// SetBaseURL overrides the API base URL. Intended for tests.
+func (c *Client) SetBaseURL(baseURL string) { c.baseURL = baseURL }
+
+// StellarAddress returns the configured Stellar public key that USDC is sent
+// to for Yellow Card withdrawals. It is empty when unconfigured.
+func (c *Client) StellarAddress() string { return c.stellarAddress }
 
 // signRequest computes the HMAC-SHA256 signature required by Yellow Card for
 // authenticated API calls. The signature covers the Unix timestamp, HTTP method,

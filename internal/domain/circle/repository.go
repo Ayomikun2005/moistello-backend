@@ -31,4 +31,14 @@ type Repository interface {
 	UpdateMemberStatus(ctx context.Context, circleID, userID uuid.UUID, status MemberStatus) error
 	FindMemberByCircleAndUser(ctx context.Context, circleID, userID uuid.UUID) (*CircleMember, error)
 	FindCirclesByUserID(ctx context.Context, userID uuid.UUID) ([]Circle, error)
+
+	CreatePenalty(ctx context.Context, p *Penalty) error
+	GetPenaltiesByCircle(ctx context.Context, circleID uuid.UUID) ([]Penalty, error)
+	GetPenaltiesByUser(ctx context.Context, userID uuid.UUID) ([]Penalty, error)
+	GetContributionsByCircleAndRound(ctx context.Context, circleID uuid.UUID, roundNumber int) ([]uuid.UUID, error)
+	CreateDispute(ctx context.Context, dispute *CircleDispute) error
+	CreateVote(ctx context.Context, vote *CircleVote) error
+	GetVotesByRound(ctx context.Context, circleID uuid.UUID, roundNumber int) ([]CircleVote, error)
+	CreateAuctionBid(ctx context.Context, bid *CircleAuctionBid) error
+	GetAuctionBidsByRound(ctx context.Context, circleID uuid.UUID, roundNumber int) ([]CircleAuctionBid, error)
 }

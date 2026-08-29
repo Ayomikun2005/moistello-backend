@@ -3,6 +3,7 @@ package circle
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"math"
 	"time"
@@ -10,6 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 
+	"github.com/moistello/backend/internal/domain/audit"
+	"github.com/moistello/backend/internal/domain/notification"
 	"github.com/moistello/backend/pkg/apperrors"
 )
 
@@ -26,6 +29,10 @@ type Service interface {
 	GetMembers(ctx context.Context, circleID string) ([]CircleMember, error)
 	IsMember(ctx context.Context, circleID, userID string) (bool, error)
 	RemoveMember(ctx context.Context, circleID, callerID, memberAddress string, reason string) error
+	ProcessMissedContributions(ctx context.Context, circleID string, roundNumber int) error
+	RaiseDispute(ctx context.Context, circleID, userID string, input DisputeInput) (*CircleDispute, error)
+	CastVote(ctx context.Context, circleID, userID string, input VoteInput) (*CircleVote, bool, string, error)
+	SubmitAuctionBid(ctx context.Context, circleID, userID string, input AuctionBidInput) (*CircleAuctionBid, error)
 }
 
 type UserMOIFetcher interface {
@@ -42,6 +49,7 @@ type Broadcaster interface {
 	MemberJoined(ctx context.Context, circleID, userID string)
 	MemberLeft(ctx context.Context, circleID, userID string)
 	ContributionRecorded(ctx context.Context, circleID, userID string, roundNumber int, amount float64)
+	MemberPenalized(ctx context.Context, circleID, userID string, roundNumber int, penaltyAmount float64)
 }
 
 type CommunityMembershipChecker interface {
@@ -84,12 +92,22 @@ type UpdateCircleInput struct {
 	MaxStrikes         *int             `json:"maxStrikes"`
 }
 
+type AuditLogger interface {
+	Create(ctx context.Context, entry *audit.AuditEntry) error
+}
+
+type NotificationSender interface {
+	Create(ctx context.Context, input notification.CreateInput) (*notification.Notification, error)
+}
+
 type circleService struct {
 	repo             Repository
 	userRepo         UserMOIFetcher
 	communityChecker CommunityMembershipChecker
 	broadcaster      Broadcaster
 	tx               Transactor
+	auditRepo        AuditLogger
+	notificationSvc  NotificationSender
 }
 
 func NewService(repo Repository, userRepo UserMOIFetcher, dependencies ...any) Service {
@@ -102,6 +120,10 @@ func NewService(repo Repository, userRepo UserMOIFetcher, dependencies ...any) S
 			service.broadcaster = value
 		case Transactor:
 			service.tx = value
+		case AuditLogger:
+			service.auditRepo = value
+		case NotificationSender:
+			service.notificationSvc = value
 		}
 	}
 	return service
@@ -122,12 +144,12 @@ func (t *circleTransactor) WithTransaction(ctx context.Context, fn func(repo Rep
 	}
 	defer func() {
 		if p := recover(); p != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			panic(p)
 		}
 	}()
 	if err := fn(NewRepositoryFromTx(tx)); err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		return err
 	}
 	return tx.Commit()
@@ -658,6 +680,277 @@ func (s *circleService) RemoveMember(ctx context.Context, circleID, callerID, me
 	return nil
 }
 
+func (s *circleService) RaiseDispute(ctx context.Context, circleID, userID string, input DisputeInput) (*CircleDispute, error) {
+	cid, err := parseUUID(circleID)
+	if err != nil {
+		return nil, err
+	}
+	uid, err := parseUUID(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	c, err := s.repo.FindByID(ctx, cid)
+	if err != nil {
+		return nil, fmt.Errorf("finding circle for dispute: %w", err)
+	}
+
+	if c.Status != CircleStatusActive && c.Status != CircleStatusPending {
+		return nil, ErrCircleNotActive
+	}
+
+	member, err := s.repo.FindMemberByCircleAndUser(ctx, cid, uid)
+	if err != nil || member.Status != MemberStatusActive {
+		return nil, ErrNotMember
+	}
+
+	now := time.Now().UTC()
+	var details sql.NullString
+	if input.Details != "" {
+		details = sql.NullString{String: input.Details, Valid: true}
+	}
+
+	dispute := &CircleDispute{
+		ID:        uuid.New(),
+		CircleID:  cid,
+		RaiserID:  uid,
+		Reason:    input.Reason,
+		Details:   details,
+		Status:    "open",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	if err := s.repo.CreateDispute(ctx, dispute); err != nil {
+		return nil, fmt.Errorf("persisting dispute: %w", err)
+	}
+
+	if s.notificationSvc != nil {
+		notifInput := notification.CreateInput{
+			UserID:  c.OrganizerID.String(),
+			Type:    notification.TypeDisputeRaised,
+			Title:   "Dispute Raised",
+			Body:    fmt.Sprintf("A dispute was raised in circle %s: %s", c.Name, input.Reason),
+			Channel: notification.ChannelInApp,
+		}
+		_, _ = s.notificationSvc.Create(ctx, notifInput)
+	}
+
+	if s.auditRepo != nil {
+		detailsBytes, _ := json.Marshal(map[string]string{"reason": input.Reason})
+		auditEntry := &audit.AuditEntry{
+			ID:           uuid.New(),
+			ActorID:      uid,
+			Action:       "circle.dispute_raised",
+			ResourceType: "circle",
+			ResourceID:   sql.NullString{String: cid.String(), Valid: true},
+			Details:      detailsBytes,
+			CreatedAt:    now,
+		}
+		_ = s.auditRepo.Create(ctx, auditEntry)
+	}
+
+	return dispute, nil
+}
+
+func (s *circleService) CastVote(ctx context.Context, circleID, userID string, input VoteInput) (*CircleVote, bool, string, error) {
+	cid, err := parseUUID(circleID)
+	if err != nil {
+		return nil, false, "", err
+	}
+	voterID, err := parseUUID(userID)
+	if err != nil {
+		return nil, false, "", err
+	}
+	recipientID, err := parseUUID(input.RecipientID)
+	if err != nil {
+		return nil, false, "", err
+	}
+
+	c, err := s.repo.FindByID(ctx, cid)
+	if err != nil {
+		return nil, false, "", fmt.Errorf("finding circle for vote: %w", err)
+	}
+	if c.Status != CircleStatusActive {
+		return nil, false, "", ErrCircleNotActive
+	}
+	if c.PayoutType != PayoutTypeVote {
+		return nil, false, "", fmt.Errorf("circle payout type is not vote")
+	}
+
+	voter, err := s.repo.FindMemberByCircleAndUser(ctx, cid, voterID)
+	if err != nil || voter.Status != MemberStatusActive {
+		return nil, false, "", ErrNotMember
+	}
+
+	recipient, err := s.repo.FindMemberByCircleAndUser(ctx, cid, recipientID)
+	if err != nil || recipient.Status != MemberStatusActive {
+		return nil, false, "", fmt.Errorf("recipient is not an active circle member")
+	}
+
+	roundNum := c.CurrentRound
+	if roundNum < 1 {
+		roundNum = 1
+	}
+
+	vote := &CircleVote{
+		ID:          uuid.New(),
+		CircleID:    cid,
+		VoterID:     voterID,
+		RecipientID: recipientID,
+		RoundNumber: roundNum,
+		CreatedAt:   time.Now().UTC(),
+	}
+
+	if err := s.repo.CreateVote(ctx, vote); err != nil {
+		if err == apperrors.ErrConflict {
+			return nil, false, "", fmt.Errorf("user has already voted in this round")
+		}
+		return nil, false, "", fmt.Errorf("recording vote: %w", err)
+	}
+
+	votes, err := s.repo.GetVotesByRound(ctx, cid, roundNum)
+	if err != nil {
+		return vote, false, "", nil
+	}
+
+	memberCount, err := s.repo.GetMemberCount(ctx, cid)
+	if err != nil || memberCount == 0 {
+		memberCount = c.MaxMembers
+	}
+
+	if len(votes) >= memberCount {
+		tallyMap := make(map[string]int)
+		for _, v := range votes {
+			tallyMap[v.RecipientID.String()]++
+		}
+		winner := VoteTally(tallyMap)
+		return vote, true, winner, nil
+	}
+
+	return vote, false, "", nil
+}
+
+func (s *circleService) SubmitAuctionBid(ctx context.Context, circleID, userID string, input AuctionBidInput) (*CircleAuctionBid, error) {
+	cid, err := parseUUID(circleID)
+	if err != nil {
+		return nil, err
+	}
+	bidderID, err := parseUUID(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	c, err := s.repo.FindByID(ctx, cid)
+	if err != nil {
+		return nil, err
+	}
+	if c.Status != CircleStatusActive {
+		return nil, ErrCircleNotActive
+	}
+	if c.PayoutType != PayoutTypeAuction {
+		return nil, fmt.Errorf("circle payout type is not auction")
+	}
+
+	bidder, err := s.repo.FindMemberByCircleAndUser(ctx, cid, bidderID)
+	if err != nil || bidder.Status != MemberStatusActive {
+		return nil, ErrNotMember
+	}
+
+	if input.BidAmount <= 0 {
+		return nil, fmt.Errorf("bid amount must be greater than zero")
+	}
+
+	roundNum := c.CurrentRound
+	if roundNum < 1 {
+		roundNum = 1
+	}
+
+	bid := &CircleAuctionBid{
+		ID:          uuid.New(),
+		CircleID:    cid,
+		BidderID:    bidderID,
+		RoundNumber: roundNum,
+		BidAmount:   input.BidAmount,
+		CreatedAt:   time.Now().UTC(),
+	}
+
+	if err := s.repo.CreateAuctionBid(ctx, bid); err != nil {
+		return nil, fmt.Errorf("recording auction bid: %w", err)
+	}
+
+	return bid, nil
+}
+
 func ceilFloat(f float64) float64 {
 	return math.Ceil(f*100) / 100
+}
+
+func (s *circleService) ProcessMissedContributions(ctx context.Context, circleID string, roundNumber int) error {
+	cID, err := uuid.Parse(circleID)
+	if err != nil {
+		return apperrors.ErrInvalidInput
+	}
+
+	c, err := s.repo.FindByID(ctx, cID)
+	if err != nil {
+		return err
+	}
+	if c == nil {
+		return apperrors.ErrNotFound
+	}
+
+	members, err := s.repo.GetMembers(ctx, cID)
+	if err != nil {
+		return err
+	}
+
+	contributedUserIDs, err := s.repo.GetContributionsByCircleAndRound(ctx, cID, roundNumber)
+	if err != nil {
+		return err
+	}
+
+	contributedMap := make(map[uuid.UUID]bool)
+	for _, uid := range contributedUserIDs {
+		contributedMap[uid] = true
+	}
+
+	for _, member := range members {
+		if member.Status != MemberStatusActive {
+			continue
+		}
+		if !contributedMap[member.UserID] {
+			// Member missed contribution, apply penalty
+			penaltyAmt := CalculateLateFee(c.ContributionAmount, c.LateFeePercent)
+			strikes := ApplyStrikes(&member, "late") // default late penalty
+
+			p := &Penalty{
+				ID:             uuid.New(),
+				CircleID:       cID,
+				UserID:         member.UserID,
+				RoundNumber:    roundNumber,
+				PenaltyType:    PenaltyTypeLate,
+				Amount:         penaltyAmt,
+				StrikesApplied: strikes,
+				Reason:         sql.NullString{String: fmt.Sprintf("Missed contribution for round %d", roundNumber), Valid: true},
+				CreatedAt:      time.Now(),
+			}
+
+			err = s.repo.CreatePenalty(ctx, p)
+			if err != nil {
+				return err
+			}
+
+			// Broadcast event for notification/indexer
+			// We can use a new method like MemberPenalized or just use existing ones.
+			// The Acceptance Criteria mentions: "Notify affected members"
+			// This will likely be handled by an event listener on the indexer or notification service.
+			// But for now, we process it here.
+			if s.broadcaster != nil {
+				s.broadcaster.MemberPenalized(ctx, circleID, member.UserID.String(), roundNumber, penaltyAmt)
+			}
+		}
+	}
+
+	return nil
 }

@@ -22,7 +22,11 @@ func NewRepository(db *sqlx.DB) Repository {
 func scanPayout(row interface{ Scan(...interface{}) error }) (*Payout, error) {
 	var p Payout
 	var txnHash sql.NullString
-	err := row.Scan(&p.ID, &p.CircleID, &p.RecipientID, &p.RoundNumber, &p.Amount, &p.FeeAmount, &txnHash, &p.PayoutType, &p.CreatedAt)
+	err := row.Scan(
+		&p.ID, &p.CircleID, &p.RecipientID, &p.RoundNumber, &p.Amount,
+		&p.FeeAmount, &txnHash, &p.PayoutType, &p.VerifiedOnchain, &p.VerificationStatus,
+		&p.CreatedAt,
+	)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, apperrors.ErrNotFound
@@ -34,17 +38,30 @@ func scanPayout(row interface{ Scan(...interface{}) error }) (*Payout, error) {
 }
 
 func (r *pgRepo) FindByID(ctx context.Context, id uuid.UUID) (*Payout, error) {
-	query := `SELECT id, circle_id, recipient_id, round_number, amount, fee_amount, txn_hash, payout_type, created_at
+	query := `SELECT id, circle_id, recipient_id, round_number, amount, fee_amount, txn_hash, payout_type, verified_onchain, verification_status, created_at
 		FROM payouts WHERE id = $1`
 	return scanPayout(r.db.QueryRowxContext(ctx, query, id))
 }
 
 func (r *pgRepo) Create(ctx context.Context, p *Payout) error {
-	query := `INSERT INTO payouts (id, circle_id, recipient_id, round_number, amount, fee_amount, txn_hash, payout_type, created_at)
-		VALUES (:id, :circle_id, :recipient_id, :round_number, :amount, :fee_amount, :txn_hash, :payout_type, :created_at)`
+	query := `INSERT INTO payouts (id, circle_id, recipient_id, round_number, amount, fee_amount, txn_hash, payout_type, verified_onchain, verification_status, created_at)
+		VALUES (:id, :circle_id, :recipient_id, :round_number, :amount, :fee_amount, :txn_hash, :payout_type, :verified_onchain, :verification_status, :created_at)`
 	_, err := r.db.NamedExecContext(ctx, query, p)
 	if err != nil {
 		return fmt.Errorf("creating payout: %w", err)
+	}
+	return nil
+}
+
+func (r *pgRepo) UpdateVerificationStatus(ctx context.Context, id uuid.UUID, verifiedOnchain bool, status VerificationStatus) error {
+	query := `UPDATE payouts SET verified_onchain = $1, verification_status = $2 WHERE id = $3`
+	result, err := r.db.ExecContext(ctx, query, verifiedOnchain, status, id)
+	if err != nil {
+		return fmt.Errorf("updating payout verification status: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return apperrors.ErrNotFound
 	}
 	return nil
 }
@@ -64,7 +81,7 @@ func (r *pgRepo) ListByUser(ctx context.Context, userID uuid.UUID, page, limit i
 		return nil, 0, fmt.Errorf("counting user payouts: %w", err)
 	}
 
-	query := `SELECT id, circle_id, recipient_id, round_number, amount, fee_amount, txn_hash, payout_type, created_at
+	query := `SELECT id, circle_id, recipient_id, round_number, amount, fee_amount, txn_hash, payout_type, verified_onchain, verification_status, created_at
 		FROM payouts WHERE recipient_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`
 	rows, err := r.db.QueryxContext(ctx, query, userID, limit, offset)
 	if err != nil {
@@ -101,7 +118,7 @@ func (r *pgRepo) ListByCircle(ctx context.Context, circleID uuid.UUID, page, lim
 		return nil, 0, fmt.Errorf("counting circle payouts: %w", err)
 	}
 
-	query := `SELECT id, circle_id, recipient_id, round_number, amount, fee_amount, txn_hash, payout_type, created_at
+	query := `SELECT id, circle_id, recipient_id, round_number, amount, fee_amount, txn_hash, payout_type, verified_onchain, verification_status, created_at
 		FROM payouts WHERE circle_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`
 	rows, err := r.db.QueryxContext(ctx, query, circleID, limit, offset)
 	if err != nil {
