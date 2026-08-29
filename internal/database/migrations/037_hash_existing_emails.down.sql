@@ -1,0 +1,3 @@
+-- Cannot reliably unhash emails.
+-- We must leave them as is, or raise an error if down migration is strictly required.
+-- It's safe to do nothing because 'down' isn't possible for a one-way hash.

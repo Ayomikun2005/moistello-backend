@@ -1,7 +1,9 @@
 package user
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,4 +39,10 @@ type User struct {
 	NotificationsMuted     bool           `json:"notificationsMuted" db:"notifications_muted"`
 	CreatedAt              time.Time      `json:"createdAt" db:"created_at"`
 	UpdatedAt              time.Time      `json:"updatedAt" db:"updated_at"`
+}
+
+// HashEmail consistently hashes an email address for storage and lookup.
+func HashEmail(email string) string {
+	h := sha256.Sum256([]byte(email))
+	return hex.EncodeToString(h[:])
 }

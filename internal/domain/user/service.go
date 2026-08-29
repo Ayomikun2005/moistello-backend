@@ -185,7 +185,7 @@ func (s *userService) UpdateProfile(ctx context.Context, id string, updates Upda
 		u.DisplayName = updates.DisplayName
 	}
 	if updates.Email != nil {
-		hashed := hashUserEmail(*updates.Email)
+		hashed := HashEmail(*updates.Email)
 		u.Email = &hashed
 	}
 	if updates.Phone != nil {

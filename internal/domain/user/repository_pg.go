@@ -2,9 +2,7 @@ package user
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -14,10 +12,6 @@ import (
 	"github.com/moistello/backend/pkg/apperrors"
 )
 
-func hashUserEmail(email string) string {
-	h := sha256.Sum256([]byte(email))
-	return hex.EncodeToString(h[:])
-}
 
 type pgRepo struct {
 	db *sqlx.DB
@@ -101,7 +95,7 @@ func (r *pgRepo) FindByWalletAddress(ctx context.Context, walletAddress string) 
 }
 
 func (r *pgRepo) FindByEmail(ctx context.Context, email string) (*User, error) {
-	hashedEmail := hashUserEmail(email)
+	hashedEmail := HashEmail(email)
 	query := `SELECT id, wallet_address, email, phone, display_name, avatar_ipfs_hash,
 		country_code, preferred_language, moi_score, role,
 		session_ttl_minutes, password_hash, totp_secret, totp_enabled, backup_codes, email_verified, passkey_credential_id,

@@ -302,11 +302,12 @@ func (h *AuthHandler) RegisterVerify(c *gin.Context) {
 	}
 
 	// Create the user NOW — only after email is verified
+	hashedEmail := user.HashEmail(pending.Email)
 	u := &user.User{
 		ID:                uuid.New(),
 		WalletAddress:     pending.WalletAddr,
 		PasswordHash:      passwordHashStruct(pending.PasswordHash),
-		Email:             &pending.Email,
+		Email:             &hashedEmail,
 		EmailVerified:     true,
 		PreferredLanguage: "en",
 		Role:              user.RoleUser,
