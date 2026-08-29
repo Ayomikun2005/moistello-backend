@@ -71,7 +71,7 @@ func TestRepository_GetByID(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "wd-1", w.ID)
-	assert.Equal(t, float64(100), w.AmountUSDC)
+	assert.Equal(t, int64(100), w.AmountUSDC)
 }
 
 func TestRepository_GetByPaymentRef(t *testing.T) {

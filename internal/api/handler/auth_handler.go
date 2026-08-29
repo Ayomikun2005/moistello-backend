@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"fmt"
@@ -112,7 +111,7 @@ func (h *AuthHandler) Verify(c *gin.Context) {
 		return
 	}
 
-	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, sessionTTLFromUser(u), deviceInfoFromContext(c))
+	pair, err := h.authService.CreateSession(c.Request.Context(), u.ID, string(u.Role), sessionTTLFromUser(u), deviceInfoFromContext(c))
 	if err != nil {
 		response.InternalError(c, "failed to create session")
 		return

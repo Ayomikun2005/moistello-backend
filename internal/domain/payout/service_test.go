@@ -27,6 +27,8 @@ func TestPayoutService_Record_Success(t *testing.T) {
 		PayoutType:  payout.PayoutTypeFixed,
 	}
 
+	repo.On("ListByCircle", ctx, mock.AnythingOfType("uuid.UUID"), 1, 100).Return([]payout.Payout{}, 0, nil)
+
 	repo.On("Create", ctx, mock.MatchedBy(func(p *payout.Payout) bool {
 		return p.Amount == 500.0 &&
 			p.PayoutType == payout.PayoutTypeFixed &&
@@ -63,6 +65,8 @@ func TestPayoutService_Record_VerifiedOnchain(t *testing.T) {
 		VerifiedOnchain:    &verifiedTrue,
 		VerificationStatus: &customStatus,
 	}
+
+	repo.On("ListByCircle", ctx, mock.AnythingOfType("uuid.UUID"), 1, 100).Return([]payout.Payout{}, 0, nil)
 
 	repo.On("Create", ctx, mock.MatchedBy(func(p *payout.Payout) bool {
 		return p.VerifiedOnchain == true && p.VerificationStatus == payout.VerificationStatusVerified

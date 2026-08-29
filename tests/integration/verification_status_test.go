@@ -87,8 +87,11 @@ func TestIntegration_Payout_VerificationStatusFlow(t *testing.T) {
 	repo := new(payoutMocks.Repository)
 	svc := payout.NewService(repo, nil, nil)
 
-	circleID := uuid.New().String()
+	circleUUID := uuid.New()
+	circleID := circleUUID.String()
 	recipientID := uuid.New().String()
+
+	repo.On("ListByCircle", ctx, circleUUID, 1, 100).Return([]payout.Payout{}, 0, nil)
 
 	t.Run("client-supplied payout defaults to unverified", func(t *testing.T) {
 		input := payout.RecordInput{

@@ -233,6 +233,7 @@ func TestCommunityService_CreateAnnouncement(t *testing.T) {
 	svc := community.NewService(repo, nil)
 	cid, uid := uuid.New(), uuid.New()
 
+	repo.On("IsMember", mock.Anything, cid, uid).Return(true, nil)
 	repo.On("CreateAnnouncement", mock.Anything, mock.AnythingOfType("*community.Announcement")).Return(nil)
 
 	a, err := svc.CreateAnnouncement(ctx(), cid.String(), uid.String(), "hello world")
@@ -284,7 +285,7 @@ func TestCommunityService_PinAnnouncement(t *testing.T) {
 	commID := uuid.New()
 	ann := &community.Announcement{ID: id, CommunityID: commID, AuthorID: uuid.New()}
 	owner := uuid.New()
-	comm := community.NewCommunity(owner)
+	comm := newCommunity(owner)
 	comm.ID = commID
 
 	repo.On("GetAnnouncementByID", mock.Anything, id).Return(ann, nil)
@@ -336,6 +337,7 @@ func TestCommunityService_TransferOwnership(t *testing.T) {
 	newOwner := uuid.New()
 
 	repo.On("FindByID", mock.Anything, c.ID).Return(c, nil)
+	repo.On("IsMember", mock.Anything, c.ID, newOwner).Return(true, nil)
 	repo.On("UpdateOwner", mock.Anything, c.ID, newOwner).Return(nil)
 	repo.On("UpdateMemberRole", mock.Anything, c.ID, ownerID, "member").Return(nil)
 

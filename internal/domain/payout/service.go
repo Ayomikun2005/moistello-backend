@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/moistello/backend/internal/domain/user"
-	"github.com/moistello/backend/pkg/apperrors"
 	"github.com/moistello/backend/pkg/stellar"
 )
 

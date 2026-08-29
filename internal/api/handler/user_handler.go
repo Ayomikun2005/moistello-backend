@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -170,4 +171,22 @@ func (h *UserHandler) GetMyCircles(c *gin.Context) {
 		return
 	}
 	response.OK(c, gin.H{"circles": circles})
+}
+
+// @Summary Submit KYC documents
+// @Description Submits KYC documents for identity verification. Not yet implemented.
+// @Tags Users
+// @Security BearerAuth
+// @Router /users/me/kyc [post]
+func (h *UserHandler) SubmitKYC(c *gin.Context) {
+	response.ErrorWithCode(c, http.StatusNotImplemented, "not_implemented", "KYC submission is not yet implemented")
+}
+
+// @Summary Get KYC status
+// @Description Returns the authenticated user's KYC verification status. Not yet implemented.
+// @Tags Users
+// @Security BearerAuth
+// @Router /users/me/kyc/status [get]
+func (h *UserHandler) GetKYCStatus(c *gin.Context) {
+	response.ErrorWithCode(c, http.StatusNotImplemented, "not_implemented", "KYC status is not yet implemented")
 }

@@ -3,6 +3,7 @@ package integration_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,6 +51,14 @@ func (r *inMemoryFFRepo) Upsert(ctx context.Context, flag string, enabled bool, 
 		Enabled:     enabled,
 		Description: description,
 	}
+	return nil
+}
+
+func (r *inMemoryFFRepo) Delete(ctx context.Context, flag string) error {
+	if _, ok := r.flags[flag]; !ok {
+		return assert.AnError
+	}
+	delete(r.flags, flag)
 	return nil
 }
 
@@ -153,4 +162,44 @@ func TestFeatureFlagCRUD_NonexistentFlagReturnsError(t *testing.T) {
 	// IsEnabled on a non-existent flag returns an error
 	_, err := svc.IsEnabled(ctx, "nonexistent_flag")
 	assert.Error(t, err)
+}
+
+// TestFeatureFlagCRUD_Delete verifies a flag can be removed and is then
+// reported as an error rather than silently treated as disabled.
+func TestFeatureFlagCRUD_Delete(t *testing.T) {
+	ctx := context.Background()
+	repo := newInMemoryFFRepo()
+	svc := featureflag.NewService(repo)
+
+	_, err := svc.Set(ctx, "kyc_required", true, "Require KYC for withdrawals")
+	require.NoError(t, err)
+
+	err = svc.Delete(ctx, "kyc_required")
+	require.NoError(t, err)
+
+	_, err = svc.IsEnabled(ctx, "kyc_required")
+	assert.Error(t, err)
+
+	err = svc.Delete(ctx, "kyc_required")
+	assert.Error(t, err, "deleting an already-deleted flag must error, not succeed silently")
+}
+
+// TestFeatureFlagCRUD_CacheReflectsUpdates verifies the runtime-reload cache
+// (used by middleware/services to check flags without hitting the DB on
+// every request) picks up changes made through the service.
+func TestFeatureFlagCRUD_CacheReflectsUpdates(t *testing.T) {
+	ctx := context.Background()
+	repo := newInMemoryFFRepo()
+	svc := featureflag.NewService(repo)
+	cache := featureflag.NewCache(svc, time.Hour)
+
+	_, err := svc.Set(ctx, "kyc_required", false, "Require KYC for withdrawals")
+	require.NoError(t, err)
+	require.NoError(t, cache.Refresh(ctx))
+	assert.False(t, cache.IsEnabled("kyc_required"))
+
+	_, err = svc.Set(ctx, "kyc_required", true, "")
+	require.NoError(t, err)
+	require.NoError(t, cache.Refresh(ctx))
+	assert.True(t, cache.IsEnabled("kyc_required"))
 }

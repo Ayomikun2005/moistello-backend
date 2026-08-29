@@ -3,18 +3,22 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/moistello/backend/config"
 	"github.com/moistello/backend/internal/api/middleware"
 	"github.com/moistello/backend/internal/domain/deposit"
+	"github.com/moistello/backend/internal/domain/featureflag"
 	"github.com/moistello/backend/internal/domain/wallet"
 	"github.com/moistello/backend/internal/domain/withdrawal"
 	"github.com/moistello/backend/internal/domain/yellowcard"
 	"github.com/moistello/backend/pkg/response"
 	"github.com/redis/go-redis/v9"
+	"github.com/rs/zerolog/log"
 )
 
 type DepositHandler struct {
@@ -24,6 +28,7 @@ type DepositHandler struct {
 	cfg         config.YellowCardConfig
 	deposits    deposit.Repository
 	withdrawals withdrawal.Repository
+	flags       *featureflag.Cache
 }
 
 func NewDepositHandler(yc *yellowcard.Client, walletSvc wallet.Service) *DepositHandler {
@@ -46,6 +51,13 @@ func (h *DepositHandler) WithConfig(cfg config.YellowCardConfig) *DepositHandler
 func (h *DepositHandler) WithRepositories(deposits deposit.Repository, withdrawals withdrawal.Repository) *DepositHandler {
 	h.deposits = deposits
 	h.withdrawals = withdrawals
+	return h
+}
+
+// WithFeatureFlags wires the runtime-reloadable feature flag cache (#187)
+// so this handler can gate behavior (e.g. kyc_required) without a redeploy.
+func (h *DepositHandler) WithFeatureFlags(flags *featureflag.Cache) *DepositHandler {
+	h.flags = flags
 	return h
 }
 
@@ -258,6 +270,12 @@ func (h *DepositHandler) InitiateDeposit(c *gin.Context) {
 func (h *DepositHandler) InitiateWithdraw(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 
+	if h.flags != nil && h.flags.IsEnabled("kyc_required") {
+		response.ErrorWithCode(c, http.StatusPreconditionRequired, "kyc_required",
+			"KYC verification is required before withdrawals, but KYC submission is not yet available")
+		return
+	}
+
 	var req struct {
 		AmountUSDC     float64 `json:"amountUsdc" binding:"required,gt=0"`
 		BankCode       string  `json:"bankCode" binding:"required"`
@@ -349,8 +367,8 @@ func (h *DepositHandler) InitiateWithdraw(c *gin.Context) {
 		wd := &withdrawal.Withdrawal{
 			ID:              uuid.New().String(),
 			UserID:          userID,
-			AmountUSDC:      req.AmountUSDC,
-			EstimatedNGN:    quote.ToAmount,
+			AmountUSDC:      int64(req.AmountUSDC),
+			EstimatedNGN:    int64(quote.ToAmount),
 			BankCode:        req.BankCode,
 			AccountNumber:   req.AccountNumber,
 			AccountName:     req.AccountName,

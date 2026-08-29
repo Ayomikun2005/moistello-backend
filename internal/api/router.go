@@ -42,6 +42,8 @@ func NewRouter(
 	passkeyCredentialHandler *handler.PasskeyCredentialHandler,
 	walletHandler *handler.WalletHandler,
 	depositHandler *handler.DepositHandler,
+	mobileMoneyHandler *handler.MobileMoneyHandler,
+	chatHandler *handler.ChatHandler,
 	communityHandler *handler.CommunityHandler,
 	wsHandler *handler.WebSocketHandler,
 	savingsGoalHandler *handler.SavingsGoalHandler,
@@ -69,7 +71,6 @@ func NewRouter(
 	r.GET("/metrics", middleware.AdminAPIKeyMiddleware(metricsKey), gin.WrapH(promhttp.Handler()))
 
 	r.Use(middleware.RateLimitMiddleware(redisClient, cfg.RateLimit))
-	r.Use(middleware.IdempotencyMiddleware(redisClient))
 
 	r.GET("/health", healthHandler.Health)
 	r.GET("/health/ready", healthHandler.Ready)
@@ -107,6 +108,10 @@ func NewRouter(
 		authenticated.Use(middleware.AuthMiddleware(jwtPublicKey))
 		authenticated.Use(middleware.TokenBlocklistMiddleware(redisClient))
 		authenticated.Use(middleware.CSRFTokenValidator(redisClient))
+		// Idempotency must run after AuthMiddleware so keys are scoped per
+		// user (#198) — a global, pre-auth middleware let idempotency keys
+		// collide across different users' requests.
+		authenticated.Use(middleware.IdempotencyMiddleware(redisClient))
 		{
 			authenticated.GET("/me", authHandler.Me)
 			authenticated.POST("/auth/logout", authHandler.Logout)
@@ -141,6 +146,16 @@ func NewRouter(
 			authenticated.POST("/wallet/deposit", perResource(redisClient, "wallet-transfer", cfg.RateLimit.WalletTransferLimit, cfg.RateLimit.WalletTransferWindowSeconds), depositHandler.InitiateDeposit)
 			authenticated.POST("/wallet/withdraw", perResource(redisClient, "wallet-transfer", cfg.RateLimit.WalletTransferLimit, cfg.RateLimit.WalletTransferWindowSeconds), depositHandler.InitiateWithdraw)
 			authenticated.GET("/wallet/transactions/:yellowCardId", depositHandler.GetTransactionStatus)
+			authenticated.POST("/wallet/mobile-money/onramp", perResource(redisClient, "wallet-transfer", cfg.RateLimit.WalletTransferLimit, cfg.RateLimit.WalletTransferWindowSeconds), mobileMoneyHandler.InitiateOnramp)
+			authenticated.POST("/wallet/mobile-money/offramp", perResource(redisClient, "wallet-transfer", cfg.RateLimit.WalletTransferLimit, cfg.RateLimit.WalletTransferWindowSeconds), mobileMoneyHandler.InitiateOfframp)
+			authenticated.GET("/wallet/mobile-money/:id", mobileMoneyHandler.GetTransaction)
+
+			authenticated.POST("/chat/keys", chatHandler.PublishKeys)
+			authenticated.GET("/chat/keys/:userId", chatHandler.GetBundle)
+			authenticated.POST("/chat/conversations", chatHandler.CreateConversation)
+			authenticated.GET("/chat/conversations", chatHandler.ListConversations)
+			authenticated.POST("/chat/conversations/:id/messages", chatHandler.SendMessage)
+			authenticated.GET("/chat/conversations/:id/messages", chatHandler.ListMessages)
 
 			// Circles
 			authenticated.POST("/circles", circleHandler.CreateCircle)
@@ -249,7 +264,10 @@ func NewRouter(
 			admin.GET("/circles", adminHandler.ListCircles)
 			admin.GET("/audit-log", adminHandler.GetAuditLog)
 			admin.GET("/metrics", adminHandler.GetMetrics)
+			admin.GET("/feature-flags", adminHandler.ListFeatureFlags)
+			admin.GET("/feature-flags/:flag", adminHandler.GetFeatureFlag)
 			admin.POST("/feature-flags", adminHandler.UpdateFeatureFlag)
+			admin.DELETE("/feature-flags/:flag", adminHandler.DeleteFeatureFlag)
 			admin.GET("/jobs/dead-letter", adminJobQueueHandler.GetDeadLetterJobs)
 			admin.POST("/jobs/dead-letter/:id/retry", adminJobQueueHandler.RetryDeadLetterJob)
 		}

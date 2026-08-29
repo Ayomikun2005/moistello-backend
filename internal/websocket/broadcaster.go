@@ -7,6 +7,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
+
+	"github.com/moistello/backend/internal/domain/chat"
 )
 
 const redisChannel = "moistello:ws:events"
@@ -119,4 +121,13 @@ func (b *Broadcaster) NotificationCreated(ctx context.Context, userID, notificat
 	b.publishToUser(userID, Message{Type: "notification.new", Payload: map[string]any{
 		"userId": userID, "notificationId": notificationID, "timestamp": time.Now().UTC(),
 	}})
+}
+
+// ── Chat events ──
+
+// ChatMessageDelivered pushes a newly-sent E2EE chat message to the
+// recipient's live WebSocket connection(s), if any are open. Satisfies
+// chat.Broadcaster.
+func (b *Broadcaster) ChatMessageDelivered(ctx context.Context, recipientID string, msg *chat.Message) {
+	b.publishToUser(recipientID, Message{Type: "chat.message", Payload: msg})
 }

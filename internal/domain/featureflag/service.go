@@ -7,9 +7,11 @@ import (
 
 // Service provides business logic for feature flag management.
 type Service interface {
+	Get(ctx context.Context, flag string) (*FeatureFlag, error)
 	IsEnabled(ctx context.Context, flag string) (bool, error)
 	List(ctx context.Context) ([]FeatureFlag, error)
 	Set(ctx context.Context, flag string, enabled bool, description string) (*FeatureFlag, error)
+	Delete(ctx context.Context, flag string) error
 }
 
 type service struct {
@@ -18,6 +20,13 @@ type service struct {
 
 func NewService(repo Repository) Service {
 	return &service{repo: repo}
+}
+
+func (s *service) Get(ctx context.Context, flag string) (*FeatureFlag, error) {
+	if flag == "" {
+		return nil, fmt.Errorf("flag name is required")
+	}
+	return s.repo.Get(ctx, flag)
 }
 
 func (s *service) IsEnabled(ctx context.Context, flag string) (bool, error) {
@@ -40,4 +49,11 @@ func (s *service) Set(ctx context.Context, flag string, enabled bool, descriptio
 		return nil, err
 	}
 	return s.repo.Get(ctx, flag)
+}
+
+func (s *service) Delete(ctx context.Context, flag string) error {
+	if flag == "" {
+		return fmt.Errorf("flag name is required")
+	}
+	return s.repo.Delete(ctx, flag)
 }
